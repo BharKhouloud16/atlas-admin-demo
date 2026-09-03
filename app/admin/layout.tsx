@@ -37,6 +37,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <li><Link href="/admin/missions">Missions</Link></li>
           {session.role === "ADMIN" && <li><Link href="/admin/clients">Clients</Link></li>}
           {session.role === "ADMIN" && <li><Link href="/admin/profils">Profils</Link></li>}
+          {session.role === "ADMIN" && <li><Link href="/admin/demandes">Demandes de contact</Link></li>}
           {session.role === "ADMIN" && <li><Link href="/admin/comptes-en-attente">Comptes en attente</Link></li>}
         </ul>
       </nav>
