@@ -69,18 +69,55 @@ model Client {
   compte              User?     // le compte de connexion du client, une fois inscrit
 }
 
-// Fiche interne d'un profil d'ingénieur (tarifs). Créée automatiquement, vide
-// de tarif, quand un ingénieur s'inscrit — l'Admin complète le type de
-// contrat et le montant lors de la validation (Article "négociation").
+// Fiche interne d'un profil d'ingénieur. Créée automatiquement, vide de
+// tarif, quand un ingénieur s'inscrit. Le type de contrat, le montant et le
+// TJM ne sont plus fixés manuellement par l'Admin à la validation : ils sont
+// déterminés après import + validation du CV (voir InfoCV), sur la base de
+// l'analyse du profil (séniorité, compétences) — voir lib/analyse-profil.ts.
 model Profil {
-  id            String      @id @default(cuid())
-  nom           String
-  type          TypeContrat?
-  montantSaisi  Float?      // laissé vide à l'inscription, renseigné par l'Admin à la validation
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
-  missions      Mission[]
-  compte        User?
+  id                  String       @id @default(cuid())
+  nom                 String
+  type                TypeContrat?
+  montantSaisi        Float?       // laissé vide jusqu'à ce qu'un contrat soit négocié
+
+  // Import & validation du CV (voir /ingenieur/cv et /ingenieur/cv/verifier)
+  cvUrl               String?      // URL du fichier CV stocké (Vercel Blob)
+  cvNomFichier        String?
+  cvImporteLe         DateTime?
+  cvValide            Boolean      @default(false) // true une fois toutes les InfoCV validées
+
+  // Résultat de l'analyse du profil (déduit des InfoCV validées) — voir
+  // lib/analyse-profil.ts. Champs laissés vides tant que l'analyse
+  // automatique (IA) n'est pas branchée ; alimentables manuellement par
+  // l'Admin en attendant.
+  anneesExperience    Int?
+  seniorite           String?      // "Junior" | "Confirmé" | "Senior" | "Expert"
+  pointsForts         String?
+  tjmEstime           Float?
+  typeContratSuggere  TypeContrat?
+
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  missions            Mission[]
+  infosCv             InfoCV[]
+  compte              User?
+}
+
+// Une information extraite (ou saisie) du CV d'un ingénieur, validée
+// individuellement (bouton "OK") avant d'alimenter son profil. Aujourd'hui
+// pré-remplie à vide (saisie manuelle guidée) ; conçue pour être pré-remplie
+// automatiquement dès qu'un service d'extraction IA est branché (voir
+// lib/cv-extraction.ts).
+model InfoCV {
+  id         String   @id @default(cuid())
+  profil     Profil   @relation(fields: [profilId], references: [id], onDelete: Cascade)
+  profilId   String
+  categorie  String   // "identite" | "contact" | "profil" | "competence" | "experience" | "formation"
+  libelle    String   // ex: "Nom complet", "Compétences principales"
+  valeur     String
+  ordre      Int      @default(0)
+  valide     Boolean  @default(false)
+  createdAt  DateTime @default(now())
 }
 
 model Mission {
