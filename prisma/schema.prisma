@@ -179,6 +179,24 @@ model Document {
   createdAt  DateTime       @default(now())
 }
 
+// Demande de contact / prise de rendez-vous depuis le site public (page
+// d'accueil, bouton "Reserver un appel de 30 minutes" et formulaire de
+// contact -- voir app/reserver-appel/page.tsx). Volontairement en acces
+// libre, SANS creation de compte : on ne recupere qu'un minimum
+// d'informations, l'equipe Atlas recontacte ensuite pour caler l'appel.
+// Consultee et traitee cote Admin (voir app/admin/demandes/page.tsx).
+model DemandeContact {
+id              String   @id @default(cuid())
+nom             String
+email           String
+entreprise      String?
+telephone       String?
+message         String?
+creneauSouhaite String?
+traite          Boolean  @default(false)
+createdAt       DateTime @default(now())
+}
+
 model Hypotheses {
   id                 String @id @default("singleton")
   joursAn            Int    @default(218)
