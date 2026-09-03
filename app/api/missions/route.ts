@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { calculerTjmCout } from "@/app/api/profils/route";
+import { calculerTjmCout } from "@/lib/calculs";
 import { getSession } from "@/lib/auth";
 
 export async function GET() {
