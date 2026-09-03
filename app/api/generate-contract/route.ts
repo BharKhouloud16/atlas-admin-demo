@@ -4,7 +4,7 @@ import path from "path";
 import PizZip from "pizzip";
 import Docxtemplater from "docxtemplater";
 import { prisma } from "@/lib/prisma";
-import { calculerTjmCout } from "@/app/api/profils/route";
+import { calculerTjmCout } from "@/lib/calculs";
 import { getSession } from "@/lib/auth";
 
 // Modèles disponibles dans /templates — chacun doit contenir des balises
