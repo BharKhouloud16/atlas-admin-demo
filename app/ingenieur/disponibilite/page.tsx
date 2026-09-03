@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DISPONIBILITES, MISSIONS_APRES, PREAVIS } from "@/lib/disponibilite";
+import { PAYS, calculerRegimeSuggere } from "@/lib/localisation";
 
 export default function DisponibilitePage() {
   const router = useRouter();
@@ -15,6 +16,9 @@ export default function DisponibilitePage() {
   const [missionApres, setMissionApres] = useState("");
   const [preavis, setPreavis] = useState("");
   const [preavisPrecision, setPreavisPrecision] = useState("");
+  const [nationalite, setNationalite] = useState("");
+  const [paysResidence, setPaysResidence] = useState("");
+  const [paysResidencePrecision, setPaysResidencePrecision] = useState("");
 
   useEffect(() => {
     fetch("/api/ingenieur/disponibilite")
@@ -27,11 +31,15 @@ export default function DisponibilitePage() {
         if (data?.missionApres) setMissionApres(data.missionApres);
         if (data?.preavis) setPreavis(data.preavis);
         if (data?.preavisPrecision) setPreavisPrecision(data.preavisPrecision);
+        if (data?.nationalite) setNationalite(data.nationalite);
+        if (data?.paysResidence) setPaysResidence(data.paysResidence);
+        if (data?.paysResidencePrecision) setPaysResidencePrecision(data.paysResidencePrecision);
         setChargement(false);
       });
   }, []);
 
   const enMission = disponibilite === "En mission actuellement";
+  const regimeApercu = calculerRegimeSuggere(paysResidence);
 
   async function valider() {
     setErreur("");
@@ -45,6 +53,9 @@ export default function DisponibilitePage() {
         missionApres: enMission ? missionApres : undefined,
         preavis,
         preavisPrecision,
+        nationalite,
+        paysResidence,
+        paysResidencePrecision,
       }),
     });
     setEnvoi(false);
@@ -64,7 +75,10 @@ export default function DisponibilitePage() {
     disponibilite &&
     preavis &&
     (preavis !== "Autre" || preavisPrecision.trim()) &&
-    (!enMission || (changerMissionActuelle && missionApres));
+    (!enMission || (changerMissionActuelle && missionApres)) &&
+    nationalite.trim() &&
+    paysResidence &&
+    (paysResidence !== "Autre" || paysResidencePrecision.trim());
 
   return (
     <main style={{ maxWidth: 560, margin: "80px auto", padding: 24 }}>
@@ -166,6 +180,55 @@ export default function DisponibilitePage() {
               onChange={(e) => setPreavisPrecision(e.target.value)}
               style={{ width: "100%", padding: 8, border: "1px solid #e4e7ee", borderRadius: 6, fontFamily: "inherit", marginTop: 8 }}
             />
+          )}
+        </div>
+
+        <div>
+          <label style={{ fontWeight: 600, fontSize: 14, display: "block", marginBottom: 8 }}>
+            Quelle est votre nationalité ?
+          </label>
+          <input
+            type="text"
+            placeholder="Ex : Française, Tunisienne..."
+            value={nationalite}
+            onChange={(e) => setNationalite(e.target.value)}
+            style={{ width: "100%", padding: 8, border: "1px solid #e4e7ee", borderRadius: 6, fontFamily: "inherit" }}
+          />
+        </div>
+
+        <div>
+          <label style={{ fontWeight: 600, fontSize: 14, display: "block", marginBottom: 8 }}>
+            Dans quel pays résidez-vous ?
+          </label>
+          <p style={{ fontSize: 12, color: "#888", marginBottom: 8 }}>
+            Cette information nous permet de vous proposer un profil et un type de contrat adaptés à votre
+            situation.
+          </p>
+          <select
+            value={paysResidence}
+            onChange={(e) => setPaysResidence(e.target.value)}
+            style={{ width: "100%", padding: 8, border: "1px solid #e4e7ee", borderRadius: 6, fontFamily: "inherit" }}
+          >
+            <option value="">Sélectionnez...</option>
+            {PAYS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+          {paysResidence === "Autre" && (
+            <input
+              type="text"
+              placeholder="Précisez votre pays..."
+              value={paysResidencePrecision}
+              onChange={(e) => setPaysResidencePrecision(e.target.value)}
+              style={{ width: "100%", padding: 8, border: "1px solid #e4e7ee", borderRadius: 6, fontFamily: "inherit", marginTop: 8 }}
+            />
+          )}
+          {regimeApercu && (
+            <p style={{ fontSize: 12, color: "#4b5567", marginTop: 8, background: "#f6f7fa", padding: 8, borderRadius: 6 }}>
+              <strong>Profil suggéré :</strong> {regimeApercu}
+            </p>
           )}
         </div>
 
