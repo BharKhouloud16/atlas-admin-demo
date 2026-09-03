@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { DISPONIBILITES, MISSIONS_APRES, PREAVIS } from "@/lib/disponibilite";
-import { PAYS, calculerRegimeSuggere } from "@/lib/localisation";
+import { PAYS, DEVISES, calculerRegimeSuggere } from "@/lib/localisation";
 
 // Questionnaire de disponibilité, à remplir par l'ingénieur juste après la
 // validation de son CV (voir /ingenieur/disponibilite), avant d'accéder à
@@ -26,6 +26,8 @@ export async function GET() {
       paysResidence: true,
       paysResidencePrecision: true,
       regimeSuggere: true,
+      tjmSouhaite: true,
+      tjmSouhaiteDevise: true,
       questionnaireValide: true,
     },
   });
@@ -49,6 +51,8 @@ export async function POST(req: NextRequest) {
     nationalite,
     paysResidence,
     paysResidencePrecision,
+    tjmSouhaite,
+    tjmSouhaiteDevise,
   } = body;
 
   if (!DISPONIBILITES.includes(disponibilite)) {
@@ -77,6 +81,13 @@ export async function POST(req: NextRequest) {
   if (paysResidence === "Autre" && !paysResidencePrecision?.trim()) {
     return NextResponse.json({ error: "Merci de préciser votre pays de résidence." }, { status: 400 });
   }
+  const tjmNombre = Number(tjmSouhaite);
+  if (!Number.isFinite(tjmNombre) || tjmNombre <= 0) {
+    return NextResponse.json({ error: "Merci d'indiquer votre prétention salariale (TJM souhaité)." }, { status: 400 });
+  }
+  if (!DEVISES.includes(tjmSouhaiteDevise)) {
+    return NextResponse.json({ error: "Devise invalide." }, { status: 400 });
+  }
 
   await prisma.profil.update({
     where: { id: session.profilId },
@@ -90,6 +101,8 @@ export async function POST(req: NextRequest) {
       paysResidence,
       paysResidencePrecision: paysResidence === "Autre" ? paysResidencePrecision.trim() : null,
       regimeSuggere: calculerRegimeSuggere(paysResidence),
+      tjmSouhaite: tjmNombre,
+      tjmSouhaiteDevise,
       disponibiliteRenseigneeLe: new Date(),
       questionnaireValide: true,
     },
