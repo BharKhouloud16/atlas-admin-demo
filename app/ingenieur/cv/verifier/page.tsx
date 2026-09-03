@@ -79,7 +79,7 @@ export default function VerifierCVPage() {
       setError(data.error ?? "Erreur.");
       return;
     }
-    router.push("/admin");
+    router.push("/ingenieur/disponibilite");
   }
 
   if (termine) {
@@ -92,7 +92,7 @@ export default function VerifierCVPage() {
         </p>
         {error && <p style={{ color: "crimson", fontSize: 13 }}>{error}</p>}
         <button onClick={finaliser} disabled={loading} style={{ padding: "10px 16px" }}>
-          {loading ? "Finalisation..." : "Terminer et accéder à mon espace"}
+          {loading ? "Finalisation..." : "Continuer"}
         </button>
       </main>
     );
