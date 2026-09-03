@@ -65,8 +65,8 @@ export async function POST(req: NextRequest) {
     type_contrat: mission.profil.type,
     nb_jours: mission.nbJours,
     tjm_vente: Math.round(mission.tjmVente).toString(),
-    tjm_cout: Math.round(tjmCout).toString(),
-    montant_profil: Math.round(mission.profil.montantSaisi).toString(),
+    tjm_cout: Math.round(tjmCout ?? 0).toString(),
+    montant_profil: Math.round(mission.profil.montantSaisi ?? 0).toString(),
     date_generation: new Date().toLocaleDateString("fr-FR"),
   });
 
