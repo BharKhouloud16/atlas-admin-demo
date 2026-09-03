@@ -35,6 +35,25 @@ const GOLFE = ["Émirats arabes unis", "Arabie Saoudite", "Qatar", "Koweït", "B
 // Suggestion indicative de profil contractuel selon le pays de résidence
 // déclaré. À confirmer/ajuster par l'Admin au cas par cas — ce n'est pas un
 // conseil fiscal ou juridique.
+// Devises proposées pour la prétention salariale (TJM souhaité) de
+// l'ingénieur — devises internationales usuelles + principales devises
+// locales des pays proposés ci-dessus (voir Disponibilite dans
+// EspaceIngenieur.tsx et /ingenieur/disponibilite).
+export const DEVISES = [
+  "EUR",
+  "USD",
+  "GBP",
+  "CHF",
+  "MAD", // Maroc
+  "TND", // Tunisie
+  "DZD", // Algérie
+  "AED", // Émirats arabes unis
+  "SAR", // Arabie Saoudite
+  "QAR", // Qatar
+  "CAD",
+  "Autre",
+];
+
 export function calculerRegimeSuggere(paysResidence: string): string {
   if (!paysResidence) return "";
   if (paysResidence === "France") {
@@ -50,4 +69,29 @@ export function calculerRegimeSuggere(paysResidence: string): string {
     return "Freelance international Golfe (contrat de prestation internationale, fiscalité locale à vérifier) — à confirmer avec un conseil local";
   }
   return "Freelance international (régime à étudier au cas par cas selon le pays de résidence)";
+}
+
+// Taux de change indicatifs et fixes (non connectés à un service de change
+// en temps réel) — utilisés uniquement pour donner à l'Admin un ordre de
+// grandeur en euros du TJM souhaité par l'ingénieur, afin de faciliter la
+// comparaison avec le TJM estimé du profil et le TJM de vente au client. À
+// rafraîchir périodiquement ; ne pas utiliser pour de la facturation réelle.
+const TAUX_VERS_EUR: Record<string, number> = {
+  EUR: 1,
+  USD: 0.92,
+  GBP: 1.17,
+  CHF: 1.04,
+  MAD: 0.092,
+  TND: 0.3,
+  DZD: 0.0069,
+  AED: 0.25,
+  SAR: 0.245,
+  QAR: 0.252,
+  CAD: 0.68,
+};
+
+export function convertirEnEur(montant: number, devise: string): number | null {
+  const taux = TAUX_VERS_EUR[devise];
+  if (!taux || !Number.isFinite(montant)) return null;
+  return Math.round(montant * taux * 100) / 100;
 }
