@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { convertirEnEur } from "@/lib/localisation";
 import { calculerScore, suggestionPourProfil, type ComparaisonTjm } from "@/lib/scoring";
+import { TOUTES_COMPETENCES } from "@/lib/competences";
+import { bleu, bleuFonce } from "@/lib/theme";
 
 type Profil = {
   id: string;
@@ -20,8 +22,21 @@ type Profil = {
   tjmSouhaiteDevise: string | null;
   cvUrl: string | null;
   cvValide: boolean;
+  cvImporteLe: string | null;
   questionnaireValide: boolean;
+  competences: string[];
+  entretiensRealises: number;
 };
+
+// Alerte simple : un CV importé mais pas encore validé depuis plus de 48h
+// mérite d'être traité en priorité (même logique que /admin/comptes-en-attente).
+const SEUIL_ALERTE_CV_HEURES = 48;
+function heuresEnAttente(dateIso: string): number {
+  return Math.floor((Date.now() - new Date(dateIso).getTime()) / (1000 * 60 * 60));
+}
+function cvEnAlerte(p: Profil): boolean {
+  return !!p.cvUrl && !p.cvValide && !!p.cvImporteLe && heuresEnAttente(p.cvImporteLe) >= SEUIL_ALERTE_CV_HEURES;
+}
 
 type Ligne = {
   p: Profil;
@@ -42,6 +57,9 @@ export default function ProfilsPage() {
   const [profils, setProfils] = useState<Profil[]>([]);
   const [chargement, setChargement] = useState(true);
   const [tri, setTri] = useState<"score" | "nom">("score");
+  const [recherche, setRecherche] = useState("");
+  const [filtreCompetence, setFiltreCompetence] = useState("");
+  const [filtrePays, setFiltrePays] = useState("");
 
   useEffect(() => {
     fetch("/api/profils")
@@ -63,12 +81,74 @@ export default function ProfilsPage() {
     });
   }, [profils]);
 
+  const paysDisponibles = useMemo(() => {
+    const ensemble = new Set(profils.map((p) => (p.paysResidence === "Autre" ? p.paysResidencePrecision : p.paysResidence)).filter(Boolean) as string[]);
+    return Array.from(ensemble).sort((a, b) => a.localeCompare(b));
+  }, [profils]);
+
+  const lignesFiltrees = useMemo(() => {
+    const rechercheNorm = recherche.trim().toLowerCase();
+    return lignes.filter((l) => {
+      if (rechercheNorm && !l.p.nom.toLowerCase().includes(rechercheNorm)) return false;
+      if (filtreCompetence && !l.p.competences.includes(filtreCompetence)) return false;
+      if (filtrePays) {
+        const pays = l.p.paysResidence === "Autre" ? l.p.paysResidencePrecision : l.p.paysResidence;
+        if (pays !== filtrePays) return false;
+      }
+      return true;
+    });
+  }, [lignes, recherche, filtreCompetence, filtrePays]);
+
   const lignesTriees = useMemo(() => {
-    const copie = [...lignes];
+    const copie = [...lignesFiltrees];
     if (tri === "score") copie.sort((a, b) => b.score - a.score);
     else copie.sort((a, b) => a.p.nom.localeCompare(b.p.nom));
     return copie;
-  }, [lignes, tri]);
+  }, [lignesFiltrees, tri]);
+
+  function exporterCsv() {
+    const entetes = [
+      "Ingénieur",
+      "Score",
+      "Séniorité",
+      "Pays de résidence",
+      "Disponibilité",
+      "TJM estimé (EUR)",
+      "TJM souhaité",
+      "EUR indicatif",
+      "Comparaison",
+      "Compétences",
+      "Entretiens",
+      "Suggestion",
+    ];
+    const echapper = (v: string) => `"${v.replace(/"/g, '""')}"`;
+    const lignesCsv = lignesTriees.map((l) =>
+      [
+        l.p.nom,
+        String(l.score),
+        l.p.seniorite ?? "",
+        (l.p.paysResidence === "Autre" ? l.p.paysResidencePrecision : l.p.paysResidence) ?? "",
+        l.p.disponibilite ?? "",
+        l.p.tjmEstime != null ? String(Math.round(l.p.tjmEstime)) : "",
+        l.p.tjmSouhaite != null ? `${l.p.tjmSouhaite} ${l.p.tjmSouhaiteDevise ?? ""}`.trim() : "",
+        l.tjmSouhaiteEur != null ? String(l.tjmSouhaiteEur) : "",
+        l.comparaison.label,
+        l.p.competences.join(" ; "),
+        String(l.p.entretiensRealises),
+        l.suggestion,
+      ]
+        .map(echapper)
+        .join(",")
+    );
+    const csv = [entetes.map(echapper).join(","), ...lignesCsv].join("\n");
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `profils-atlas-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   if (chargement) {
     return <div>Chargement...</div>;
@@ -79,6 +159,7 @@ export default function ProfilsPage() {
   const disponiblesMaintenant = profils.filter((p) => p.disponibilite === "Disponible immédiatement").length;
   const scoreMoyen = total > 0 ? Math.round(lignes.reduce((s, l) => s + l.score, 0) / total) : 0;
   const alertesStatut = lignes.filter((l) => l.p.regimeSuggere?.includes("⚠")).length;
+  const cvEnAttenteDepuisLongtemps = profils.filter(cvEnAlerte).length;
 
   const repartitionSeniorite = SENIORITES.map((s) => ({
     label: s,
@@ -97,7 +178,7 @@ export default function ProfilsPage() {
 
   return (
     <div>
-      <h1 style={{ marginBottom: 4 }}>Profils &amp; Matching</h1>
+      <h1 style={{ marginBottom: 4, color: bleuFonce }}>Profils &amp; Matching</h1>
       <p style={{ fontSize: 13, color: "#666", marginBottom: 20, maxWidth: 760 }}>
         Vue d&apos;ensemble des profils ingénieurs pour le matching client : score indicatif de proposabilité
         (séniorité, expérience, disponibilité, dossier complet, cohérence tarifaire) et suggestion d&apos;action pour
@@ -108,7 +189,12 @@ export default function ProfilsPage() {
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
         <Kpi label="Profils" valeur={String(total)} />
-        <Kpi label="CV validés" valeur={`${cvValides} / ${total}`} />
+        <Kpi
+          label="CV validés"
+          valeur={`${cvValides} / ${total}`}
+          note={cvEnAttenteDepuisLongtemps > 0 ? `${cvEnAttenteDepuisLongtemps} CV en attente depuis +48h` : undefined}
+          noteCouleur="#d97706"
+        />
         <Kpi label="Disponibles immédiatement" valeur={String(disponiblesMaintenant)} />
         <Kpi
           label="Score moyen"
@@ -123,17 +209,74 @@ export default function ProfilsPage() {
         <GraphiqueBarres titre="Répartition par disponibilité" donnees={repartitionDispo} total={total} couleur="#16a34a" />
       </div>
 
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+        <input
+          type="text"
+          placeholder="Rechercher un ingénieur..."
+          value={recherche}
+          onChange={(e) => setRecherche(e.target.value)}
+          style={{ fontSize: 13, padding: "6px 10px", border: "1px solid #ddd", borderRadius: 6, minWidth: 200 }}
+        />
+        <select
+          value={filtreCompetence}
+          onChange={(e) => setFiltreCompetence(e.target.value)}
+          style={{ fontSize: 13, padding: "6px 10px", border: "1px solid #ddd", borderRadius: 6 }}
+        >
+          <option value="">Toutes compétences</option>
+          {TOUTES_COMPETENCES.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+        <select
+          value={filtrePays}
+          onChange={(e) => setFiltrePays(e.target.value)}
+          style={{ fontSize: 13, padding: "6px 10px", border: "1px solid #ddd", borderRadius: 6 }}
+        >
+          <option value="">Tous pays</option>
+          {paysDisponibles.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+        {(recherche || filtreCompetence || filtrePays) && (
+          <button
+            onClick={() => {
+              setRecherche("");
+              setFiltreCompetence("");
+              setFiltrePays("");
+            }}
+            style={{ fontSize: 12, padding: "6px 10px" }}
+          >
+            Réinitialiser
+          </button>
+        )}
+        <span style={{ fontSize: 12, color: "#888" }}>
+          {lignesTriees.length} / {total} profil(s)
+        </span>
+        <div style={{ flex: 1 }} />
+        <button
+          onClick={exporterCsv}
+          style={{ fontSize: 12, padding: "6px 12px", background: bleu, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
+          disabled={lignesTriees.length === 0}
+        >
+          Exporter CSV
+        </button>
+      </div>
+
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
         <p style={{ fontSize: 13, color: "#666", margin: 0 }}>Trier par :</p>
         <button
           onClick={() => setTri("score")}
-          style={{ fontSize: 12, padding: "4px 10px", fontWeight: tri === "score" ? 700 : 400 }}
+          style={{ fontSize: 12, padding: "4px 10px", fontWeight: tri === "score" ? 700 : 400, color: tri === "score" ? bleu : undefined }}
         >
           Score
         </button>
         <button
           onClick={() => setTri("nom")}
-          style={{ fontSize: 12, padding: "4px 10px", fontWeight: tri === "nom" ? 700 : 400 }}
+          style={{ fontSize: 12, padding: "4px 10px", fontWeight: tri === "nom" ? 700 : 400, color: tri === "nom" ? bleu : undefined }}
         >
           Nom
         </button>
@@ -148,6 +291,8 @@ export default function ProfilsPage() {
               <th style={{ padding: "6px 8px" }}>Séniorité</th>
               <th style={{ padding: "6px 8px" }}>Pays de résidence</th>
               <th style={{ padding: "6px 8px" }}>Disponibilité</th>
+              <th style={{ padding: "6px 8px" }}>Compétences</th>
+              <th style={{ padding: "6px 8px" }}>Entretiens</th>
               <th style={{ padding: "6px 8px" }}>TJM estimé</th>
               <th style={{ padding: "6px 8px" }}>TJM souhaité</th>
               <th style={{ padding: "6px 8px" }}>EUR (indicatif)</th>
@@ -158,12 +303,21 @@ export default function ProfilsPage() {
           </thead>
           <tbody>
             {lignesTriees.map((l) => (
-              <LigneProfil key={l.p.id} l={l} />
+              <LigneProfil
+                key={l.p.id}
+                l={l}
+                onEntretiensChange={(id, valeur) =>
+                  setProfils((prev) => prev.map((p) => (p.id === id ? { ...p, entretiensRealises: valeur } : p)))
+                }
+              />
             ))}
           </tbody>
         </table>
         {profils.length === 0 && (
           <p style={{ fontSize: 13, color: "#888", marginTop: 12 }}>Aucun profil pour l&apos;instant.</p>
+        )}
+        {profils.length > 0 && lignesTriees.length === 0 && (
+          <p style={{ fontSize: 13, color: "#888", marginTop: 12 }}>Aucun profil ne correspond à ces filtres.</p>
         )}
       </div>
     </div>
@@ -184,7 +338,7 @@ function Kpi({
   return (
     <div style={{ border: "1px solid #e5e5e5", borderRadius: 8, padding: 14 }}>
       <p style={{ fontSize: 12, color: "#888", margin: "0 0 6px" }}>{label}</p>
-      <p style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>{valeur}</p>
+      <p style={{ fontSize: 24, fontWeight: 700, margin: 0, color: bleuFonce }}>{valeur}</p>
       {note && (
         <p style={{ fontSize: 11, color: noteCouleur ?? "#888", margin: "4px 0 0" }}>{note}</p>
       )}
@@ -232,7 +386,7 @@ function GraphiqueBarres({
   );
 }
 
-function LigneProfil({ l }: { l: Ligne }) {
+function LigneProfil({ l, onEntretiensChange }: { l: Ligne; onEntretiensChange: (id: string, valeur: number) => void }) {
   const { p, tjmSouhaiteEur, comparaison, score, suggestion } = l;
   const scoreCouleur = score >= 75 ? "#16a34a" : score >= 50 ? "#d97706" : "#dc2626";
   const alerteStatut = p.regimeSuggere?.includes("⚠");
@@ -258,6 +412,25 @@ function LigneProfil({ l }: { l: Ligne }) {
         )}
       </td>
       <td style={{ padding: "6px 8px" }}>{p.disponibilite ?? "-"}</td>
+      <td style={{ padding: "6px 8px", maxWidth: 180 }}>
+        {p.competences.length === 0 ? (
+          <span style={{ color: "#aaa" }}>-</span>
+        ) : (
+          <span title={p.competences.join(", ")} style={{ display: "inline-flex", flexWrap: "wrap", gap: 3 }}>
+            {p.competences.slice(0, 2).map((c) => (
+              <span key={c} style={{ fontSize: 11, padding: "1px 6px", borderRadius: 999, background: "#f0f2f6", color: "#4b5567" }}>
+                {c}
+              </span>
+            ))}
+            {p.competences.length > 2 && (
+              <span style={{ fontSize: 11, color: "#888" }}>+{p.competences.length - 2}</span>
+            )}
+          </span>
+        )}
+      </td>
+      <td style={{ padding: "6px 8px" }}>
+        <EntretiensCell profilId={p.id} valeur={p.entretiensRealises} onChange={onEntretiensChange} />
+      </td>
       <td style={{ padding: "6px 8px" }}>{p.tjmEstime != null ? Math.round(p.tjmEstime) + " EUR" : "-"}</td>
       <td style={{ padding: "6px 8px" }}>
         {p.tjmSouhaite != null ? `${p.tjmSouhaite} ${p.tjmSouhaiteDevise ?? ""}`.trim() : "-"}
@@ -269,14 +442,67 @@ function LigneProfil({ l }: { l: Ligne }) {
       <td style={{ padding: "6px 8px", fontSize: 12, color: "#4b5567", maxWidth: 280 }}>{suggestion}</td>
       <td style={{ padding: "6px 8px" }}>
         {p.cvUrl ? (
-          <a href={`/api/ingenieur/cv/fichier?profilId=${p.id}`} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>
-            Ouvrir
-          </a>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <a href={`/api/ingenieur/cv/fichier?profilId=${p.id}`} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>
+              Ouvrir
+            </a>
+            {cvEnAlerte(p) && (
+              <span
+                title={`CV importé le ${p.cvImporteLe ? new Date(p.cvImporteLe).toLocaleDateString("fr-FR") : "?"}, non encore validé`}
+                style={{ fontSize: 11, fontWeight: 600, color: "#b45309", whiteSpace: "nowrap" }}
+              >
+                ⚠ +48h
+              </span>
+            )}
+          </span>
         ) : (
           <span style={{ fontSize: 12, color: "#aaa" }}>-</span>
         )}
       </td>
     </tr>
+  );
+}
+
+// Nombre d'entretiens réalisés par l'ingénieur — pas de module d'entretiens
+// dédié pour l'instant, donc saisi manuellement par l'Admin ici même,
+// enregistré au blur (voir PATCH /api/profils). Affiché à l'ingénieur dans
+// ses statistiques personnelles (voir EspaceIngenieur.tsx).
+function EntretiensCell({
+  profilId,
+  valeur,
+  onChange,
+}: {
+  profilId: string;
+  valeur: number;
+  onChange: (id: string, valeur: number) => void;
+}) {
+  const [local, setLocal] = useState(String(valeur));
+  const [envoi, setEnvoi] = useState(false);
+
+  async function enregistrer() {
+    const n = Math.max(0, Math.round(Number(local) || 0));
+    setLocal(String(n));
+    if (n === valeur) return;
+    setEnvoi(true);
+    await fetch("/api/profils", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: profilId, entretiensRealises: n }),
+    });
+    setEnvoi(false);
+    onChange(profilId, n);
+  }
+
+  return (
+    <input
+      type="number"
+      min={0}
+      value={local}
+      onChange={(e) => setLocal(e.target.value)}
+      onBlur={enregistrer}
+      disabled={envoi}
+      style={{ width: 48, padding: "3px 6px", fontSize: 12, border: "1px solid #e4e7ee", borderRadius: 4 }}
+    />
   );
 }
 
