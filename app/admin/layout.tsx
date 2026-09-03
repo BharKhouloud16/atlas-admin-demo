@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   // Le middleware protège déjà ces routes, mais on revérifie ici pour
@@ -8,6 +9,18 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const session = await getSession();
   if (!session || session.role === "CLIENT") {
     redirect("/connexion");
+  }
+
+  // Un ingénieur doit d'abord importer son CV, puis valider chaque
+  // information extraite, avant d'accéder à son espace (voir /ingenieur/cv
+  // et /ingenieur/cv/verifier).
+  if (session.role === "INGENIEUR" && session.profilId) {
+    const profil = await prisma.profil.findUnique({
+      where: { id: session.profilId },
+      select: { cvUrl: true, cvValide: true },
+    });
+    if (profil && !profil.cvUrl) redirect("/ingenieur/cv");
+    if (profil && profil.cvUrl && !profil.cvValide) redirect("/ingenieur/cv/verifier");
   }
 
   return (
