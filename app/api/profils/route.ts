@@ -38,3 +38,25 @@ export async function POST(req: NextRequest) {
   });
   return NextResponse.json(profil, { status: 201 });
 }
+
+// Édition rapide d'un champ ponctuel depuis le tableau de matching (voir
+// /admin/profils) — pour l'instant uniquement entretiensRealises, saisi
+// manuellement par l'Admin faute de module de gestion des entretiens dédié.
+export async function PATCH(req: NextRequest) {
+  const session = await getSession();
+  if (!session || session.role !== "ADMIN") {
+    return NextResponse.json({ error: "Accès réservé à l'administrateur" }, { status: 403 });
+  }
+
+  const body = await req.json();
+  const { id, entretiensRealises } = body;
+  if (!id || typeof entretiensRealises !== "number" || entretiensRealises < 0) {
+    return NextResponse.json({ error: "Paramètres invalides." }, { status: 400 });
+  }
+
+  await prisma.profil.update({
+    where: { id },
+    data: { entretiensRealises: Math.round(entretiensRealises) },
+  });
+  return NextResponse.json({ ok: true });
+}
