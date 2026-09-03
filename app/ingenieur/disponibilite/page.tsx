@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { DISPONIBILITES, MISSIONS_APRES, PREAVIS } from "@/lib/disponibilite";
-import { PAYS, DEVISES, calculerRegimeSuggere } from "@/lib/localisation";
+import { DISPONIBILITES, STATUTS_EN_MISSION, MISSIONS_APRES, PREAVIS } from "@/lib/disponibilite";
+import { PAYS, NATIONALITES, DEVISES, calculerRegimeSuggere } from "@/lib/localisation";
+import { COMPETENCES_GROUPES } from "@/lib/competences";
 
 export default function DisponibilitePage() {
   const router = useRouter();
@@ -12,15 +13,18 @@ export default function DisponibilitePage() {
   const [erreur, setErreur] = useState("");
 
   const [disponibilite, setDisponibilite] = useState("");
+  const [disponibilitePrevue, setDisponibilitePrevue] = useState("");
   const [changerMissionActuelle, setChangerMissionActuelle] = useState<string>("");
   const [missionApres, setMissionApres] = useState("");
   const [preavis, setPreavis] = useState("");
   const [preavisPrecision, setPreavisPrecision] = useState("");
   const [nationalite, setNationalite] = useState("");
+  const [nationalitePrecision, setNationalitePrecision] = useState("");
   const [paysResidence, setPaysResidence] = useState("");
   const [paysResidencePrecision, setPaysResidencePrecision] = useState("");
   const [tjmSouhaite, setTjmSouhaite] = useState("");
   const [tjmSouhaiteDevise, setTjmSouhaiteDevise] = useState("EUR");
+  const [competences, setCompetences] = useState<string[]>([]);
 
   useEffect(() => {
     fetch("/api/ingenieur/disponibilite")
@@ -33,17 +37,25 @@ export default function DisponibilitePage() {
         if (data?.missionApres) setMissionApres(data.missionApres);
         if (data?.preavis) setPreavis(data.preavis);
         if (data?.preavisPrecision) setPreavisPrecision(data.preavisPrecision);
+        if (data?.disponibilitePrevue) setDisponibilitePrevue(data.disponibilitePrevue);
         if (data?.nationalite) setNationalite(data.nationalite);
+        if (data?.nationalitePrecision) setNationalitePrecision(data.nationalitePrecision);
         if (data?.paysResidence) setPaysResidence(data.paysResidence);
         if (data?.paysResidencePrecision) setPaysResidencePrecision(data.paysResidencePrecision);
         if (data?.tjmSouhaite) setTjmSouhaite(String(data.tjmSouhaite));
         if (data?.tjmSouhaiteDevise) setTjmSouhaiteDevise(data.tjmSouhaiteDevise);
+        if (Array.isArray(data?.competences)) setCompetences(data.competences);
         setChargement(false);
       });
   }, []);
 
-  const enMission = disponibilite === "En mission actuellement";
-  const regimeApercu = calculerRegimeSuggere(paysResidence);
+  function basculerCompetence(c: string) {
+    setCompetences((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
+  }
+
+  const enMission = STATUTS_EN_MISSION.includes(disponibilite);
+  const nonDisponible = disponibilite === "Non disponible immédiatement";
+  const regimeApercu = calculerRegimeSuggere(paysResidence, nationalite);
 
   async function valider() {
     setErreur("");
@@ -53,15 +65,18 @@ export default function DisponibilitePage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         disponibilite,
+        disponibilitePrevue: nonDisponible ? disponibilitePrevue : undefined,
         changerMissionActuelle: enMission ? changerMissionActuelle === "oui" : undefined,
         missionApres: enMission ? missionApres : undefined,
         preavis,
         preavisPrecision,
         nationalite,
+        nationalitePrecision,
         paysResidence,
         paysResidencePrecision,
         tjmSouhaite: Number(tjmSouhaite),
         tjmSouhaiteDevise,
+        competences,
       }),
     });
     setEnvoi(false);
@@ -82,7 +97,9 @@ export default function DisponibilitePage() {
     preavis &&
     (preavis !== "Autre" || preavisPrecision.trim()) &&
     (!enMission || (changerMissionActuelle && missionApres)) &&
-    nationalite.trim() &&
+    (!nonDisponible || disponibilitePrevue.trim()) &&
+    nationalite &&
+    (nationalite !== "Autre" || nationalitePrecision.trim()) &&
     paysResidence &&
     (paysResidence !== "Autre" || paysResidencePrecision.trim()) &&
     Number(tjmSouhaite) > 0 &&
@@ -114,6 +131,21 @@ export default function DisponibilitePage() {
             ))}
           </div>
         </div>
+
+        {nonDisponible && (
+          <div>
+            <label style={{ fontWeight: 600, fontSize: 14, display: "block", marginBottom: 8 }}>
+              Quelle est votre prévision de disponibilité ?
+            </label>
+            <input
+              type="text"
+              placeholder="Ex : disponible à partir du 15 octobre, dans 2 mois..."
+              value={disponibilitePrevue}
+              onChange={(e) => setDisponibilitePrevue(e.target.value)}
+              style={{ width: "100%", padding: 8, border: "1px solid #e4e7ee", borderRadius: 6, fontFamily: "inherit" }}
+            />
+          </div>
+        )}
 
         {enMission && (
           <>
@@ -195,13 +227,27 @@ export default function DisponibilitePage() {
           <label style={{ fontWeight: 600, fontSize: 14, display: "block", marginBottom: 8 }}>
             Quelle est votre nationalité ?
           </label>
-          <input
-            type="text"
-            placeholder="Ex : Française, Tunisienne..."
+          <select
             value={nationalite}
             onChange={(e) => setNationalite(e.target.value)}
             style={{ width: "100%", padding: 8, border: "1px solid #e4e7ee", borderRadius: 6, fontFamily: "inherit" }}
-          />
+          >
+            <option value="">Sélectionnez...</option>
+            {NATIONALITES.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+          {nationalite === "Autre" && (
+            <input
+              type="text"
+              placeholder="Précisez votre nationalité..."
+              value={nationalitePrecision}
+              onChange={(e) => setNationalitePrecision(e.target.value)}
+              style={{ width: "100%", padding: 8, border: "1px solid #e4e7ee", borderRadius: 6, fontFamily: "inherit", marginTop: 8 }}
+            />
+          )}
         </div>
 
         <div>
@@ -238,6 +284,47 @@ export default function DisponibilitePage() {
               <strong>Profil suggéré :</strong> {regimeApercu}
             </p>
           )}
+        </div>
+
+        <div>
+          <label style={{ fontWeight: 600, fontSize: 14, display: "block", marginBottom: 4 }}>
+            Vos compétences techniques
+          </label>
+          <p style={{ fontSize: 12, color: "#888", marginBottom: 10 }}>
+            Facultatif, mais très utile pour vous proposer les bonnes missions — cochez tout ce qui s&apos;applique.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {COMPETENCES_GROUPES.map((groupe) => (
+              <div key={groupe.categorie}>
+                <p style={{ fontSize: 11, textTransform: "uppercase", color: "#aab0ba", marginBottom: 6 }}>
+                  {groupe.categorie}
+                </p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {groupe.competences.map((c) => {
+                    const actif = competences.includes(c);
+                    return (
+                      <button
+                        type="button"
+                        key={c}
+                        onClick={() => basculerCompetence(c)}
+                        style={{
+                          fontSize: 12,
+                          padding: "5px 10px",
+                          borderRadius: 999,
+                          border: "1px solid " + (actif ? "#111" : "#e4e7ee"),
+                          background: actif ? "#111" : "#fff",
+                          color: actif ? "#fff" : "#4b5567",
+                          cursor: "pointer",
+                        }}
+                      >
+                        {c}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
 
         <div>
