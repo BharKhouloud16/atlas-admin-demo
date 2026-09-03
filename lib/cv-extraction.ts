@@ -99,24 +99,31 @@ Réponds UNIQUEMENT avec un tableau JSON de ${MODELE_CHAMPS_CV.length} chaînes 
         ],
       }),
     });
-  } catch {
+  } catch (e: any) {
     // Pas de réseau / API injoignable : on ne bloque pas l'import du CV.
+    console.error("[cv-extraction] Échec réseau vers l'API Anthropic :", e?.message ?? e);
     return modeleChampsVides();
   }
 
   if (!reponse.ok) {
+    const corpsErreur = await reponse.text().catch(() => "(corps illisible)");
+    console.error(
+      `[cv-extraction] Réponse non-OK de l'API Anthropic : ${reponse.status} ${reponse.statusText} — ${corpsErreur}`
+    );
     return modeleChampsVides();
   }
 
   let donnees: any;
   try {
     donnees = await reponse.json();
-  } catch {
+  } catch (e: any) {
+    console.error("[cv-extraction] Réponse Anthropic non-JSON :", e?.message ?? e);
     return modeleChampsVides();
   }
 
   const texte: string | undefined = donnees?.content?.[0]?.text;
   if (!texte) {
+    console.error("[cv-extraction] Pas de texte dans la réponse Anthropic :", JSON.stringify(donnees).slice(0, 500));
     return modeleChampsVides();
   }
 
@@ -126,11 +133,13 @@ Réponds UNIQUEMENT avec un tableau JSON de ${MODELE_CHAMPS_CV.length} chaînes 
     const fin = texte.lastIndexOf("]");
     const brut = debut !== -1 && fin !== -1 ? texte.slice(debut, fin + 1) : texte;
     valeurs = JSON.parse(brut);
-  } catch {
+  } catch (e: any) {
+    console.error("[cv-extraction] Échec du parsing JSON de la réponse :", e?.message ?? e, "texte:", texte.slice(0, 500));
     return modeleChampsVides();
   }
 
   if (!Array.isArray(valeurs)) {
+    console.error("[cv-extraction] La réponse parsée n'est pas un tableau :", JSON.stringify(valeurs).slice(0, 500));
     return modeleChampsVides();
   }
 
