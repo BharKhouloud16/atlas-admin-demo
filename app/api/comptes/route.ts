@@ -23,14 +23,16 @@ export async function GET() {
   return NextResponse.json(enAttente);
 }
 
-// Valide un compte, et pour un INGENIEUR, fixe son type de contrat et son
-// tarif au passage (négociés hors ligne avant validation).
+// Valide un compte. Pour un INGENIEUR, le type de contrat et le TJM ne sont
+// plus fixés ici : ils seront déterminés après import et validation de son
+// CV (voir /ingenieur/cv et /ingenieur/cv/verifier), sur la base de
+// l'analyse de son profil.
 export async function PATCH(req: NextRequest) {
   if (!(await requireAdmin())) {
     return NextResponse.json({ error: "Accès non autorisé" }, { status: 403 });
   }
 
-  const { userId, typeContrat, montant } = await req.json();
+  const { userId } = await req.json();
   if (!userId) {
     return NextResponse.json({ error: "userId requis" }, { status: 400 });
   }
@@ -40,13 +42,6 @@ export async function PATCH(req: NextRequest) {
     data: { actif: true },
     include: { profil: true, client: true },
   });
-
-  if (user.role === "INGENIEUR" && user.profilId && typeContrat && montant != null) {
-    await prisma.profil.update({
-      where: { id: user.profilId },
-      data: { type: typeContrat, montantSaisi: montant },
-    });
-  }
 
   const nom = user.role === "INGENIEUR" ? user.profil?.nom : user.client?.nom;
   if (nom) {
