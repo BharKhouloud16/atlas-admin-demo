@@ -51,19 +51,22 @@ model User {
 }
 
 model Client {
-  id                String    @id @default(cuid())
-  nom               String
-  secteur           String?
-  contactReferent   String?
-  email             String?
-  statutPreferere   TypeContrat?
-  dateDebutPrevue   DateTime?
-  notes             String?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-  missions          Mission[]
-  documents         Document[]
-  compte            User?     // le compte de connexion du client, une fois inscrit
+  id                  String    @id @default(cuid())
+  nom                 String    // raison sociale
+  secteur             String?
+  contactReferent     String?   // nom de la personne de contact côté client
+  email               String?
+  telephone           String?
+  identifiantEntreprise String? // RC / RNE selon le pays
+  formeJuridique      String?   // SARL, SA, EURL, Auto-entrepreneur, etc.
+  statutPreferere     TypeContrat?
+  dateDebutPrevue     DateTime?
+  notes               String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  missions            Mission[]
+  documents           Document[]
+  compte              User?     // le compte de connexion du client, une fois inscrit
 }
 
 // Fiche interne d'un profil d'ingénieur (tarifs). Créée automatiquement, vide
