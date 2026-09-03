@@ -1,16 +1,14 @@
-// Extraction des informations d'un CV.
+// Extraction automatique des informations d'un CV par IA (Claude), pour
+// pré-remplir le formulaire de vérification de l'ingénieur : celui-ci n'a
+// alors qu'à valider (ou corriger) des champs déjà remplis, pas à tout
+// retaper.
 //
-// Aujourd'hui : pas d'IA branchée. On génère une liste de champs "modèle",
-// laissés vides, que l'ingénieur remplit et valide lui-même un par un dans
-// /ingenieur/cv/verifier (saisie manuelle guidée).
-//
-// Demain : brancher un service d'extraction réel ici. La façon la plus simple
-// avec un modèle multimodal (ex. Claude) est d'envoyer directement le fichier
-// (PDF/image) au modèle et de lui demander de renvoyer un tableau JSON
-// { categorie, libelle, valeur }[] suivant le même modèle que ci-dessous,
-// pré-rempli avec les vraies valeurs extraites au lieu de chaînes vides.
-// Le reste du flux (affichage, validation champ par champ, agrégation dans
-// InfoCV) n'a pas besoin de changer.
+// Nécessite la variable d'environnement ANTHROPIC_API_KEY (clé API Claude),
+// à ajouter depuis le tableau de bord Vercel : Settings -> Environment
+// Variables -> ANTHROPIC_API_KEY. Si elle est absente, extraireInfosCV()
+// lève une erreur explicite plutôt que d'échouer silencieusement, et
+// l'appelant (voir app/api/ingenieur/cv/route.ts) retombe alors sur un
+// modèle de champs vides à compléter manuellement.
 
 export type ChampCV = {
   categorie: string;
@@ -38,9 +36,106 @@ const MODELE_CHAMPS_CV: Omit<ChampCV, "valeur">[] = [
   { categorie: "formation", libelle: "Certifications", ordre: 15 },
 ];
 
-// Point d'entrée appelé après l'upload du CV. Aujourd'hui renvoie simplement
-// le modèle vide ; demain, appellera le service d'IA avec le fichier et
-// renverra les champs pré-remplis.
-export async function extraireInfosCV(_cvUrl: string): Promise<ChampCV[]> {
+const MODELE_IA = "claude-haiku-4-5-20251001";
+
+// Modèle de champs vides, utilisé quand l'extraction IA est indisponible ou
+// échoue : l'ingénieur peut toujours saisir ses informations manuellement.
+export function modeleChampsVides(): ChampCV[] {
   return MODELE_CHAMPS_CV.map((champ) => ({ ...champ, valeur: "" }));
+}
+
+// Extrait les informations d'un CV (PDF) à partir de son contenu binaire.
+// `pdfBase64` doit être le contenu du fichier encodé en base64.
+// En cas d'échec (clé API manquante, erreur réseau, réponse inexploitable),
+// retourne un modèle de champs vides plutôt que de bloquer l'import du CV :
+// l'ingénieur pourra toujours saisir les informations manuellement dans le
+// formulaire de vérification.
+export async function extraireInfosCV(pdfBase64: string): Promise<ChampCV[]> {
+  const cle = process.env.ANTHROPIC_API_KEY;
+  if (!cle) {
+    throw new Error(
+      "L'extraction automatique du CV n'est pas configurée (ANTHROPIC_API_KEY manquant). " +
+        "Ajoutez une clé API Claude depuis le tableau de bord Vercel : Settings -> Environment Variables -> ANTHROPIC_API_KEY."
+    );
+  }
+
+  const listeChamps = MODELE_CHAMPS_CV.map(
+    (c, i) => `${i}. [${c.categorie}] ${c.libelle}`
+  ).join("\n");
+
+  const prompt = `Voici un CV au format PDF. Extrais-en les informations suivantes, dans cet ordre exact :
+
+${listeChamps}
+
+Réponds UNIQUEMENT avec un tableau JSON de ${MODELE_CHAMPS_CV.length} chaînes de caractères (pas d'objet, pas de texte autour), une par champ, dans le même ordre que la liste ci-dessus. Si une information est absente du CV, mets une chaîne vide "" pour ce champ. Pour "Années d'expérience", donne juste un nombre (ex: "7"). Pour "Séniorité", choisis parmi Junior, Confirmé, Senior, Expert en fonction du nombre d'années et du niveau des postes occupés. Reste factuel et base-toi uniquement sur le contenu réel du CV, ne fabrique jamais d'information.`;
+
+  let reponse: Response;
+  try {
+    reponse = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": cle,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: MODELE_IA,
+        max_tokens: 2000,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "document",
+                source: {
+                  type: "base64",
+                  media_type: "application/pdf",
+                  data: pdfBase64,
+                },
+              },
+              { type: "text", text: prompt },
+            ],
+          },
+        ],
+      }),
+    });
+  } catch {
+    // Pas de réseau / API injoignable : on ne bloque pas l'import du CV.
+    return modeleChampsVides();
+  }
+
+  if (!reponse.ok) {
+    return modeleChampsVides();
+  }
+
+  let donnees: any;
+  try {
+    donnees = await reponse.json();
+  } catch {
+    return modeleChampsVides();
+  }
+
+  const texte: string | undefined = donnees?.content?.[0]?.text;
+  if (!texte) {
+    return modeleChampsVides();
+  }
+
+  let valeurs: unknown;
+  try {
+    const debut = texte.indexOf("[");
+    const fin = texte.lastIndexOf("]");
+    const brut = debut !== -1 && fin !== -1 ? texte.slice(debut, fin + 1) : texte;
+    valeurs = JSON.parse(brut);
+  } catch {
+    return modeleChampsVides();
+  }
+
+  if (!Array.isArray(valeurs)) {
+    return modeleChampsVides();
+  }
+
+  return MODELE_CHAMPS_CV.map((champ, i) => ({
+    ...champ,
+    valeur: typeof valeurs[i] === "string" ? valeurs[i] : "",
+  }));
 }
