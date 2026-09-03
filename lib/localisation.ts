@@ -28,6 +28,34 @@ export const PAYS = [
   "Autre",
 ];
 
+// Nationalités proposées dans le questionnaire de disponibilité (voir
+// /ingenieur/disponibilite et EspaceIngenieur.tsx) — liste fermée à choix
+// dans un menu déroulant (plus de saisie libre), calquée sur PAYS ci-dessus ;
+// "Autre" permet une précision libre si aucune option ne convient.
+export const NATIONALITES = [
+  "Française",
+  "Belge",
+  "Suisse",
+  "Allemande",
+  "Espagnole",
+  "Italienne",
+  "Portugaise",
+  "Britannique",
+  "Luxembourgeoise",
+  "Tunisienne",
+  "Marocaine",
+  "Algérienne",
+  "Émirienne",
+  "Saoudienne",
+  "Qatarienne",
+  "Koweïtienne",
+  "Bahreïnienne",
+  "Omanaise",
+  "Canadienne",
+  "Américaine",
+  "Autre",
+];
+
 const EUROPE = ["Belgique", "Suisse", "Allemagne", "Espagne", "Italie", "Portugal", "Royaume-Uni", "Luxembourg"];
 const MAGHREB = ["Tunisie", "Maroc", "Algérie"];
 const GOLFE = ["Émirats arabes unis", "Arabie Saoudite", "Qatar", "Koweït", "Bahreïn", "Oman"];

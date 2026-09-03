@@ -11,6 +11,7 @@ type SessionUser = {
   role: "ADMIN" | "INGENIEUR" | "CLIENT";
   profilId: string | null;
   clientId: string | null;
+  desactive?: boolean; // true pour un ingénieur ayant temporairement désactivé son compte
 };
 
 export async function createSession(user: SessionUser) {

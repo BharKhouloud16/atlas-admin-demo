@@ -43,6 +43,34 @@ export async function envoyerEmailInscriptionEnAttente(params: {
   });
 }
 
+// Email de vérification d'adresse envoyé juste après l'inscription (voir
+// app/api/auth/signup/route.ts) : tant que le lien n'est pas cliqué,
+// l'ingénieur/client ne peut pas se connecter (voir app/api/auth/login/route.ts).
+// ⚠️ Comme le reste de ce fichier, aucun fournisseur d'email n'étant branché,
+// le lien n'est PAS réellement envoyé pour l'instant : il est seulement
+// loggé ici, et renvoyé directement dans la réponse de /api/auth/signup pour
+// permettre de tester le parcours en attendant qu'un vrai fournisseur
+// (Resend...) soit configuré.
+export async function envoyerEmailVerificationAdresse(params: {
+  to: string;
+  nom: string;
+  token: string;
+}) {
+  const { to, nom, token } = params;
+  const lien = `https://atlas-admin-demo.vercel.app/verifier-email?token=${token}`;
+  await envoyerEmail({
+    to,
+    subject: "Atlas Quality Partners — Confirmez votre adresse email",
+    html: `
+      <p>Bonjour ${nom},</p>
+      <p>Merci de confirmer votre adresse email pour finaliser votre inscription :</p>
+      <p><a href="${lien}">${lien}</a></p>
+      <p>Ce lien est valable 24 heures.</p>
+      <p>À bientôt,<br/>L'équipe Atlas Quality Partners</p>
+    `,
+  });
+}
+
 export async function envoyerEmailCompteValide(params: {
   to: string;
   nom: string;
