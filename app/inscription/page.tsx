@@ -158,7 +158,8 @@ export default function InscriptionPage() {
 
       <p style={{ fontSize: 12, color: "#888", marginTop: 16 }}>
         Votre compte sera actif après validation par l&apos;administrateur.
-        {role === "INGENIEUR" && " Le type de contrat et le tarif seront fixés à ce moment-là, selon ce qui aura été convenu avec vous."}
+        {role === "INGENIEUR" &&
+          " Vous pourrez ensuite importer votre CV : le type de contrat et le tarif seront déterminés à partir de votre profil."}
       </p>
     </main>
   );
