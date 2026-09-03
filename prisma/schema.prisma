@@ -107,6 +107,15 @@ model Profil {
   disponibiliteRenseigneeLe  DateTime?
   questionnaireValide        Boolean   @default(false) // true une fois le questionnaire soumis
 
+  // Localisation & régime adapté (voir lib/localisation.ts) — permet de
+  // proposer un profil/contrat adapté à la situation de l'ingénieur
+  // (France, Maghreb, Golfe, etc.). regimeSuggere est calculé
+  // automatiquement à partir de paysResidence, à titre indicatif.
+  nationalite                String?
+  paysResidence              String?
+  paysResidencePrecision     String?   // précision libre si paysResidence = "Autre"
+  regimeSuggere              String?
+
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
   missions            Mission[]
