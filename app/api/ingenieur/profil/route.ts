@@ -17,18 +17,25 @@ export async function GET() {
       nom: true,
       cvNomFichier: true,
       cvImporteLe: true,
+      cvValide: true,
       disponibilite: true,
+      disponibilitePrevue: true,
       changerMissionActuelle: true,
       missionApres: true,
       preavis: true,
       preavisPrecision: true,
       nationalite: true,
+      nationalitePrecision: true,
       paysResidence: true,
       paysResidencePrecision: true,
       regimeSuggere: true,
       tjmSouhaite: true,
       tjmSouhaiteDevise: true,
       disponibiliteRenseigneeLe: true,
+      questionnaireValide: true,
+      competences: true,
+      entretiensRealises: true,
+      createdAt: true,
       infosCv: { orderBy: { ordre: "asc" } },
       missions: {
         orderBy: { createdAt: "desc" },
@@ -48,5 +55,18 @@ export async function GET() {
     return NextResponse.json({ error: "Profil introuvable" }, { status: 404 });
   }
 
-  return NextResponse.json(profil);
+  // Note client moyenne (voir Evaluation dans prisma/schema.prisma) —
+  // affichée dans les statistiques personnelles (EspaceIngenieur.tsx),
+  // jamais utilisée pour bloquer ou pénaliser un profil sans historique.
+  const agregatEvaluations = await prisma.evaluation.aggregate({
+    where: { mission: { profilId: session.profilId } },
+    _avg: { note: true },
+    _count: { note: true },
+  });
+
+  return NextResponse.json({
+    ...profil,
+    evaluationMoyenne: agregatEvaluations._avg.note,
+    nombreEvaluations: agregatEvaluations._count.note,
+  });
 }
