@@ -1,0 +1,121 @@
+// Base de données Atlas Quality Partners
+// Deux modules publics : Connexion (/connexion) et Inscription (/inscription)
+// 3 rôles : ADMIN (créé manuellement, jamais par inscription publique),
+// INGENIEUR (s'inscrit lui-même, compte en attente jusqu'à validation admin),
+// CLIENT (s'inscrit lui-même, espace suivi + documents)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TypeContrat {
+  SALARIE
+  FREELANCE
+  PORTAGE
+}
+
+enum Role {
+  ADMIN       // accès complet : clients, profils, hypothèses, tous les contrats, coûts internes, validation des inscriptions
+  INGENIEUR   // s'inscrit lui-même ; voit uniquement ses propres missions, aucune donnée tarifaire
+  CLIENT      // s'inscrit lui-même ; voit le suivi et les documents de ses propres missions uniquement
+}
+
+enum StatutDocument {
+  RAPPORT_AUDIT
+  CONTRAT
+  FACTURE
+  AUTRE
+}
+
+// Compte de connexion — un seul par email, quel que soit le rôle.
+// Un compte auto-inscrit (INGENIEUR ou CLIENT) démarre avec actif=false :
+// il ne peut pas se connecter tant qu'un ADMIN ne l'a pas validé.
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  role         Role
+  actif        Boolean  @default(true) // false pour tout compte auto-inscrit, en attente de validation
+  createdAt    DateTime @default(now())
+
+  profilId     String?  @unique // renseigné pour un compte INGENIEUR : relie à sa fiche Profil (tarifs)
+  profil       Profil?  @relation(fields: [profilId], references: [id])
+
+  clientId     String?  @unique // renseigné pour un compte CLIENT : relie à sa fiche Client
+  client       Client?  @relation(fields: [clientId], references: [id])
+}
+
+model Client {
+  id                String    @id @default(cuid())
+  nom               String
+  secteur           String?
+  contactReferent   String?
+  email             String?
+  statutPreferere   TypeContrat?
+  dateDebutPrevue   DateTime?
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  missions          Mission[]
+  documents         Document[]
+  compte            User?     // le compte de connexion du client, une fois inscrit
+}
+
+// Fiche interne d'un profil d'ingénieur (tarifs). Créée automatiquement, vide
+// de tarif, quand un ingénieur s'inscrit — l'Admin complète le type de
+// contrat et le montant lors de la validation (Article "négociation").
+model Profil {
+  id            String      @id @default(cuid())
+  nom           String
+  type          TypeContrat?
+  montantSaisi  Float?      // laissé vide à l'inscription, renseigné par l'Admin à la validation
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  missions      Mission[]
+  compte        User?
+}
+
+model Mission {
+  id            String     @id @default(cuid())
+  repere        String?
+  client        Client     @relation(fields: [clientId], references: [id])
+  clientId      String
+  profil        Profil     @relation(fields: [profilId], references: [id])
+  profilId      String
+  nbJours       Int
+  margeCible    Float      @default(0.30)
+  tjmVente      Float
+  statut        String     @default("En cours") // En cours / Terminée / Annulée
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  documents     Document[]
+}
+
+// Document consultable par le client dans son espace (rapport d'audit,
+// contrat signé, facture...). fileUrl pointe vers un stockage externe
+// (Supabase Storage, S3...) — voir lib/storage.ts.
+model Document {
+  id         String         @id @default(cuid())
+  titre      String
+  type       StatutDocument @default(AUTRE)
+  fileUrl    String
+  mission    Mission?       @relation(fields: [missionId], references: [id])
+  missionId  String?
+  client     Client         @relation(fields: [clientId], references: [id])
+  clientId   String
+  createdAt  DateTime       @default(now())
+}
+
+model Hypotheses {
+  id                 String @id @default("singleton")
+  joursAn            Int    @default(218)
+  chargesSalarie     Float  @default(0.42)
+  fraisFreelance     Float  @default(0.08)
+  overhead           Float  @default(0.15)
+  margeDefaut        Float  @default(0.30)
+}
