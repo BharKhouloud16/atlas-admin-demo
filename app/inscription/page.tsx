@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 export default function InscriptionPage() {
@@ -9,9 +9,18 @@ export default function InscriptionPage() {
   const [nom, setNom] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Pré-sélectionne le rôle si on arrive depuis un bouton "Espace Ingénieur" /
+  // "Espace Partenaire" de la page d'accueil ou de la connexion (?role=...).
+  useEffect(() => {
+    const param = new URLSearchParams(window.location.search).get("role");
+    if (param === "ingenieur") setRole("INGENIEUR");
+    if (param === "client") setRole("CLIENT");
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -19,6 +28,10 @@ export default function InscriptionPage() {
 
     if (password.length < 8) {
       setError("Le mot de passe doit contenir au moins 8 caractères.");
+      return;
+    }
+    if (password !== passwordConfirm) {
+      setError("Les deux mots de passe ne correspondent pas.");
       return;
     }
 
@@ -42,7 +55,7 @@ export default function InscriptionPage() {
     return (
       <main style={{ maxWidth: 360, margin: "80px auto", padding: 24 }}>
         <h1 style={{ fontSize: 20, marginBottom: 12 }}>Compte créé</h1>
-        <p>Votre compte est en attente de validation par l'administrateur. Vous recevrez un accès dès qu'il sera activé.</p>
+        <p>Votre compte est en attente de validation par l&apos;administrateur. Vous recevrez un accès dès qu&apos;il sera activé.</p>
         <button onClick={() => router.push("/connexion")} style={{ marginTop: 16 }}>Retour à la connexion</button>
       </main>
     );
@@ -70,12 +83,13 @@ export default function InscriptionPage() {
         />
         <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required />
         <input type="password" placeholder="Mot de passe (8 caractères min.)" value={password} onChange={(e) => setPassword(e.target.value)} required />
+        <input type="password" placeholder="Confirmer le mot de passe" value={passwordConfirm} onChange={(e) => setPasswordConfirm(e.target.value)} required />
         {error && <p style={{ color: "crimson", fontSize: 13 }}>{error}</p>}
         <button type="submit" disabled={loading}>{loading ? "Création..." : "Créer mon compte"}</button>
       </form>
 
       <p style={{ fontSize: 12, color: "#888", marginTop: 16 }}>
-        Votre compte sera actif après validation par l'administrateur.
+        Votre compte sera actif après validation par l&apos;administrateur.
         {role === "INGENIEUR" && " Le type de contrat et le tarif seront fixés à ce moment-là, selon ce qui aura été convenu avec vous."}
       </p>
     </main>
