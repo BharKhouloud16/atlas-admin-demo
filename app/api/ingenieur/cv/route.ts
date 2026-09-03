@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { uploaderFichier } from "@/lib/storage";
-import { extraireInfosCV, modeleChampsVides } from "@/lib/cv-extraction";
+import { extraireInfosCV, modeleChampsVides, type ResultatExtractionCV } from "@/lib/cv-extraction";
 
 // Upload du CV par l'ingénieur connecté. Le contenu du fichier est envoyé à
 // l'IA (Claude) pour pré-remplir les champs InfoCV avec les informations
@@ -32,23 +32,42 @@ export async function POST(req: NextRequest) {
 
   const octets = await fichier.arrayBuffer();
 
-  let url: string;
-  try {
-    const resultat = await uploaderFichier(fichier.name, new Blob([octets], { type: fichier.type }), "cv");
-    url = resultat.url;
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message ?? "Échec de l'upload" }, { status: 500 });
-  }
-
+  // Extraction + vérification du secteur AVANT l'upload : un CV hors-sujet
+  // (pas informatique/QA) est rejeté sans être stocké ni rattaché au profil.
   const base64 = Buffer.from(octets).toString("base64");
-  let champs;
+  let resultat: ResultatExtractionCV;
   try {
-    champs = await extraireInfosCV(base64);
+    resultat = await extraireInfosCV(base64);
   } catch (e: any) {
     // Clé API absente ou mal configurée : on ne bloque pas l'import, les
-    // champs seront simplement vides à saisir manuellement.
+    // champs seront simplement vides à saisir manuellement (et on ne peut
+    // alors pas vérifier le secteur — l'import n'est pas bloqué pour autant).
     console.error("Extraction IA du CV impossible :", e.message ?? e);
-    champs = modeleChampsVides();
+    resultat = { horsSecteur: false, secteurDetecte: "", champs: modeleChampsVides() };
+  }
+
+  if (resultat.horsSecteur) {
+    // Message bloquant mais professionnel et poli : on explique le
+    // positionnement du site plutôt que de simplement rejeter le fichier.
+    return NextResponse.json(
+      {
+        error:
+          "Merci pour votre CV, mais celui-ci ne semble pas correspondre à un profil informatique" +
+          (resultat.secteurDetecte ? ` (domaine identifié : ${resultat.secteurDetecte})` : "") +
+          ". Atlas Quality Partners est une plateforme dédiée exclusivement au recrutement de professionnels de l'informatique (développement, QA/test logiciel, cybersécurité, data, DevOps, IT en général) et ne peut malheureusement pas traiter les candidatures pour d'autres métiers. Si vous pensez qu'il s'agit d'une erreur, n'hésitez pas à nous contacter à contact@atlas-qa.com.",
+      },
+      { status: 422 }
+    );
+  }
+
+  const champs = resultat.champs;
+
+  let url: string;
+  try {
+    const uploade = await uploaderFichier(fichier.name, new Blob([octets], { type: fichier.type }), "cv");
+    url = uploade.url;
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message ?? "Échec de l'upload" }, { status: 500 });
   }
 
   await prisma.$transaction([
