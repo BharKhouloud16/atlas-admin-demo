@@ -22,9 +22,11 @@ export default function InscriptionPage() {
   const [contactReferent, setContactReferent] = useState("");
   const [telephone, setTelephone] = useState("");
 
+  const [consentementRgpd, setConsentementRgpd] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [lienVerificationDemo, setLienVerificationDemo] = useState("");
 
   // Pré-sélectionne le rôle si on arrive depuis un bouton "Espace Ingénieur" /
   // "Espace Partenaire" de la page d'accueil ou de la connexion (?role=...).
@@ -56,6 +58,10 @@ export default function InscriptionPage() {
       setError("Le numéro de téléphone est requis.");
       return;
     }
+    if (!consentementRgpd) {
+      setError("Merci d'accepter le traitement de vos données pour continuer.");
+      return;
+    }
 
     setLoading(true);
     const res = await fetch("/api/auth/signup", {
@@ -66,6 +72,7 @@ export default function InscriptionPage() {
         password,
         role,
         nom,
+        consentementRgpd,
         ...(role === "CLIENT"
           ? { identifiantEntreprise, formeJuridique, contactReferent, telephone }
           : {}),
@@ -78,6 +85,7 @@ export default function InscriptionPage() {
       setError(data.error ?? "Erreur lors de l'inscription.");
       return;
     }
+    setLienVerificationDemo(data.lienVerificationDemo ?? "");
     setDone(true);
   }
 
@@ -86,9 +94,19 @@ export default function InscriptionPage() {
       <main style={{ maxWidth: 380, margin: "80px auto", padding: 24 }}>
         <h1 style={{ fontSize: 20, marginBottom: 12 }}>Compte créé</h1>
         <p>
-          Votre compte est en attente de validation par l&apos;administrateur. Vous recevrez un email
-          de confirmation dès que votre accès sera activé.
+          Un email de confirmation vous a été envoyé : cliquez sur le lien qu&apos;il contient pour valider votre
+          adresse. Votre compte sera ensuite en attente de validation par l&apos;administrateur, qui vous
+          préviendra par email dès que votre accès sera activé.
         </p>
+        {lienVerificationDemo && (
+          <p style={{ fontSize: 12, color: "#888", background: "#f6f7fa", padding: 10, borderRadius: 6, marginTop: 12 }}>
+            Démo — aucun fournisseur d&apos;email n&apos;est branché sur ce site de test : cliquez ici pour simuler
+            la réception de l&apos;email de confirmation :{" "}
+            <a href={lienVerificationDemo} style={{ color: "#2557d6" }}>
+              confirmer mon adresse email
+            </a>
+          </p>
+        )}
         <button onClick={() => router.push("/connexion")} style={{ marginTop: 16 }}>Retour à la connexion</button>
       </main>
     );
@@ -152,6 +170,24 @@ export default function InscriptionPage() {
         <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required />
         <input type="password" placeholder="Mot de passe (8 caractères min.)" value={password} onChange={(e) => setPassword(e.target.value)} required />
         <input type="password" placeholder="Confirmer le mot de passe" value={passwordConfirm} onChange={(e) => setPasswordConfirm(e.target.value)} required />
+
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12, color: "#4b5567" }}>
+          <input
+            type="checkbox"
+            checked={consentementRgpd}
+            onChange={(e) => setConsentementRgpd(e.target.checked)}
+            style={{ marginTop: 2 }}
+          />
+          <span>
+            J&apos;accepte que mes données soient traitées par Atlas Quality Partners pour être mis(e) en relation
+            avec des missions, conformément à la{" "}
+            <a href="/confidentialite" target="_blank" rel="noreferrer" style={{ color: "#2557d6" }}>
+              politique de confidentialité
+            </a>{" "}
+            (RGPD).
+          </span>
+        </label>
+
         {error && <p style={{ color: "crimson", fontSize: 13 }}>{error}</p>}
         <button type="submit" disabled={loading}>{loading ? "Création..." : "Créer mon compte"}</button>
       </form>
