@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { DISPONIBILITES, MISSIONS_APRES, PREAVIS } from "@/lib/disponibilite";
-import { PAYS, DEVISES, calculerRegimeSuggere } from "@/lib/localisation";
+import { useRouter } from "next/navigation";
+import { DISPONIBILITES, STATUTS_EN_MISSION, MISSIONS_APRES, PREAVIS } from "@/lib/disponibilite";
+import { PAYS, NATIONALITES, DEVISES, calculerRegimeSuggere } from "@/lib/localisation";
 
 type InfoCV = {
   id: string;
@@ -26,11 +27,13 @@ type ProfilData = {
   cvNomFichier: string | null;
   cvImporteLe: string | null;
   disponibilite: string | null;
+  disponibilitePrevue: string | null;
   changerMissionActuelle: boolean | null;
   missionApres: string | null;
   preavis: string | null;
   preavisPrecision: string | null;
   nationalite: string | null;
+  nationalitePrecision: string | null;
   paysResidence: string | null;
   paysResidencePrecision: string | null;
   regimeSuggere: string | null;
@@ -41,7 +44,7 @@ type ProfilData = {
   missions: Mission[];
 };
 
-const ONGLETS = ["Profil", "Historique de mission avec Atlas", "Documents", "Emploi du temps"] as const;
+const ONGLETS = ["Profil", "Historique de mission avec Atlas", "Documents", "Emploi du temps", "Mon compte"] as const;
 type Onglet = (typeof ONGLETS)[number];
 
 export default function EspaceIngenieur() {
@@ -75,6 +78,7 @@ export default function EspaceIngenieur() {
         {onglet === "Historique de mission avec Atlas" && <OngletHistorique missions={data.missions} />}
         {onglet === "Documents" && <OngletDocuments data={data} />}
         {onglet === "Emploi du temps" && <OngletEmploiDuTemps missionActive={missionActive} />}
+        {onglet === "Mon compte" && <OngletCompte missionActive={missionActive} />}
       </div>
 
       <nav style={{ width: 220, flexShrink: 0 }}>
@@ -125,11 +129,14 @@ function StatutBadge({ data, missionActive }: { data: ProfilData; missionActive:
   } else if (data.disponibilite === "Disponible immédiatement") {
     label = "Disponible";
     couleur = "#16a34a";
-  } else if (data.disponibilite === "En mission actuellement") {
-    label = "En mission (déclaré)";
+  } else if (data.disponibilite === "En mission actuellement chez Atlas") {
+    label = "En mission chez Atlas (déclaré)";
     couleur = "#2563eb";
-  } else if (data.disponibilite === "Indisponible") {
-    label = "Indisponible";
+  } else if (data.disponibilite === "En mission actuellement chez un autre client") {
+    label = "En mission chez un autre client";
+    couleur = "#7c3aed";
+  } else if (data.disponibilite === "Non disponible immédiatement") {
+    label = data.disponibilitePrevue ? `Non disponible (prévu : ${data.disponibilitePrevue})` : "Non disponible";
     couleur = "#dc2626";
   }
 
@@ -237,6 +244,7 @@ function ChampEditable({ info, recharger }: { info: InfoCV; recharger: () => voi
 function Disponibilite({ data, recharger }: { data: ProfilData; recharger: () => void }) {
   const [edition, setEdition] = useState(false);
   const [disponibilite, setDisponibilite] = useState(data.disponibilite ?? "");
+  const [disponibilitePrevue, setDisponibilitePrevue] = useState(data.disponibilitePrevue ?? "");
   const [changerMissionActuelle, setChangerMissionActuelle] = useState(
     data.changerMissionActuelle === true ? "oui" : data.changerMissionActuelle === false ? "non" : ""
   );
@@ -244,6 +252,7 @@ function Disponibilite({ data, recharger }: { data: ProfilData; recharger: () =>
   const [preavis, setPreavis] = useState(data.preavis ?? "");
   const [preavisPrecision, setPreavisPrecision] = useState(data.preavisPrecision ?? "");
   const [nationalite, setNationalite] = useState(data.nationalite ?? "");
+  const [nationalitePrecision, setNationalitePrecision] = useState(data.nationalitePrecision ?? "");
   const [paysResidence, setPaysResidence] = useState(data.paysResidence ?? "");
   const [paysResidencePrecision, setPaysResidencePrecision] = useState(data.paysResidencePrecision ?? "");
   const [tjmSouhaite, setTjmSouhaite] = useState(data.tjmSouhaite != null ? String(data.tjmSouhaite) : "");
@@ -251,7 +260,8 @@ function Disponibilite({ data, recharger }: { data: ProfilData; recharger: () =>
   const [envoi, setEnvoi] = useState(false);
   const [erreur, setErreur] = useState("");
 
-  const enMission = disponibilite === "En mission actuellement";
+  const enMission = STATUTS_EN_MISSION.includes(disponibilite);
+  const nonDisponible = disponibilite === "Non disponible immédiatement";
   const regimeApercu = calculerRegimeSuggere(paysResidence);
 
   async function enregistrer() {
@@ -262,11 +272,13 @@ function Disponibilite({ data, recharger }: { data: ProfilData; recharger: () =>
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         disponibilite,
+        disponibilitePrevue: nonDisponible ? disponibilitePrevue : undefined,
         changerMissionActuelle: enMission ? changerMissionActuelle === "oui" : undefined,
         missionApres: enMission ? missionApres : undefined,
         preavis,
         preavisPrecision,
         nationalite,
+        nationalitePrecision,
         paysResidence,
         paysResidencePrecision,
         tjmSouhaite: Number(tjmSouhaite),
@@ -287,14 +299,17 @@ function Disponibilite({ data, recharger }: { data: ProfilData; recharger: () =>
     return (
       <div style={{ border: "1px solid #e4e7ee", borderRadius: 8, padding: 12, display: "flex", flexDirection: "column", gap: 6 }}>
         <Ligne label="Statut" valeur={data.disponibilite} />
-        {data.disponibilite === "En mission actuellement" && (
+        {data.disponibilite === "Non disponible immédiatement" && (
+          <Ligne label="Prévision de disponibilité" valeur={data.disponibilitePrevue} />
+        )}
+        {STATUTS_EN_MISSION.includes(data.disponibilite ?? "") && (
           <>
             <Ligne label="Souhaite changer" valeur={data.changerMissionActuelle ? "Oui" : "Non"} />
             <Ligne label="Après la mission" valeur={data.missionApres} />
           </>
         )}
         <Ligne label="Préavis" valeur={data.preavis === "Autre" ? data.preavisPrecision : data.preavis} />
-        <Ligne label="Nationalité" valeur={data.nationalite} />
+        <Ligne label="Nationalité" valeur={data.nationalite === "Autre" ? data.nationalitePrecision : data.nationalite} />
         <Ligne label="Pays de résidence" valeur={data.paysResidence === "Autre" ? data.paysResidencePrecision : data.paysResidence} />
         <Ligne
           label="Prétention salariale (TJM souhaité)"
@@ -328,6 +343,18 @@ function Disponibilite({ data, recharger }: { data: ProfilData; recharger: () =>
           ))}
         </select>
       </div>
+      {nonDisponible && (
+        <div>
+          <p style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>Prévision de disponibilité</p>
+          <input
+            type="text"
+            placeholder="Ex : disponible à partir du 15 octobre, dans 2 mois..."
+            value={disponibilitePrevue}
+            onChange={(e) => setDisponibilitePrevue(e.target.value)}
+            style={{ width: "100%", padding: 6 }}
+          />
+        </div>
+      )}
       {enMission && (
         <>
           <div>
@@ -372,12 +399,22 @@ function Disponibilite({ data, recharger }: { data: ProfilData; recharger: () =>
       </div>
       <div>
         <p style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>Nationalité</p>
-        <input
-          type="text"
-          value={nationalite}
-          onChange={(e) => setNationalite(e.target.value)}
-          style={{ width: "100%", padding: 6 }}
-        />
+        <select value={nationalite} onChange={(e) => setNationalite(e.target.value)} style={{ width: "100%", padding: 6 }}>
+          <option value="">Sélectionnez...</option>
+          {NATIONALITES.map((o) => (
+            <option key={o} value={o}>
+              {o}
+            </option>
+          ))}
+        </select>
+        {nationalite === "Autre" && (
+          <input
+            type="text"
+            value={nationalitePrecision}
+            onChange={(e) => setNationalitePrecision(e.target.value)}
+            style={{ width: "100%", padding: 6, marginTop: 6 }}
+          />
+        )}
       </div>
       <div>
         <p style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>Pays de résidence</p>
@@ -489,6 +526,109 @@ function OngletDocuments({ data }: { data: ProfilData }) {
       <p style={{ fontSize: 13, color: "#888" }}>
         Les contrats, rapports et factures liés à vos missions apparaîtront ici au fur et à mesure.
       </p>
+    </div>
+  );
+}
+
+// Gestion du compte par l'ingénieur lui-même : désactivation temporaire
+// (réversible, voir /ingenieur/compte-desactive) ou suppression définitive
+// du profil (voir app/api/ingenieur/compte/route.ts).
+function OngletCompte({ missionActive }: { missionActive: boolean }) {
+  const router = useRouter();
+  const [envoi, setEnvoi] = useState(false);
+  const [erreur, setErreur] = useState("");
+  const [confirmationDesactivation, setConfirmationDesactivation] = useState(false);
+  const [confirmationSuppression, setConfirmationSuppression] = useState(false);
+
+  async function desactiver() {
+    setErreur("");
+    setEnvoi(true);
+    const res = await fetch("/api/ingenieur/compte/desactiver", { method: "POST" });
+    setEnvoi(false);
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      setErreur(d.error ?? "Erreur, réessayez.");
+      return;
+    }
+    router.push("/connexion?desactive=1");
+  }
+
+  async function supprimer() {
+    setErreur("");
+    setEnvoi(true);
+    const res = await fetch("/api/ingenieur/compte", { method: "DELETE" });
+    setEnvoi(false);
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setErreur(d.error ?? "Erreur, réessayez.");
+      return;
+    }
+    router.push("/connexion?supprime=1");
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 520 }}>
+      {erreur && <p style={{ color: "crimson", fontSize: 13 }}>{erreur}</p>}
+
+      <div style={{ border: "1px solid #e4e7ee", borderRadius: 8, padding: 16 }}>
+        <p style={{ fontWeight: 600, fontSize: 14, margin: "0 0 8px" }}>Désactiver temporairement mon profil</p>
+        <p style={{ fontSize: 13, color: "#888", margin: "0 0 12px" }}>
+          Votre profil devient invisible et vous serez déconnecté(e). Vous pourrez le réactiver à tout moment en
+          vous reconnectant avec vos identifiants habituels.
+        </p>
+        {!confirmationDesactivation ? (
+          <button onClick={() => setConfirmationDesactivation(true)} style={{ padding: "8px 16px", fontSize: 13 }}>
+            Désactiver mon profil
+          </button>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <p style={{ fontSize: 13, margin: 0 }}>Confirmez : vous serez immédiatement déconnecté(e).</p>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={desactiver} disabled={envoi} style={{ padding: "8px 16px", fontSize: 13 }}>
+                {envoi ? "..." : "Oui, désactiver"}
+              </button>
+              <button onClick={() => setConfirmationDesactivation(false)} style={{ padding: "8px 16px", fontSize: 13 }}>
+                Annuler
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ border: "1px solid #f3d2d2", borderRadius: 8, padding: 16 }}>
+        <p style={{ fontWeight: 600, fontSize: 14, margin: "0 0 8px", color: "#b3261e" }}>
+          Supprimer définitivement mon profil
+        </p>
+        <p style={{ fontSize: 13, color: "#888", margin: "0 0 12px" }}>
+          Action irréversible : votre profil, votre CV et vos informations seront définitivement supprimés.
+          {missionActive &&
+            " Vous avez une mission en cours avec Atlas : la suppression n'est possible qu'après clôture de celle-ci (contactez l'administrateur)."}
+        </p>
+        {!confirmationSuppression ? (
+          <button
+            onClick={() => setConfirmationSuppression(true)}
+            style={{ padding: "8px 16px", fontSize: 13, color: "#b3261e", borderColor: "#b3261e" }}
+          >
+            Supprimer définitivement
+          </button>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <p style={{ fontSize: 13, margin: 0 }}>Êtes-vous certain(e) ? Cette action est définitive.</p>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={supprimer}
+                disabled={envoi}
+                style={{ padding: "8px 16px", fontSize: 13, background: "#b3261e", color: "#fff", border: "none", borderRadius: 6 }}
+              >
+                {envoi ? "..." : "Oui, tout supprimer"}
+              </button>
+              <button onClick={() => setConfirmationSuppression(false)} style={{ padding: "8px 16px", fontSize: 13 }}>
+                Annuler
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
