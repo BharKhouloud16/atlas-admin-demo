@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { envoyerEmailInscriptionEnAttente } from "@/lib/email";
 
 // Inscription publique — jamais pour le rôle ADMIN (créé uniquement en base
 // par un administrateur existant, voir prisma/create-admin.ts).
@@ -19,6 +20,9 @@ export async function POST(req: NextRequest) {
   if (password.length < 8) {
     return NextResponse.json({ error: "Le mot de passe doit contenir au moins 8 caractères" }, { status: 400 });
   }
+  if (role === "CLIENT" && !body.telephone) {
+    return NextResponse.json({ error: "Le numéro de téléphone est requis" }, { status: 400 });
+  }
 
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
@@ -33,15 +37,25 @@ export async function POST(req: NextRequest) {
     const user = await prisma.user.create({
       data: { email, passwordHash, role: "INGENIEUR", actif: false, profilId: profil.id },
     });
+    await envoyerEmailInscriptionEnAttente({ to: email, nom, role: "INGENIEUR" });
     return NextResponse.json({ ok: true, message: "Compte créé, en attente de validation par l'administrateur.", id: user.id }, { status: 201 });
   }
 
-  // role === "CLIENT"
+  // role === "CLIENT" (Espace Partenaire)
   const client = await prisma.client.create({
-    data: { nom, email, contactReferent: body.contactReferent ?? null, secteur: body.secteur ?? null },
+    data: {
+      nom, // raison sociale
+      email,
+      contactReferent: body.contactReferent ?? null,
+      telephone: body.telephone ?? null,
+      identifiantEntreprise: body.identifiantEntreprise ?? null,
+      formeJuridique: body.formeJuridique ?? null,
+      secteur: body.secteur ?? null,
+    },
   });
   const user = await prisma.user.create({
     data: { email, passwordHash, role: "CLIENT", actif: false, clientId: client.id },
   });
+  await envoyerEmailInscriptionEnAttente({ to: email, nom, role: "CLIENT" });
   return NextResponse.json({ ok: true, message: "Compte créé, en attente de validation par l'administrateur.", id: user.id }, { status: 201 });
 }
