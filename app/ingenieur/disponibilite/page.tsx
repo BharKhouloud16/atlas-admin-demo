@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DISPONIBILITES, MISSIONS_APRES, PREAVIS } from "@/lib/disponibilite";
-import { PAYS, calculerRegimeSuggere } from "@/lib/localisation";
+import { PAYS, DEVISES, calculerRegimeSuggere } from "@/lib/localisation";
 
 export default function DisponibilitePage() {
   const router = useRouter();
@@ -19,6 +19,8 @@ export default function DisponibilitePage() {
   const [nationalite, setNationalite] = useState("");
   const [paysResidence, setPaysResidence] = useState("");
   const [paysResidencePrecision, setPaysResidencePrecision] = useState("");
+  const [tjmSouhaite, setTjmSouhaite] = useState("");
+  const [tjmSouhaiteDevise, setTjmSouhaiteDevise] = useState("EUR");
 
   useEffect(() => {
     fetch("/api/ingenieur/disponibilite")
@@ -34,6 +36,8 @@ export default function DisponibilitePage() {
         if (data?.nationalite) setNationalite(data.nationalite);
         if (data?.paysResidence) setPaysResidence(data.paysResidence);
         if (data?.paysResidencePrecision) setPaysResidencePrecision(data.paysResidencePrecision);
+        if (data?.tjmSouhaite) setTjmSouhaite(String(data.tjmSouhaite));
+        if (data?.tjmSouhaiteDevise) setTjmSouhaiteDevise(data.tjmSouhaiteDevise);
         setChargement(false);
       });
   }, []);
@@ -56,6 +60,8 @@ export default function DisponibilitePage() {
         nationalite,
         paysResidence,
         paysResidencePrecision,
+        tjmSouhaite: Number(tjmSouhaite),
+        tjmSouhaiteDevise,
       }),
     });
     setEnvoi(false);
@@ -78,7 +84,9 @@ export default function DisponibilitePage() {
     (!enMission || (changerMissionActuelle && missionApres)) &&
     nationalite.trim() &&
     paysResidence &&
-    (paysResidence !== "Autre" || paysResidencePrecision.trim());
+    (paysResidence !== "Autre" || paysResidencePrecision.trim()) &&
+    Number(tjmSouhaite) > 0 &&
+    tjmSouhaiteDevise;
 
   return (
     <main style={{ maxWidth: 560, margin: "80px auto", padding: 24 }}>
@@ -230,6 +238,36 @@ export default function DisponibilitePage() {
               <strong>Profil suggéré :</strong> {regimeApercu}
             </p>
           )}
+        </div>
+
+        <div>
+          <label style={{ fontWeight: 600, fontSize: 14, display: "block", marginBottom: 8 }}>
+            Quelle est votre prétention salariale (TJM souhaité) ?
+          </label>
+          <p style={{ fontSize: 12, color: "#888", marginBottom: 8 }}>
+            En devise internationale (EUR, USD...) ou dans la devise de votre pays de résidence — au choix.
+          </p>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              type="number"
+              min={0}
+              placeholder="Montant"
+              value={tjmSouhaite}
+              onChange={(e) => setTjmSouhaite(e.target.value)}
+              style={{ flex: 1, padding: 8, border: "1px solid #e4e7ee", borderRadius: 6, fontFamily: "inherit" }}
+            />
+            <select
+              value={tjmSouhaiteDevise}
+              onChange={(e) => setTjmSouhaiteDevise(e.target.value)}
+              style={{ padding: 8, border: "1px solid #e4e7ee", borderRadius: 6, fontFamily: "inherit" }}
+            >
+              {DEVISES.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {erreur && <p style={{ color: "crimson", fontSize: 13 }}>{erreur}</p>}
