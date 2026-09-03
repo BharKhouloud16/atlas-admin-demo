@@ -26,6 +26,8 @@ export async function GET() {
       paysResidence: true,
       paysResidencePrecision: true,
       regimeSuggere: true,
+      tjmSouhaite: true,
+      tjmSouhaiteDevise: true,
       disponibiliteRenseigneeLe: true,
       infosCv: { orderBy: { ordre: "asc" } },
       missions: {
