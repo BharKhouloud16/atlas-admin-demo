@@ -8,13 +8,11 @@ export default async function ClientLayout({ children }: { children: React.React
   }
 
   return (
-    <html lang="fr">
-      <body style={{ fontFamily: "system-ui, sans-serif", margin: 0 }}>
-        <header style={{ borderBottom: "1px solid #e5e5e5", padding: "16px 24px" }}>
-          <p style={{ fontWeight: 600, margin: 0 }}>Espace client — Atlas Quality Partners</p>
-        </header>
-        <main style={{ padding: 24, maxWidth: 800, margin: "0 auto" }}>{children}</main>
-      </body>
-    </html>
+    <>
+      <header style={{ borderBottom: "1px solid #e5e5e5", padding: "16px 24px" }}>
+        <p style={{ fontWeight: 600, margin: 0 }}>Espace client — Atlas Quality Partners</p>
+      </header>
+      <main style={{ padding: 24, maxWidth: 800, margin: "0 auto" }}>{children}</main>
+    </>
   );
 }
