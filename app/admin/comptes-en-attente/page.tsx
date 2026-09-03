@@ -19,8 +19,6 @@ type CompteEnAttente = {
 
 export default function ComptesEnAttentePage() {
   const [comptes, setComptes] = useState<CompteEnAttente[]>([]);
-  const [typeContrat, setTypeContrat] = useState<Record<string, string>>({});
-  const [montant, setMontant] = useState<Record<string, string>>({});
 
   function charger() {
     fetch("/api/comptes").then((r) => r.json()).then(setComptes);
@@ -31,11 +29,7 @@ export default function ComptesEnAttentePage() {
     await fetch("/api/comptes", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        userId,
-        typeContrat: typeContrat[userId] || undefined,
-        montant: montant[userId] ? Number(montant[userId]) : undefined,
-      }),
+      body: JSON.stringify({ userId }),
     });
     charger();
   }
@@ -59,19 +53,9 @@ export default function ComptesEnAttentePage() {
               </ul>
             )}
             {c.role === "INGENIEUR" && (
-              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                <select onChange={(e) => setTypeContrat((s) => ({ ...s, [c.id]: e.target.value }))}>
-                  <option value="">Type de contrat...</option>
-                  <option value="SALARIE">Salarié</option>
-                  <option value="FREELANCE">Freelance</option>
-                  <option value="PORTAGE">Portage</option>
-                </select>
-                <input
-                  type="number"
-                  placeholder="Montant (salaire annuel ou TJM)"
-                  onChange={(e) => setMontant((s) => ({ ...s, [c.id]: e.target.value }))}
-                />
-              </div>
+              <p style={{ margin: "8px 0 0", fontSize: 13, color: "#888" }}>
+                Le type de contrat et le TJM seront déterminés après import et validation de son CV.
+              </p>
             )}
             <button onClick={() => valider(c.id)} style={{ marginTop: 8 }}>Valider ce compte</button>
           </li>
