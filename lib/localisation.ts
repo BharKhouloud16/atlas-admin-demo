@@ -60,9 +60,40 @@ const EUROPE = ["Belgique", "Suisse", "Allemagne", "Espagne", "Italie", "Portuga
 const MAGHREB = ["Tunisie", "Maroc", "Algérie"];
 const GOLFE = ["Émirats arabes unis", "Arabie Saoudite", "Qatar", "Koweït", "Bahreïn", "Oman"];
 
+// Nationalités bénéficiant de la libre circulation / du droit à l'activité
+// indépendante sans autorisation spécifique au sein de l'UE/EEE/Suisse
+// (Royaume-Uni volontairement exclu : plus de libre circulation depuis le
+// Brexit). Utilisé uniquement pour la suggestion de régime ci-dessous — ce
+// n'est pas un statut juridique vérifié, seulement un indicateur de
+// vigilance pour l'Admin (voir calculerRegimeSuggere).
+const NATIONALITES_LIBRE_CIRCULATION_UE = [
+  "Française",
+  "Belge",
+  "Suisse",
+  "Allemande",
+  "Espagnole",
+  "Italienne",
+  "Portugaise",
+  "Luxembourgeoise",
+];
+
 // Suggestion indicative de profil contractuel selon le pays de résidence
-// déclaré. À confirmer/ajuster par l'Admin au cas par cas — ce n'est pas un
-// conseil fiscal ou juridique.
+// ET la nationalité déclarés. À confirmer/ajuster par l'Admin au cas par
+// cas — ce n'est pas un conseil fiscal ou juridique.
+//
+// Point d'attention juridique : le régime "freelance / auto-entrepreneur"
+// suppose le droit, pour l'ingénieur, d'exercer une activité indépendante
+// dans son pays de RÉSIDENCE. Ce droit n'est pas automatique pour un
+// ressortissant étranger (hors UE/EEE/Suisse pour la France/l'Europe) : par
+// exemple, un résident en France de nationalité tunisienne n'a pas
+// automatiquement le droit de s'inscrire en auto-entrepreneur/freelance
+// (il lui faut une autorisation de travail indépendant adaptée, ex. carte
+// de séjour "entrepreneur/profession libérale"), alors qu'un portage
+// salarial (l'ingénieur est salarié de la société de portage) reste
+// généralement accessible. calculerRegimeSuggere tient donc compte des
+// DEUX champs pour recommander le portage salarial en priorité, avec un
+// avertissement, dès que la nationalité ne correspond pas au pays de
+// résidence pour ce cas de figure.
 // Devises proposées pour la prétention salariale (TJM souhaité) de
 // l'ingénieur — devises internationales usuelles + principales devises
 // locales des pays proposés ci-dessus (voir Disponibilite dans
@@ -82,12 +113,30 @@ export const DEVISES = [
   "Autre",
 ];
 
-export function calculerRegimeSuggere(paysResidence: string): string {
+export function calculerRegimeSuggere(paysResidence: string, nationalite?: string | null): string {
   if (!paysResidence) return "";
+
+  // La libre installation en freelance/auto-entrepreneur en France ou en
+  // Europe suppose une nationalité UE/EEE/Suisse (ou une autorisation de
+  // travail indépendant équivalente, à vérifier au cas par cas si absente
+  // de cette liste). Sans nationalité renseignée, on ne peut pas trancher :
+  // on affiche alors la suggestion par défaut sans avertissement, à
+  // confirmer avec l'ingénieur.
+  const nationaliteConnue = !!nationalite;
+  const droitLibreInstallationUE = nationalite ? NATIONALITES_LIBRE_CIRCULATION_UE.includes(nationalite) : true;
+  const avertissementStatut =
+    " ⚠️ Nationalité déclarée hors UE/EEE/Suisse : le freelance/auto-entrepreneuriat n'est pas automatiquement accessible pour un résident étranger (autorisation de travail indépendant à vérifier) — portage salarial recommandé en priorité, statut à confirmer avec l'ingénieur.";
+
   if (paysResidence === "France") {
+    if (nationaliteConnue && !droitLibreInstallationUE) {
+      return "Portage salarial (fortement recommandé)." + avertissementStatut;
+    }
     return "Portage salarial ou freelance France (facturation en euros, régime URSSAF) — à confirmer avec l'ingénieur";
   }
   if (EUROPE.includes(paysResidence)) {
+    if (nationaliteConnue && !droitLibreInstallationUE) {
+      return "Portage salarial ou statut local salarié (recommandé)." + avertissementStatut;
+    }
     return "Freelance Europe (contrat de prestation intracommunautaire) — à confirmer selon le pays exact";
   }
   if (MAGHREB.includes(paysResidence)) {
