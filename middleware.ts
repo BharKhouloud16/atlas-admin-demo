@@ -7,7 +7,7 @@ const PUBLIC_PATHS = ["/connexion", "/inscription", "/api/auth/login", "/api/aut
 // Préfixes protégés, groupés par rôle autorisé
 const ADMIN_PREFIXES = ["/admin/clients", "/admin/profils", "/admin/comptes-en-attente",
   "/api/clients", "/api/profils", "/api/comptes", "/api/generate-contract"];
-const INGENIEUR_PREFIXES = ["/admin/missions", "/api/missions"]; // aussi accessible à ADMIN
+const INGENIEUR_PREFIXES = ["/admin/missions", "/api/missions", "/ingenieur", "/api/ingenieur"]; // aussi accessible à ADMIN
 const CLIENT_PREFIXES = ["/client", "/api/client"];
 
 const secret = new TextEncoder().encode(process.env.SESSION_SECRET);
@@ -17,10 +17,10 @@ export async function middleware(req: NextRequest) {
 
   const isProtected =
     !PUBLIC_PATHS.includes(pathname) &&
-    (pathname.startsWith("/admin") || pathname.startsWith("/client") ||
+    (pathname.startsWith("/admin") || pathname.startsWith("/client") || pathname.startsWith("/ingenieur") ||
      pathname.startsWith("/api/clients") || pathname.startsWith("/api/profils") ||
      pathname.startsWith("/api/missions") || pathname.startsWith("/api/generate-contract") ||
-     pathname.startsWith("/api/comptes") || pathname.startsWith("/api/client"));
+     pathname.startsWith("/api/comptes") || pathname.startsWith("/api/client") || pathname.startsWith("/api/ingenieur"));
 
   if (!isProtected) return NextResponse.next();
 
@@ -63,11 +63,13 @@ export const config = {
   matcher: [
     "/admin/:path*",
     "/client/:path*",
+    "/ingenieur/:path*",
     "/api/clients/:path*",
     "/api/profils/:path*",
     "/api/missions/:path*",
     "/api/generate-contract/:path*",
     "/api/comptes/:path*",
     "/api/client/:path*",
+    "/api/ingenieur/:path*",
   ],
 };
