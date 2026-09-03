@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
 
   const buffer = doc.getZip().generate({ type: "nodebuffer" });
 
-  return new NextResponse(buffer, {
+  return new NextResponse(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       "Content-Disposition": `attachment; filename="${templateKey}_${mission.client.nom.replace(/\s+/g, "_")}.docx"`,
