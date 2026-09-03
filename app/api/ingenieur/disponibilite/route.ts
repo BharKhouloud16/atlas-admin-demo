@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
-import { DISPONIBILITES, MISSIONS_APRES, PREAVIS } from "@/lib/disponibilite";
-import { PAYS, DEVISES, calculerRegimeSuggere } from "@/lib/localisation";
+import { DISPONIBILITES, STATUTS_EN_MISSION, MISSIONS_APRES, PREAVIS } from "@/lib/disponibilite";
+import { PAYS, NATIONALITES, DEVISES, calculerRegimeSuggere } from "@/lib/localisation";
 
 // Questionnaire de disponibilité, à remplir par l'ingénieur juste après la
 // validation de son CV (voir /ingenieur/disponibilite), avant d'accéder à
@@ -18,11 +18,13 @@ export async function GET() {
     where: { id: session.profilId },
     select: {
       disponibilite: true,
+      disponibilitePrevue: true,
       changerMissionActuelle: true,
       missionApres: true,
       preavis: true,
       preavisPrecision: true,
       nationalite: true,
+      nationalitePrecision: true,
       paysResidence: true,
       paysResidencePrecision: true,
       regimeSuggere: true,
@@ -44,11 +46,13 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const {
     disponibilite,
+    disponibilitePrevue,
     changerMissionActuelle,
     missionApres,
     preavis,
     preavisPrecision,
     nationalite,
+    nationalitePrecision,
     paysResidence,
     paysResidencePrecision,
     tjmSouhaite,
@@ -58,7 +62,8 @@ export async function POST(req: NextRequest) {
   if (!DISPONIBILITES.includes(disponibilite)) {
     return NextResponse.json({ error: "Statut de disponibilité invalide." }, { status: 400 });
   }
-  if (disponibilite === "En mission actuellement") {
+  const enMission = STATUTS_EN_MISSION.includes(disponibilite);
+  if (enMission) {
     if (typeof changerMissionActuelle !== "boolean") {
       return NextResponse.json({ error: "Merci de préciser si vous souhaitez changer de mission." }, { status: 400 });
     }
@@ -66,14 +71,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Merci de préciser votre situation après la mission actuelle." }, { status: 400 });
     }
   }
+  if (disponibilite === "Non disponible immédiatement" && !disponibilitePrevue?.trim()) {
+    return NextResponse.json({ error: "Merci d'indiquer votre prévision de disponibilité." }, { status: 400 });
+  }
   if (!PREAVIS.includes(preavis)) {
     return NextResponse.json({ error: "Préavis invalide." }, { status: 400 });
   }
   if (preavis === "Autre" && !preavisPrecision?.trim()) {
     return NextResponse.json({ error: "Merci de préciser votre préavis." }, { status: 400 });
   }
-  if (typeof nationalite !== "string" || !nationalite.trim()) {
-    return NextResponse.json({ error: "Merci de renseigner votre nationalité." }, { status: 400 });
+  if (!NATIONALITES.includes(nationalite)) {
+    return NextResponse.json({ error: "Nationalité invalide." }, { status: 400 });
+  }
+  if (nationalite === "Autre" && !nationalitePrecision?.trim()) {
+    return NextResponse.json({ error: "Merci de préciser votre nationalité." }, { status: 400 });
   }
   if (!PAYS.includes(paysResidence)) {
     return NextResponse.json({ error: "Pays de résidence invalide." }, { status: 400 });
@@ -93,14 +104,16 @@ export async function POST(req: NextRequest) {
     where: { id: session.profilId },
     data: {
       disponibilite,
-      changerMissionActuelle: disponibilite === "En mission actuellement" ? changerMissionActuelle : null,
-      missionApres: disponibilite === "En mission actuellement" ? missionApres : null,
+      disponibilitePrevue: disponibilite === "Non disponible immédiatement" ? disponibilitePrevue.trim() : null,
+      changerMissionActuelle: enMission ? changerMissionActuelle : null,
+      missionApres: enMission ? missionApres : null,
       preavis,
       preavisPrecision: preavis === "Autre" ? preavisPrecision.trim() : null,
-      nationalite: nationalite.trim(),
+      nationalite,
+      nationalitePrecision: nationalite === "Autre" ? nationalitePrecision.trim() : null,
       paysResidence,
       paysResidencePrecision: paysResidence === "Autre" ? paysResidencePrecision.trim() : null,
-      regimeSuggere: calculerRegimeSuggere(paysResidence),
+      regimeSuggere: calculerRegimeSuggere(paysResidence, nationalite),
       tjmSouhaite: tjmNombre,
       tjmSouhaiteDevise,
       disponibiliteRenseigneeLe: new Date(),
