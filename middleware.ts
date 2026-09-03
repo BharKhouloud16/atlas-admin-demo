@@ -2,7 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
 
 // Pages/routes publiques, jamais protégées
-const PUBLIC_PATHS = ["/connexion", "/inscription", "/api/auth/login", "/api/auth/signup"];
+const PUBLIC_PATHS = [
+  "/connexion",
+  "/inscription",
+  "/api/auth/login",
+  "/api/auth/signup",
+  "/verifier-email",
+  "/api/auth/verifier-email",
+  "/api/auth/renvoyer-verification",
+];
 
 // Préfixes protégés, groupés par rôle autorisé
 const ADMIN_PREFIXES = ["/admin/clients", "/admin/profils", "/admin/comptes-en-attente",
@@ -39,6 +47,20 @@ export async function middleware(req: NextRequest) {
     if (role === "INGENIEUR") {
       const allowed = pathname === "/admin" || INGENIEUR_PREFIXES.some((p) => pathname.startsWith(p));
       if (!allowed) return redirectToLogin(req, "/admin/missions");
+
+      // Compte temporairement désactivé par l'ingénieur lui-même (voir
+      // /ingenieur -> "Mon compte") : seul l'écran de réactivation (et son
+      // API) reste accessible tant qu'il ne s'est pas réactivé.
+      if (payload.desactive === true) {
+        const autorisePendantDesactivation =
+          pathname === "/ingenieur/compte-desactive" || pathname.startsWith("/api/ingenieur/compte");
+        if (!autorisePendantDesactivation) {
+          if (pathname.startsWith("/api")) {
+            return NextResponse.json({ error: "Compte désactivé." }, { status: 403 });
+          }
+          return NextResponse.redirect(new URL("/ingenieur/compte-desactive", req.url));
+        }
+      }
     }
 
     if (role === "ADMIN" && CLIENT_PREFIXES.some((p) => pathname.startsWith(p))) {
