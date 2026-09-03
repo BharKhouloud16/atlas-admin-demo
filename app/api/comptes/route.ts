@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
+import { envoyerEmailCompteValide } from "@/lib/email";
 
 // Réservé à l'Admin — le middleware protège déjà /api/comptes, mais on
 // revérifie le rôle ici (defense in depth, comme pour les autres routes).
@@ -34,13 +35,22 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "userId requis" }, { status: 400 });
   }
 
-  const user = await prisma.user.update({ where: { id: userId }, data: { actif: true } });
+  const user = await prisma.user.update({
+    where: { id: userId },
+    data: { actif: true },
+    include: { profil: true, client: true },
+  });
 
   if (user.role === "INGENIEUR" && user.profilId && typeContrat && montant != null) {
     await prisma.profil.update({
       where: { id: user.profilId },
       data: { type: typeContrat, montantSaisi: montant },
     });
+  }
+
+  const nom = user.role === "INGENIEUR" ? user.profil?.nom : user.client?.nom;
+  if (nom) {
+    await envoyerEmailCompteValide({ to: user.email, nom, role: user.role === "INGENIEUR" ? "INGENIEUR" : "CLIENT" });
   }
 
   return NextResponse.json({ ok: true });
