@@ -22,6 +22,10 @@ export async function GET() {
       missionApres: true,
       preavis: true,
       preavisPrecision: true,
+      nationalite: true,
+      paysResidence: true,
+      paysResidencePrecision: true,
+      regimeSuggere: true,
       disponibiliteRenseigneeLe: true,
       infosCv: { orderBy: { ordre: "asc" } },
       missions: {
