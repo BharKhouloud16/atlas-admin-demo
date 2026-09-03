@@ -96,6 +96,17 @@ model Profil {
   tjmEstime           Float?
   typeContratSuggere  TypeContrat?
 
+  // Questionnaire de disponibilité (voir /ingenieur/disponibilite), rempli
+  // juste après la validation du CV, avant l'accès à l'espace ingénieur
+  // (voir app/ingenieur/page.tsx). Réponses à choix prédéfinis.
+  disponibilite              String?   // "Disponible immédiatement" | "En mission actuellement" | "Indisponible"
+  changerMissionActuelle     Boolean?  // souhaite changer de mission actuelle (si en mission)
+  missionApres               String?   // "Nouvelle mission anticipée" | "Libre juste après" | "Non concerné"
+  preavis                    String?   // ex: "Aucun / immédiat", "1 mois"...
+  preavisPrecision           String?   // précision libre si preavis = "Autre"
+  disponibiliteRenseigneeLe  DateTime?
+  questionnaireValide        Boolean   @default(false) // true une fois le questionnaire soumis
+
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
   missions            Mission[]
