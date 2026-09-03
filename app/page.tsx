@@ -264,7 +264,10 @@ export default function RootPage() {
 
       {/* Footer */}
       <footer style={{ borderTop: `1px solid ${bordure}`, padding: "24px", fontSize: 13, color: grisTexte, textAlign: "center" }}>
-        © Atlas Quality Partners · contact@atlas-qa.com · atlas-qa.com
+        © Atlas Quality Partners · contact@atlas-qa.com · atlas-qa.com ·{" "}
+        <Link href="/confidentialite" style={{ color: grisTexte }}>
+          Confidentialité (RGPD)
+        </Link>
       </footer>
     </main>
   );
