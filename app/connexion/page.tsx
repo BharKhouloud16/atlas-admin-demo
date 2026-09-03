@@ -29,10 +29,17 @@ export default function ConnexionPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [info, setInfo] = useState("");
 
   useEffect(() => {
-    const param = new URLSearchParams(window.location.search).get("role");
+    const params = new URLSearchParams(window.location.search);
+    const param = params.get("role");
     if (param === "ingenieur" || param === "client") setRole(param);
+    if (params.get("desactive") === "1") {
+      setInfo("Votre compte a bien été désactivé. Reconnectez-vous à tout moment pour le réactiver.");
+    } else if (params.get("supprime") === "1") {
+      setInfo("Votre profil a bien été supprimé définitivement.");
+    }
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -68,6 +75,11 @@ export default function ConnexionPage() {
       </h2>
       {contexte && (
         <p style={{ fontSize: 13, color: "#4b5567", marginTop: -16, marginBottom: 20 }}>{contexte.sousTitre}</p>
+      )}
+      {info && (
+        <p style={{ fontSize: 13, color: "#16a34a", background: "#eafaf0", padding: 10, borderRadius: 6, marginTop: -8, marginBottom: 16 }}>
+          {info}
+        </p>
       )}
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required />
