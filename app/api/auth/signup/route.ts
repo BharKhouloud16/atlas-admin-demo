@@ -17,7 +17,7 @@ function genererTokenVerification() {
 // qu'un ADMIN ne l'a pas validé depuis /admin/comptes-en-attente.
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { email, password, role, nom } = body;
+  const { email, password, role, nom, consentementRgpd } = body;
 
   if (!email || !password || !role || !nom) {
     return NextResponse.json({ error: "Email, mot de passe, rôle et nom sont requis" }, { status: 400 });
@@ -30,6 +30,14 @@ export async function POST(req: NextRequest) {
   }
   if (role === "CLIENT" && !body.telephone) {
     return NextResponse.json({ error: "Le numéro de téléphone est requis" }, { status: 400 });
+  }
+  // Consentement RGPD obligatoire au traitement des données (voir
+  // /confidentialite) — horodaté comme preuve de consentement.
+  if (consentementRgpd !== true) {
+    return NextResponse.json(
+      { error: "Merci d'accepter le traitement de vos données (RGPD) pour créer un compte." },
+      { status: 400 }
+    );
   }
 
   const existing = await prisma.user.findUnique({ where: { email } });
@@ -54,6 +62,8 @@ export async function POST(req: NextRequest) {
         emailVerifie: false,
         emailVerificationToken: tokenVerification,
         emailVerificationExpire: expirationToken,
+        consentementRgpd: true,
+        consentementRgpdLe: new Date(),
       },
     });
     await envoyerEmailInscriptionEnAttente({ to: email, nom, role: "INGENIEUR" });
@@ -95,6 +105,8 @@ export async function POST(req: NextRequest) {
       emailVerifie: false,
       emailVerificationToken: tokenVerification,
       emailVerificationExpire: expirationToken,
+      consentementRgpd: true,
+      consentementRgpdLe: new Date(),
     },
   });
   await envoyerEmailInscriptionEnAttente({ to: email, nom, role: "CLIENT" });
