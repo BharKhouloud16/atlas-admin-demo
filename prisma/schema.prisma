@@ -116,6 +116,14 @@ model Profil {
   paysResidencePrecision     String?   // précision libre si paysResidence = "Autre"
   regimeSuggere              String?
 
+  // Prétention salariale (TJM souhaité) déclarée par l'ingénieur, dans la
+  // devise de son choix (internationale ou locale à son pays de
+  // résidence) — voir lib/localisation.ts (DEVISES, convertirEnEur).
+  // Permet à l'Admin de comparer avec tjmEstime et de proposer, à budget
+  // client égal, le profil le plus compétitif selon la localisation.
+  tjmSouhaite                Float?
+  tjmSouhaiteDevise          String?
+
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
   missions            Mission[]
