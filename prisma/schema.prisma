@@ -43,6 +43,23 @@ model User {
   actif        Boolean  @default(true) // false pour tout compte auto-inscrit, en attente de validation
   createdAt    DateTime @default(now())
 
+  // Vérification de l'adresse email à l'inscription (voir lib/email.ts,
+  // app/api/auth/verifier-email/route.ts). Par défaut true pour ne jamais
+  // bloquer un compte déjà existant (ADMIN créé en base, ou comptes créés
+  // avant l'ajout de cette fonctionnalité) : seule l'inscription publique
+  // (/api/auth/signup) le met explicitement à false pour un nouveau compte
+  // INGENIEUR/CLIENT, le temps que le lien envoyé par email soit cliqué.
+  emailVerifie             Boolean   @default(true)
+  emailVerificationToken   String?   @unique
+  emailVerificationExpire  DateTime?
+
+  // Désactivation temporaire du compte par l'ingénieur lui-même (voir
+  // /ingenieur -> "Mon compte"). Un compte désactivé peut toujours se
+  // reconnecter (contrairement à actif=false) mais est redirigé vers
+  // /ingenieur/compte-desactive tant qu'il ne s'est pas réactivé.
+  desactive    Boolean   @default(false)
+  desactiveLe  DateTime?
+
   profilId     String?  @unique // renseigné pour un compte INGENIEUR : relie à sa fiche Profil (tarifs)
   profil       Profil?  @relation(fields: [profilId], references: [id])
 
@@ -99,8 +116,9 @@ model Profil {
   // Questionnaire de disponibilité (voir /ingenieur/disponibilite), rempli
   // juste après la validation du CV, avant l'accès à l'espace ingénieur
   // (voir app/ingenieur/page.tsx). Réponses à choix prédéfinis.
-  disponibilite              String?   // "Disponible immédiatement" | "En mission actuellement" | "Indisponible"
-  changerMissionActuelle     Boolean?  // souhaite changer de mission actuelle (si en mission)
+  disponibilite              String?   // "Disponible immédiatement" | "En mission actuellement chez Atlas" | "En mission actuellement chez un autre client" | "Non disponible immédiatement"
+  disponibilitePrevue        String?   // prévision (date/période) donnée par l'ingénieur si disponibilite = "Non disponible immédiatement"
+  changerMissionActuelle     Boolean?  // souhaite changer de mission actuelle (si en mission, Atlas ou autre client)
   missionApres               String?   // "Nouvelle mission anticipée" | "Libre juste après" | "Non concerné"
   preavis                    String?   // ex: "Aucun / immédiat", "1 mois"...
   preavisPrecision           String?   // précision libre si preavis = "Autre"
@@ -111,7 +129,8 @@ model Profil {
   // proposer un profil/contrat adapté à la situation de l'ingénieur
   // (France, Maghreb, Golfe, etc.). regimeSuggere est calculé
   // automatiquement à partir de paysResidence, à titre indicatif.
-  nationalite                String?
+  nationalite                String?   // choisie dans une liste fermée (voir lib/localisation.ts, NATIONALITES)
+  nationalitePrecision       String?   // précision libre si nationalite = "Autre"
   paysResidence              String?
   paysResidencePrecision     String?   // précision libre si paysResidence = "Autre"
   regimeSuggere              String?
