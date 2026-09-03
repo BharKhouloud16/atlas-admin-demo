@@ -13,10 +13,16 @@ const PUBLIC_PATHS = [
 ];
 
 // Préfixes protégés, groupés par rôle autorisé
-const ADMIN_PREFIXES = ["/admin/clients", "/admin/profils", "/admin/comptes-en-attente",
+const ADMIN_PREFIXES = ["/admin/clients", "/admin/profils", "/admin/comptes-en-attente", "/admin/feuilles-de-temps",
   "/api/clients", "/api/profils", "/api/comptes", "/api/generate-contract"];
 const INGENIEUR_PREFIXES = ["/admin/missions", "/api/missions", "/ingenieur", "/api/ingenieur"]; // aussi accessible à ADMIN
 const CLIENT_PREFIXES = ["/client", "/api/client"];
+// Endpoints partagés entre les 3 rôles, chaque route gérant elle-même le
+// détail des permissions (voir app/api/feuilles-de-temps et
+// app/api/evaluations) — accessibles à ADMIN par défaut (cf. plus bas),
+// et explicitement ajoutés aux listes autorisées de INGENIEUR et CLIENT
+// sans passer par CLIENT_PREFIXES (qui déclenche le blocage ADMIN ci-dessous).
+const SHARED_PREFIXES = ["/api/feuilles-de-temps", "/api/evaluations"];
 
 const secret = new TextEncoder().encode(process.env.SESSION_SECRET);
 
@@ -28,7 +34,8 @@ export async function middleware(req: NextRequest) {
     (pathname.startsWith("/admin") || pathname.startsWith("/client") || pathname.startsWith("/ingenieur") ||
      pathname.startsWith("/api/clients") || pathname.startsWith("/api/profils") ||
      pathname.startsWith("/api/missions") || pathname.startsWith("/api/generate-contract") ||
-     pathname.startsWith("/api/comptes") || pathname.startsWith("/api/client") || pathname.startsWith("/api/ingenieur"));
+     pathname.startsWith("/api/comptes") || pathname.startsWith("/api/client") || pathname.startsWith("/api/ingenieur") ||
+     SHARED_PREFIXES.some((p) => pathname.startsWith(p)));
 
   if (!isProtected) return NextResponse.next();
 
@@ -40,12 +47,18 @@ export async function middleware(req: NextRequest) {
     const role = payload.role as string;
 
     if (role === "CLIENT") {
-      const allowed = pathname === "/admin" ? false : CLIENT_PREFIXES.some((p) => pathname.startsWith(p));
+      const allowed =
+        pathname === "/admin"
+          ? false
+          : CLIENT_PREFIXES.some((p) => pathname.startsWith(p)) || SHARED_PREFIXES.some((p) => pathname.startsWith(p));
       if (!allowed) return redirectToLogin(req, "/client");
     }
 
     if (role === "INGENIEUR") {
-      const allowed = pathname === "/admin" || INGENIEUR_PREFIXES.some((p) => pathname.startsWith(p));
+      const allowed =
+        pathname === "/admin" ||
+        INGENIEUR_PREFIXES.some((p) => pathname.startsWith(p)) ||
+        SHARED_PREFIXES.some((p) => pathname.startsWith(p));
       if (!allowed) return redirectToLogin(req, "/admin/missions");
 
       // Compte temporairement désactivé par l'ingénieur lui-même (voir
@@ -93,5 +106,7 @@ export const config = {
     "/api/comptes/:path*",
     "/api/client/:path*",
     "/api/ingenieur/:path*",
+    "/api/feuilles-de-temps/:path*",
+    "/api/evaluations/:path*",
   ],
 };
