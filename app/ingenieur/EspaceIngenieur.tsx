@@ -4,6 +4,16 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DISPONIBILITES, STATUTS_EN_MISSION, MISSIONS_APRES, PREAVIS } from "@/lib/disponibilite";
 import { PAYS, NATIONALITES, DEVISES, calculerRegimeSuggere } from "@/lib/localisation";
+import { COMPETENCES_GROUPES } from "@/lib/competences";
+import { bleu, bleuFonce, grisTexte } from "@/lib/theme";
+import {
+  type StatutCra,
+  LABEL_STATUT_CRA,
+  COULEUR_STATUT_CRA,
+  craEstEditableParIngenieur,
+  moisCourant,
+  libelleMois,
+} from "@/lib/feuilles-de-temps";
 
 type InfoCV = {
   id: string;
@@ -26,6 +36,7 @@ type ProfilData = {
   nom: string;
   cvNomFichier: string | null;
   cvImporteLe: string | null;
+  cvValide: boolean;
   disponibilite: string | null;
   disponibilitePrevue: string | null;
   changerMissionActuelle: boolean | null;
@@ -40,6 +51,12 @@ type ProfilData = {
   tjmSouhaite: number | null;
   tjmSouhaiteDevise: string | null;
   disponibiliteRenseigneeLe: string | null;
+  questionnaireValide: boolean;
+  competences: string[];
+  entretiensRealises: number;
+  evaluationMoyenne: number | null;
+  nombreEvaluations: number;
+  createdAt: string;
   infosCv: InfoCV[];
   missions: Mission[];
 };
@@ -69,10 +86,12 @@ export default function EspaceIngenieur() {
     <main style={{ maxWidth: 1000, margin: "40px auto", padding: 24, display: "flex", gap: 32 }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-          <h1 style={{ fontSize: 22, margin: 0 }}>{data.nom}</h1>
+          <h1 style={{ fontSize: 22, margin: 0, color: bleuFonce }}>{data.nom}</h1>
           <StatutBadge data={data} missionActive={missionActive} />
         </div>
         <p style={{ fontSize: 13, color: "#888", marginBottom: 24 }}>Espace ingénieur</p>
+
+        <Statistiques data={data} />
 
         {onglet === "Profil" && <OngletProfil data={data} recharger={recharger} />}
         {onglet === "Historique de mission avec Atlas" && <OngletHistorique missions={data.missions} />}
@@ -96,9 +115,9 @@ export default function EspaceIngenieur() {
                     textAlign: "left",
                     padding: "10px 12px",
                     borderRadius: 8,
-                    border: "1px solid " + (onglet === o ? "#111" : "#e4e7ee"),
-                    background: onglet === o ? "#111" : "#fff",
-                    color: onglet === o ? "#fff" : verrouille ? "#aab0ba" : "#111",
+                    border: "1px solid " + (onglet === o ? bleu : "#e4e7ee"),
+                    background: onglet === o ? bleu : "#fff",
+                    color: onglet === o ? "#fff" : verrouille ? "#aab0ba" : bleuFonce,
                     fontSize: 13,
                     fontWeight: 600,
                     cursor: verrouille ? "not-allowed" : "pointer",
@@ -169,11 +188,55 @@ function StatutBadge({ data, missionActive }: { data: ProfilData; missionActive:
   );
 }
 
+// Statistiques personnelles simples, façon "tableau de bord" — toujours
+// visibles en haut de l'espace, quel que soit l'onglet sélectionné.
+// Chiffres tirés des missions réellement enregistrées côté Atlas (pas des
+// déclarations de l'ingénieur) + entretiensRealises, saisi par l'Admin.
+function Statistiques({ data }: { data: ProfilData }) {
+  const missionsValidees = data.missions.filter((m) => m.statut === "Terminée").length;
+  const missionsEnCours = data.missions.filter((m) => m.statut === "En cours").length;
+  const membreDepuis = new Date(data.createdAt);
+  const moisAnciennete = Math.max(
+    0,
+    Math.floor((Date.now() - membreDepuis.getTime()) / (1000 * 60 * 60 * 24 * 30))
+  );
+  const anciennete =
+    moisAnciennete < 1
+      ? "Ce mois-ci"
+      : moisAnciennete < 12
+      ? `${moisAnciennete} mois`
+      : `${Math.floor(moisAnciennete / 12)} an(s)`;
+
+  const stats = [
+    { label: "Missions validées avec Atlas", valeur: String(missionsValidees) },
+    { label: "Mission(s) en cours", valeur: String(missionsEnCours) },
+    { label: "Entretiens réalisés", valeur: String(data.entretiensRealises) },
+    {
+      label: `Note client${data.nombreEvaluations > 1 ? "s" : ""}`,
+      valeur: data.evaluationMoyenne != null ? `${data.evaluationMoyenne.toFixed(1)} / 5` : "—",
+    },
+    { label: "Compétences renseignées", valeur: String(data.competences.length) },
+    { label: "Dans le vivier Atlas depuis", valeur: anciennete },
+  ];
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginBottom: 24 }}>
+      {stats.map((s) => (
+        <div key={s.label} style={{ border: "1px solid #e4e7ee", borderRadius: 8, padding: 12 }}>
+          <p style={{ fontSize: 20, fontWeight: 700, margin: 0, color: bleuFonce }}>{s.valeur}</p>
+          <p style={{ fontSize: 11, color: grisTexte, margin: "4px 0 0" }}>{s.label}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function OngletProfil({ data, recharger }: { data: ProfilData; recharger: () => void }) {
   const categories = Array.from(new Set(data.infosCv.map((i) => i.categorie)));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
+      <Completude data={data} />
       {categories.map((cat) => (
         <div key={cat}>
           <p style={{ fontSize: 12, textTransform: "uppercase", color: "#888", marginBottom: 8 }}>{cat}</p>
@@ -193,6 +256,45 @@ function OngletProfil({ data, recharger }: { data: ProfilData; recharger: () => 
         </p>
         <Disponibilite data={data} recharger={recharger} />
       </div>
+    </div>
+  );
+}
+
+// Indicateur de complétude du profil, façon "profil LinkedIn" : motive
+// l'ingénieur à finir de renseigner son dossier (compétences en particulier,
+// facultatives mais très utiles pour le matching côté Admin — voir
+// lib/scoring.ts et /admin/profils). Purement informatif, ne bloque rien.
+function Completude({ data }: { data: ProfilData }) {
+  const etapes = [
+    { label: "CV importé et validé", fait: data.cvValide },
+    { label: "Disponibilité & localisation renseignées", fait: data.questionnaireValide },
+    { label: "Compétences techniques renseignées", fait: data.competences.length > 0 },
+  ];
+  const nbFaites = etapes.filter((e) => e.fait).length;
+  const pourcentage = Math.round((nbFaites / etapes.length) * 100);
+  if (pourcentage === 100) return null;
+
+  const couleur = pourcentage >= 66 ? "#d97706" : "#dc2626";
+
+  return (
+    <div style={{ border: "1px solid #e4e7ee", borderRadius: 8, padding: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <p style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>Profil complété à {pourcentage}%</p>
+        <span style={{ fontSize: 12, color: couleur, fontWeight: 600 }}>
+          {etapes.length - nbFaites} étape(s) restante(s)
+        </span>
+      </div>
+      <div style={{ background: "#f0f0f0", borderRadius: 4, height: 8, overflow: "hidden", marginBottom: 10 }}>
+        <div style={{ width: `${pourcentage}%`, background: couleur, height: "100%", transition: "width 0.3s" }} />
+      </div>
+      <ul style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 4 }}>
+        {etapes.map((e) => (
+          <li key={e.label} style={{ fontSize: 12, color: e.fait ? "#16a34a" : "#4b5567" }}>
+            {e.fait ? "✓ " : "○ "}
+            {e.label}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -257,12 +359,17 @@ function Disponibilite({ data, recharger }: { data: ProfilData; recharger: () =>
   const [paysResidencePrecision, setPaysResidencePrecision] = useState(data.paysResidencePrecision ?? "");
   const [tjmSouhaite, setTjmSouhaite] = useState(data.tjmSouhaite != null ? String(data.tjmSouhaite) : "");
   const [tjmSouhaiteDevise, setTjmSouhaiteDevise] = useState(data.tjmSouhaiteDevise ?? "EUR");
+  const [competences, setCompetences] = useState<string[]>(data.competences ?? []);
   const [envoi, setEnvoi] = useState(false);
   const [erreur, setErreur] = useState("");
 
+  function basculerCompetence(c: string) {
+    setCompetences((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
+  }
+
   const enMission = STATUTS_EN_MISSION.includes(disponibilite);
   const nonDisponible = disponibilite === "Non disponible immédiatement";
-  const regimeApercu = calculerRegimeSuggere(paysResidence);
+  const regimeApercu = calculerRegimeSuggere(paysResidence, nationalite);
 
   async function enregistrer() {
     setErreur("");
@@ -283,6 +390,7 @@ function Disponibilite({ data, recharger }: { data: ProfilData; recharger: () =>
         paysResidencePrecision,
         tjmSouhaite: Number(tjmSouhaite),
         tjmSouhaiteDevise,
+        competences,
       }),
     });
     setEnvoi(false);
@@ -315,6 +423,23 @@ function Disponibilite({ data, recharger }: { data: ProfilData; recharger: () =>
           label="Prétention salariale (TJM souhaité)"
           valeur={data.tjmSouhaite != null ? `${data.tjmSouhaite} ${data.tjmSouhaiteDevise ?? ""}`.trim() : null}
         />
+        <div>
+          <span style={{ fontSize: 14, color: "#888" }}>Compétences techniques : </span>
+          {data.competences.length === 0 ? (
+            <span style={{ fontSize: 14 }}>—</span>
+          ) : (
+            <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+              {data.competences.map((c) => (
+                <span
+                  key={c}
+                  style={{ fontSize: 11, padding: "2px 8px", borderRadius: 999, background: "#f0f2f6", color: "#4b5567" }}
+                >
+                  {c}
+                </span>
+              ))}
+            </span>
+          )}
+        </div>
         {data.regimeSuggere && (
           <p style={{ fontSize: 13, color: "#4b5567", margin: "4px 0 0", background: "#f6f7fa", padding: 8, borderRadius: 6 }}>
             <strong>Profil suggéré : </strong>
@@ -439,6 +564,41 @@ function Disponibilite({ data, recharger }: { data: ProfilData; recharger: () =>
             <strong>Profil suggéré :</strong> {regimeApercu}
           </p>
         )}
+      </div>
+      <div>
+        <p style={{ fontSize: 12, color: "#888", marginBottom: 8 }}>Compétences techniques</p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {COMPETENCES_GROUPES.map((groupe) => (
+            <div key={groupe.categorie}>
+              <p style={{ fontSize: 11, textTransform: "uppercase", color: "#aab0ba", marginBottom: 4 }}>
+                {groupe.categorie}
+              </p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {groupe.competences.map((c) => {
+                  const actif = competences.includes(c);
+                  return (
+                    <button
+                      type="button"
+                      key={c}
+                      onClick={() => basculerCompetence(c)}
+                      style={{
+                        fontSize: 12,
+                        padding: "5px 10px",
+                        borderRadius: 999,
+                        border: "1px solid " + (actif ? bleu : "#e4e7ee"),
+                        background: actif ? bleu : "#fff",
+                        color: actif ? "#fff" : "#4b5567",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {c}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
       <div>
         <p style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>Prétention salariale (TJM souhaité)</p>
@@ -570,6 +730,15 @@ function OngletCompte({ missionActive }: { missionActive: boolean }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 520 }}>
       {erreur && <p style={{ color: "crimson", fontSize: 13 }}>{erreur}</p>}
 
+      <p style={{ fontSize: 12, color: "#888" }}>
+        Pour savoir comment vos données sont utilisées et exercer vos droits (accès, rectification, portabilité...),
+        consultez notre{" "}
+        <a href="/confidentialite" target="_blank" rel="noreferrer" style={{ color: bleu }}>
+          politique de confidentialité
+        </a>
+        .
+      </p>
+
       <div style={{ border: "1px solid #e4e7ee", borderRadius: 8, padding: 16 }}>
         <p style={{ fontWeight: 600, fontSize: 14, margin: "0 0 8px" }}>Désactiver temporairement mon profil</p>
         <p style={{ fontSize: 13, color: "#888", margin: "0 0 12px" }}>
@@ -633,7 +802,38 @@ function OngletCompte({ missionActive }: { missionActive: boolean }) {
   );
 }
 
+type MissionCra = { id: string; repere: string | null; statut: string; client: { nom: string } };
+type FeuilleCra = {
+  id: string;
+  mois: string;
+  joursTravailles: number;
+  heuresSupplementaires: number;
+  commentaire: string | null;
+  statut: StatutCra;
+  motifRejet: string | null;
+  mission: { id: string; repere: string | null; client: { nom: string } };
+};
+
+// Compte-rendu d'activité (CRA) mensuel, façon BoondManager/portage salarial :
+// jours travaillés + heures sup déclarés par mission et par mois, puis
+// circuit de validation Admin -> Client avant facturation (voir
+// app/api/feuilles-de-temps et lib/feuilles-de-temps.ts).
 function OngletEmploiDuTemps({ missionActive }: { missionActive: boolean }) {
+  const [missions, setMissions] = useState<MissionCra[]>([]);
+  const [feuilles, setFeuilles] = useState<FeuilleCra[]>([]);
+  const [chargement, setChargement] = useState(true);
+
+  function recharger() {
+    fetch("/api/feuilles-de-temps")
+      .then((r) => r.json())
+      .then((data) => {
+        setMissions(data.missions ?? []);
+        setFeuilles(data.feuilles ?? []);
+        setChargement(false);
+      });
+  }
+  useEffect(recharger, []);
+
   if (!missionActive) {
     return (
       <p style={{ fontSize: 14, color: "#4b5567" }}>
@@ -643,11 +843,175 @@ function OngletEmploiDuTemps({ missionActive }: { missionActive: boolean }) {
       </p>
     );
   }
+  if (chargement) return <p style={{ fontSize: 14, color: "#888" }}>Chargement...</p>;
+
+  const missionsEnCours = missions.filter((m) => m.statut === "En cours");
 
   return (
-    <p style={{ fontSize: 14, color: "#4b5567" }}>
-      La saisie de votre temps de travail (jours travaillés, heures supplémentaires) arrive prochainement.
-      Elle sera ensuite soumise à validation de l'administrateur puis du client avant facturation.
-    </p>
+    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      {missionsEnCours.map((m) => (
+        <FormulaireCra key={m.id} mission={m} feuilles={feuilles.filter((f) => f.mission.id === m.id)} recharger={recharger} />
+      ))}
+
+      {feuilles.length > 0 && (
+        <div>
+          <p style={{ fontSize: 12, textTransform: "uppercase", color: "#888", marginBottom: 8 }}>Historique</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {feuilles.map((f) => (
+              <div key={f.id} style={{ border: "1px solid #e4e7ee", borderRadius: 8, padding: 12, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                <div>
+                  <p style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>
+                    {libelleMois(f.mois)} — {f.mission.client.nom}
+                  </p>
+                  <p style={{ margin: "2px 0 0", fontSize: 12, color: "#888" }}>
+                    {f.joursTravailles} j{f.heuresSupplementaires > 0 ? ` · ${f.heuresSupplementaires} h sup` : ""}
+                    {f.statut === "Rejetee" && f.motifRejet ? ` · Motif : ${f.motifRejet}` : ""}
+                  </p>
+                </div>
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    padding: "3px 8px",
+                    borderRadius: 999,
+                    color: COULEUR_STATUT_CRA[f.statut],
+                    background: COULEUR_STATUT_CRA[f.statut] + "1a",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {LABEL_STATUT_CRA[f.statut]}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FormulaireCra({
+  mission,
+  feuilles,
+  recharger,
+}: {
+  mission: MissionCra;
+  feuilles: FeuilleCra[];
+  recharger: () => void;
+}) {
+  const [mois, setMois] = useState(moisCourant());
+  const existante = feuilles.find((f) => f.mois === mois);
+  const [jours, setJours] = useState("");
+  const [heuresSup, setHeuresSup] = useState("");
+  const [commentaire, setCommentaire] = useState("");
+  const [envoi, setEnvoi] = useState(false);
+  const [erreur, setErreur] = useState("");
+
+  useEffect(() => {
+    setJours(existante ? String(existante.joursTravailles) : "");
+    setHeuresSup(existante ? String(existante.heuresSupplementaires) : "");
+    setCommentaire(existante?.commentaire ?? "");
+    setErreur("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mois, existante?.id]);
+
+  const editable = !existante || craEstEditableParIngenieur(existante.statut);
+
+  async function enregistrer(soumettre: boolean) {
+    setErreur("");
+    setEnvoi(true);
+    const res = await fetch("/api/feuilles-de-temps", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        missionId: mission.id,
+        mois,
+        joursTravailles: Number(jours),
+        heuresSupplementaires: Number(heuresSup) || 0,
+        commentaire,
+        soumettre,
+      }),
+    });
+    setEnvoi(false);
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      setErreur(d.error ?? "Erreur, réessayez.");
+      return;
+    }
+    recharger();
+  }
+
+  return (
+    <div style={{ border: "1px solid #e4e7ee", borderRadius: 8, padding: 16 }}>
+      <p style={{ fontWeight: 600, fontSize: 14, margin: "0 0 4px" }}>
+        {mission.repere ?? mission.client.nom} — {mission.client.nom}
+      </p>
+      <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap", marginTop: 12 }}>
+        <div>
+          <p style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>Mois</p>
+          <input type="month" value={mois} onChange={(e) => setMois(e.target.value)} style={{ padding: 6 }} />
+        </div>
+        <div>
+          <p style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>Jours travaillés</p>
+          <input
+            type="number"
+            min={0}
+            max={31}
+            step={0.5}
+            value={jours}
+            onChange={(e) => setJours(e.target.value)}
+            disabled={!editable}
+            style={{ padding: 6, width: 90 }}
+          />
+        </div>
+        <div>
+          <p style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>Heures sup.</p>
+          <input
+            type="number"
+            min={0}
+            step={0.5}
+            value={heuresSup}
+            onChange={(e) => setHeuresSup(e.target.value)}
+            disabled={!editable}
+            style={{ padding: 6, width: 90 }}
+          />
+        </div>
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <p style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>Commentaire (facultatif)</p>
+        <textarea
+          value={commentaire}
+          onChange={(e) => setCommentaire(e.target.value)}
+          disabled={!editable}
+          rows={2}
+          style={{ width: "100%", padding: 6, fontFamily: "inherit" }}
+        />
+      </div>
+
+      {existante && !editable && (
+        <p style={{ fontSize: 12, color: COULEUR_STATUT_CRA[existante.statut], marginTop: 10 }}>
+          {LABEL_STATUT_CRA[existante.statut]}
+        </p>
+      )}
+      {existante?.statut === "Rejetee" && existante.motifRejet && (
+        <p style={{ fontSize: 12, color: "#dc2626", marginTop: 4 }}>Motif du rejet : {existante.motifRejet}</p>
+      )}
+      {erreur && <p style={{ color: "crimson", fontSize: 13, marginTop: 8 }}>{erreur}</p>}
+
+      {editable && (
+        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          <button onClick={() => enregistrer(false)} disabled={envoi || !jours} style={{ padding: "6px 14px", fontSize: 13 }}>
+            {envoi ? "..." : "Enregistrer le brouillon"}
+          </button>
+          <button
+            onClick={() => enregistrer(true)}
+            disabled={envoi || !jours}
+            style={{ padding: "6px 14px", fontSize: 13, background: bleu, color: "#fff", border: "none", borderRadius: 6 }}
+          >
+            {envoi ? "..." : "Soumettre pour validation"}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
