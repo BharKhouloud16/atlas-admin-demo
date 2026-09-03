@@ -1,10 +1,11 @@
 import Link from "next/link";
-
-// Page d'accueil v1.2 — reprend la structure du site vitrine atlas-qa.com,
-// avec 3 points d'entrée vers la démo à la place du bouton "Réserver un appel" :
-// Espace Ingénieur / Espace Partenaire / Connexion. Chacun renvoie vers la même
-// page de connexion (mécanisme d'auth unique), avec un paramètre ?role= qui
-// pré-sélectionne le contexte affiché.
+// Page d'accueil v1.3 -- reprend la structure du site vitrine atlas-qa.com.
+// "Reserver un appel de 30 minutes" pointe vers /reserver-appel : un
+// formulaire public, sans creation de compte (voir app/reserver-appel/page.tsx
+// et app/api/demandes-contact/route.ts) -- un prospect ne doit pas s'inscrire
+// pour prendre rendez-vous. "Espace Partenaire" reste un lien de connexion :
+// il s'adresse aux clients deja en mission qui reviennent consulter leur
+// suivi, pas a un nouveau prospect.
 
 const bleu = "#2557d6";
 const bleuFonce = "#12224a";
@@ -135,7 +136,7 @@ export default function RootPage() {
             d&apos;expérience à l&apos;étranger. Ensemble, nous renforçons vos équipes techniques avec
             jusqu&apos;à 40% d&apos;économies sur vos coûts de test, sans aucune concession sur la qualité.
           </p>
-          <Bouton href="/connexion?role=client">Réserver un appel de 30 minutes</Bouton>
+          <Bouton href="/reserver-appel">Réserver un appel de 30 minutes</Bouton>
           <div style={{ display: "flex", justifyContent: "center", gap: 24, marginTop: 24, fontSize: 13, color: grisTexte, flexWrap: "wrap" }}>
             <span>✓ NDA systématique</span>
             <span>✓ Conforme RGPD</span>
@@ -255,7 +256,7 @@ export default function RootPage() {
             Pas d&apos;engagement — juste un échange pour voir si une équipe QA nearshore a du sens pour vous.
           </p>
           <div style={{ display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
-            <Bouton href="/connexion?role=client">Réserver un appel de 30 minutes</Bouton>
+            <Bouton href="/reserver-appel">Réserver un appel de 30 minutes</Bouton>
             <Bouton href="/inscription?role=ingenieur" variante="contour">Rejoindre en tant qu&apos;ingénieur</Bouton>
           </div>
         </div>
