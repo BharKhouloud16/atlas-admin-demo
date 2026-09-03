@@ -11,16 +11,20 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     redirect("/connexion");
   }
 
-  // Un ingénieur doit d'abord importer son CV, puis valider chaque
-  // information extraite, avant d'accéder à son espace (voir /ingenieur/cv
-  // et /ingenieur/cv/verifier).
+  // Un ingénieur doit d'abord importer son CV, valider chaque information
+  // extraite, puis renseigner sa disponibilité, avant d'accéder à son espace
+  // (voir /ingenieur/cv, /ingenieur/cv/verifier et /ingenieur/disponibilite).
+  // Une fois ces étapes faites, son espace principal est /ingenieur (et non
+  // plus ce tableau de bord admin) : /admin/missions reste accessible depuis
+  // la navigation, mais /admin lui-même redirige vers /ingenieur.
   if (session.role === "INGENIEUR" && session.profilId) {
     const profil = await prisma.profil.findUnique({
       where: { id: session.profilId },
-      select: { cvUrl: true, cvValide: true },
+      select: { cvUrl: true, cvValide: true, questionnaireValide: true },
     });
     if (profil && !profil.cvUrl) redirect("/ingenieur/cv");
     if (profil && profil.cvUrl && !profil.cvValide) redirect("/ingenieur/cv/verifier");
+    if (profil && profil.cvValide && !profil.questionnaireValide) redirect("/ingenieur/disponibilite");
   }
 
   return (
