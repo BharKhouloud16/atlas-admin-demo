@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { DISPONIBILITES, STATUTS_EN_MISSION, MISSIONS_APRES, PREAVIS } from "@/lib/disponibilite";
 import { PAYS, NATIONALITES, DEVISES, calculerRegimeSuggere } from "@/lib/localisation";
+import { TOUTES_COMPETENCES } from "@/lib/competences";
 
 // Questionnaire de disponibilité, à remplir par l'ingénieur juste après la
 // validation de son CV (voir /ingenieur/disponibilite), avant d'accéder à
@@ -31,6 +32,7 @@ export async function GET() {
       tjmSouhaite: true,
       tjmSouhaiteDevise: true,
       questionnaireValide: true,
+      competences: true,
     },
   });
 
@@ -57,6 +59,7 @@ export async function POST(req: NextRequest) {
     paysResidencePrecision,
     tjmSouhaite,
     tjmSouhaiteDevise,
+    competences,
   } = body;
 
   if (!DISPONIBILITES.includes(disponibilite)) {
@@ -99,6 +102,12 @@ export async function POST(req: NextRequest) {
   if (!DEVISES.includes(tjmSouhaiteDevise)) {
     return NextResponse.json({ error: "Devise invalide." }, { status: 400 });
   }
+  // Compétences : liste fermée (voir lib/competences.ts). Champ optionnel —
+  // on ignore silencieusement toute valeur qui ne fait pas partie de la
+  // liste proposée plutôt que de bloquer l'enregistrement.
+  const competencesValidees = Array.isArray(competences)
+    ? competences.filter((c: unknown): c is string => typeof c === "string" && TOUTES_COMPETENCES.includes(c))
+    : [];
 
   await prisma.profil.update({
     where: { id: session.profilId },
@@ -116,6 +125,7 @@ export async function POST(req: NextRequest) {
       regimeSuggere: calculerRegimeSuggere(paysResidence, nationalite),
       tjmSouhaite: tjmNombre,
       tjmSouhaiteDevise,
+      competences: competencesValidees,
       disponibiliteRenseigneeLe: new Date(),
       questionnaireValide: true,
     },
