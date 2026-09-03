@@ -1,7 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
-import { envoyerEmailInscriptionEnAttente } from "@/lib/email";
+import { envoyerEmailInscriptionEnAttente, envoyerEmailVerificationAdresse } from "@/lib/email";
+
+// Durée de validité du lien de vérification d'adresse email
+const VALIDITE_TOKEN_MS = 24 * 60 * 60 * 1000; // 24h
+
+function genererTokenVerification() {
+  return crypto.randomBytes(32).toString("hex");
+}
 
 // Inscription publique — jamais pour le rôle ADMIN (créé uniquement en base
 // par un administrateur existant, voir prisma/create-admin.ts).
@@ -30,15 +38,39 @@ export async function POST(req: NextRequest) {
   }
 
   const passwordHash = await bcrypt.hash(password, 12);
+  const tokenVerification = genererTokenVerification();
+  const expirationToken = new Date(Date.now() + VALIDITE_TOKEN_MS);
 
   if (role === "INGENIEUR") {
     // Crée une fiche Profil vide (sans tarif) que l'Admin complètera à la validation
     const profil = await prisma.profil.create({ data: { nom } });
     const user = await prisma.user.create({
-      data: { email, passwordHash, role: "INGENIEUR", actif: false, profilId: profil.id },
+      data: {
+        email,
+        passwordHash,
+        role: "INGENIEUR",
+        actif: false,
+        profilId: profil.id,
+        emailVerifie: false,
+        emailVerificationToken: tokenVerification,
+        emailVerificationExpire: expirationToken,
+      },
     });
     await envoyerEmailInscriptionEnAttente({ to: email, nom, role: "INGENIEUR" });
-    return NextResponse.json({ ok: true, message: "Compte créé, en attente de validation par l'administrateur.", id: user.id }, { status: 201 });
+    await envoyerEmailVerificationAdresse({ to: email, nom, token: tokenVerification });
+    return NextResponse.json(
+      {
+        ok: true,
+        message:
+          "Compte créé. Confirmez votre adresse email (lien envoyé) puis attendez la validation par l'administrateur.",
+        id: user.id,
+        // ⚠️ Démo : aucun fournisseur d'email n'est branché (voir lib/email.ts), le
+        // lien n'arrive donc pas réellement en boîte de réception pour l'instant —
+        // il est renvoyé ici pour permettre de tester le parcours de vérification.
+        lienVerificationDemo: `/verifier-email?token=${tokenVerification}`,
+      },
+      { status: 201 }
+    );
   }
 
   // role === "CLIENT" (Espace Partenaire)
@@ -54,8 +86,27 @@ export async function POST(req: NextRequest) {
     },
   });
   const user = await prisma.user.create({
-    data: { email, passwordHash, role: "CLIENT", actif: false, clientId: client.id },
+    data: {
+      email,
+      passwordHash,
+      role: "CLIENT",
+      actif: false,
+      clientId: client.id,
+      emailVerifie: false,
+      emailVerificationToken: tokenVerification,
+      emailVerificationExpire: expirationToken,
+    },
   });
   await envoyerEmailInscriptionEnAttente({ to: email, nom, role: "CLIENT" });
-  return NextResponse.json({ ok: true, message: "Compte créé, en attente de validation par l'administrateur.", id: user.id }, { status: 201 });
+  await envoyerEmailVerificationAdresse({ to: email, nom, token: tokenVerification });
+  return NextResponse.json(
+    {
+      ok: true,
+      message:
+        "Compte créé. Confirmez votre adresse email (lien envoyé) puis attendez la validation par l'administrateur.",
+      id: user.id,
+      lienVerificationDemo: `/verifier-email?token=${tokenVerification}`,
+    },
+    { status: 201 }
+  );
 }
