@@ -7,7 +7,14 @@ type CompteEnAttente = {
   email: string;
   role: "INGENIEUR" | "CLIENT";
   profil: { id: string; nom: string } | null;
-  client: { id: string; nom: string } | null;
+  client: {
+    id: string;
+    nom: string;
+    contactReferent: string | null;
+    telephone: string | null;
+    identifiantEntreprise: string | null;
+    formeJuridique: string | null;
+  } | null;
 };
 
 export default function ComptesEnAttentePage() {
@@ -43,6 +50,14 @@ export default function ComptesEnAttentePage() {
             <p style={{ margin: 0, fontWeight: 600 }}>
               {c.role === "CLIENT" ? c.client?.nom : c.profil?.nom} — {c.email} ({c.role})
             </p>
+            {c.role === "CLIENT" && c.client && (
+              <ul style={{ margin: "8px 0 0", padding: 0, listStyle: "none", fontSize: 13, color: "#4b5567" }}>
+                {c.client.formeJuridique && <li>Forme juridique : {c.client.formeJuridique}</li>}
+                {c.client.identifiantEntreprise && <li>Identifiant entreprise (RC/RNE) : {c.client.identifiantEntreprise}</li>}
+                {c.client.contactReferent && <li>Contact : {c.client.contactReferent}</li>}
+                {c.client.telephone && <li>Téléphone : {c.client.telephone}</li>}
+              </ul>
+            )}
             {c.role === "INGENIEUR" && (
               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                 <select onChange={(e) => setTypeContrat((s) => ({ ...s, [c.id]: e.target.value }))}>
