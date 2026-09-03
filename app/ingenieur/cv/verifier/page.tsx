@@ -66,7 +66,7 @@ export default function VerifierCVPage() {
 
     const suivant = index + 1;
     setIndex(suivant);
-    setValeur(infos[suivant]?.valeur ?? "");
+    setValeur(infos?.[suivant]?.valeur ?? "");
   }
 
   async function finaliser() {
