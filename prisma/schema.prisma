@@ -60,6 +60,14 @@ model User {
   desactive    Boolean   @default(false)
   desactiveLe  DateTime?
 
+  // Consentement RGPD au traitement des données (voir /confidentialite),
+  // recueilli obligatoirement à l'inscription pour un compte INGENIEUR ou
+  // CLIENT (case à cocher, voir /inscription). Sert de preuve de
+  // consentement (horodatage) — n'affecte pas les comptes ADMIN, créés
+  // manuellement en base.
+  consentementRgpd    Boolean   @default(false)
+  consentementRgpdLe  DateTime?
+
   profilId     String?  @unique // renseigné pour un compte INGENIEUR : relie à sa fiche Profil (tarifs)
   profil       Profil?  @relation(fields: [profilId], references: [id])
 
@@ -143,6 +151,19 @@ model Profil {
   tjmSouhaite                Float?
   tjmSouhaiteDevise          String?
 
+  // Compétences techniques structurées, choisies dans une liste fermée
+  // groupée par catégorie (voir lib/competences.ts) — renseignées par
+  // l'ingénieur lui-même (voir /ingenieur/disponibilite et
+  // EspaceIngenieur.tsx), utilisées côté Admin pour filtrer/rechercher les
+  // profils par compétence dans le tableau de matching (/admin/profils).
+  competences                String[]  @default([])
+
+  // Nombre d'entretiens clients réalisés par l'ingénieur via Atlas — saisi
+  // manuellement par l'Admin (voir /admin/profils, pas de module
+  // d'entretiens dédié pour l'instant) et affiché à l'ingénieur dans ses
+  // statistiques personnelles (voir EspaceIngenieur.tsx).
+  entretiensRealises         Int          @default(0)
+
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
   missions            Mission[]
@@ -181,6 +202,50 @@ model Mission {
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
   documents     Document[]
+  feuillesDeTemps FeuilleDeTemps[]
+  evaluation      Evaluation?
+}
+
+// Compte-rendu d'activité (CRA) mensuel, façon BoondManager/portage salarial :
+// l'ingénieur déclare ses jours travaillés + heures sup pour une mission et
+// un mois donnés, puis le CRA suit un circuit de double validation avant
+// facturation — Admin d'abord, Client ensuite (voir app/api/feuilles-de-temps
+// et EspaceIngenieur.tsx, /admin/feuilles-de-temps, /client). Un seul CRA par
+// mission et par mois (@@unique).
+model FeuilleDeTemps {
+  id                     String    @id @default(cuid())
+  mission                Mission   @relation(fields: [missionId], references: [id])
+  missionId              String
+  mois                   String    // format "AAAA-MM"
+  joursTravailles        Float     @default(0)
+  heuresSupplementaires  Float     @default(0)
+  commentaire            String?
+  // Brouillon (édition libre par l'ingénieur) -> Soumise (verrouillée, en
+  // attente Admin) -> ValideeAdmin (en attente Client) -> ValideeClient
+  // (définitive, facturable) ; Rejetee renvoie à l'ingénieur avec motifRejet,
+  // ré-éditable comme un Brouillon.
+  statut                 String    @default("Brouillon")
+  motifRejet             String?
+  soumiseLe              DateTime?
+  valideeAdminLe         DateTime?
+  valideeClientLe        DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  @@unique([missionId, mois])
+}
+
+// Évaluation du client sur une mission terminée — preuve sociale simple pour
+// l'ingénieur (façon avis client Malt), affichée dans ses statistiques
+// personnelles (voir EspaceIngenieur.tsx) et consultable par l'Admin. Une
+// seule évaluation par mission (relation 1-1 côté Mission).
+model Evaluation {
+  id           String   @id @default(cuid())
+  mission      Mission  @relation(fields: [missionId], references: [id])
+  missionId    String   @unique
+  note         Int      // 1 à 5
+  commentaire  String?
+  createdAt    DateTime @default(now())
 }
 
 // Document consultable par le client dans son espace (rapport d'audit,
