@@ -10,6 +10,7 @@ const LIENS_NAV = [
   { href: "/admin", label: "Tableau de bord", roles: ["ADMIN", "INGENIEUR"] },
   { href: "/admin/missions", label: "Missions", roles: ["ADMIN", "INGENIEUR"] },
   { href: "/admin/clients", label: "Clients", roles: ["ADMIN"] },
+  { href: "/admin/ingenieurs", label: "Ingénieurs", roles: ["ADMIN"] },
   { href: "/admin/profils", label: "Profils", roles: ["ADMIN"] },
   { href: "/admin/feuilles-de-temps", label: "Feuilles de temps", roles: ["ADMIN"] },
   { href: "/admin/demandes", label: "Demandes de contact", roles: ["ADMIN"] },
