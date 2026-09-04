@@ -2,9 +2,16 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { convertirEnEur } from "@/lib/localisation";
-import { calculerScore, suggestionPourProfil, type ComparaisonTjm } from "@/lib/scoring";
+import {
+  calculerScore,
+  calculerScoreDetail,
+  calculerBadgeConfiance,
+  suggestionPourProfil,
+  type ComparaisonTjm,
+} from "@/lib/scoring";
 import { TOUTES_COMPETENCES } from "@/lib/competences";
 import { bleu, bleuFonce } from "@/lib/theme";
+import type { Realisation } from "@/app/api/ingenieur/realisations/route";
 
 type Profil = {
   id: string;
@@ -27,6 +34,10 @@ type Profil = {
   questionnaireValide: boolean;
   competences: string[];
   entretiensRealises: number;
+  realisations: Realisation[] | null;
+  missionsTerminees: number;
+  evaluationMoyenne: number | null;
+  nombreEvaluations: number;
 };
 
 // Alerte simple : un CV importé mais pas encore validé depuis plus de 48h
@@ -66,6 +77,16 @@ export default function ProfilsPage() {
   const [filtreCompetence, setFiltreCompetence] = useState("");
   const [filtrePays, setFiltrePays] = useState("");
   const [nombreDesactives, setNombreDesactives] = useState(0);
+  const [ouverts, setOuverts] = useState<Set<string>>(new Set());
+
+  function basculerDetail(id: string) {
+    setOuverts((prev) => {
+      const suivant = new Set(prev);
+      if (suivant.has(id)) suivant.delete(id);
+      else suivant.add(id);
+      return suivant;
+    });
+  }
 
   useEffect(() => {
     fetch("/api/profils")
@@ -314,6 +335,7 @@ export default function ProfilsPage() {
             <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd" }}>
               <th style={{ padding: "6px 8px" }}>Ingénieur</th>
               <th style={{ padding: "6px 8px" }}>Score</th>
+              <th style={{ padding: "6px 8px" }}>Badge</th>
               <th style={{ padding: "6px 8px" }}>Séniorité</th>
               <th style={{ padding: "6px 8px" }}>Pays de résidence</th>
               <th style={{ padding: "6px 8px" }}>Disponibilité</th>
@@ -332,6 +354,8 @@ export default function ProfilsPage() {
               <LigneProfil
                 key={l.p.id}
                 l={l}
+                ouvert={ouverts.has(l.p.id)}
+                onToggleDetail={() => basculerDetail(l.p.id)}
                 onEntretiensChange={(id, valeur) =>
                   setProfils((prev) => prev.map((p) => (p.id === id ? { ...p, entretiensRealises: valeur } : p)))
                 }
@@ -412,14 +436,51 @@ function GraphiqueBarres({
   );
 }
 
-function LigneProfil({ l, onEntretiensChange }: { l: Ligne; onEntretiensChange: (id: string, valeur: number) => void }) {
+const NB_COLONNES = 14;
+
+function LigneProfil({
+  l,
+  ouvert,
+  onToggleDetail,
+  onEntretiensChange,
+}: {
+  l: Ligne;
+  ouvert: boolean;
+  onToggleDetail: () => void;
+  onEntretiensChange: (id: string, valeur: number) => void;
+}) {
   const { p, tjmSouhaiteEur, comparaison, score, suggestion } = l;
   const scoreCouleur = score >= 75 ? "#16a34a" : score >= 50 ? "#d97706" : "#dc2626";
   const alerteStatut = p.regimeSuggere?.includes("⚠");
+  const badge = calculerBadgeConfiance({
+    evaluationMoyenne: p.evaluationMoyenne,
+    nombreEvaluations: p.nombreEvaluations,
+    missionsTerminees: p.missionsTerminees,
+  });
 
   return (
-    <tr style={{ borderBottom: "1px solid #f0f0f0" }}>
-      <td style={{ padding: "6px 8px" }}>{nomComplet(p)}</td>
+    <>
+    <tr style={{ borderBottom: ouvert ? "none" : "1px solid #f0f0f0" }}>
+      <td style={{ padding: "6px 8px" }}>
+        <button
+          onClick={onToggleDetail}
+          style={{
+            all: "unset",
+            cursor: "pointer",
+            fontWeight: 600,
+            color: bleuFonce,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+          }}
+          title="Voir le détail du score et le portfolio"
+        >
+          <span style={{ fontSize: 10, color: "#888", transform: ouvert ? "rotate(90deg)" : "none", display: "inline-block" }}>
+            ▸
+          </span>
+          {nomComplet(p)}
+        </button>
+      </td>
       <td style={{ padding: "6px 8px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <div style={{ width: 48, background: "#f0f0f0", borderRadius: 4, height: 8, overflow: "hidden" }}>
@@ -427,6 +488,27 @@ function LigneProfil({ l, onEntretiensChange }: { l: Ligne; onEntretiensChange: 
           </div>
           <span style={{ fontSize: 12, fontWeight: 700, color: scoreCouleur }}>{score}</span>
         </div>
+      </td>
+      <td style={{ padding: "6px 8px" }}>
+        {badge ? (
+          <span
+            title={badge.explication}
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              padding: "2px 8px",
+              borderRadius: 999,
+              color: badge.couleur,
+              background: badge.couleur + "1a",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {badge.niveau === "confirme" ? "★ " : ""}
+            {badge.label}
+          </span>
+        ) : (
+          <span style={{ fontSize: 12, color: "#aaa" }}>-</span>
+        )}
       </td>
       <td style={{ padding: "6px 8px" }}>{p.seniorite ?? "-"}</td>
       <td style={{ padding: "6px 8px" }}>
@@ -486,6 +568,74 @@ function LigneProfil({ l, onEntretiensChange }: { l: Ligne; onEntretiensChange: 
         )}
       </td>
     </tr>
+    {ouvert && (
+      <tr style={{ borderBottom: "1px solid #f0f0f0" }}>
+        <td colSpan={NB_COLONNES} style={{ padding: "4px 8px 16px 32px", background: "#f9fafc" }}>
+          <DetailProfil l={l} badge={badge} />
+        </td>
+      </tr>
+    )}
+    </>
+  );
+}
+
+// Panneau de détail dépliable : explique le score (au lieu de livrer un
+// chiffre opaque, façon Bullhorn "pourquoi ce match ?") et présente le
+// portfolio de réalisations de l'ingénieur (façon Malt) — voir
+// lib/scoring.ts et Profil.realisations.
+function DetailProfil({ l, badge }: { l: Ligne; badge: ReturnType<typeof calculerBadgeConfiance> }) {
+  const detail = calculerScoreDetail(l.p, l.comparaison);
+  const realisations = l.p.realisations ?? [];
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, maxWidth: 900, padding: "8px 0" }}>
+      <div>
+        <p style={{ fontSize: 12, textTransform: "uppercase", color: "#888", marginBottom: 8 }}>
+          Détail du score ({l.score}/100)
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {detail.map((c) => (
+            <div key={c.cle} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 11, color: "#4b5567", width: 150, flexShrink: 0 }} title={c.detail}>
+                {c.label}
+              </span>
+              <div style={{ flex: 1, background: "#eef0f5", borderRadius: 4, height: 10, overflow: "hidden" }}>
+                <div style={{ width: `${c.points}%`, background: bleu, height: "100%" }} />
+              </div>
+              <span style={{ fontSize: 11, color: "#888", width: 42, textAlign: "right" }}>{c.poidsPct}%</span>
+              <span style={{ fontSize: 11, color: bleuFonce, width: 90, textAlign: "right" }}>{c.detail}</span>
+            </div>
+          ))}
+        </div>
+        {badge && (
+          <p style={{ fontSize: 12, color: badge.couleur, marginTop: 10 }}>
+            {badge.label} — {badge.explication}
+          </p>
+        )}
+      </div>
+      <div>
+        <p style={{ fontSize: 12, textTransform: "uppercase", color: "#888", marginBottom: 8 }}>
+          Réalisations ({realisations.length})
+        </p>
+        {realisations.length === 0 ? (
+          <p style={{ fontSize: 12, color: "#aaa" }}>Aucune réalisation renseignée par l&apos;ingénieur pour l&apos;instant.</p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 220, overflowY: "auto" }}>
+            {realisations.map((r) => (
+              <div key={r.id} style={{ border: "1px solid #e4e7ee", borderRadius: 6, padding: 8, background: "#fff" }}>
+                <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: bleuFonce }}>{r.titre}</p>
+                {r.description && <p style={{ margin: "3px 0 0", fontSize: 11, color: "#4b5567" }}>{r.description}</p>}
+                {r.lien && (
+                  <a href={r.lien} target="_blank" rel="noreferrer" style={{ fontSize: 11 }}>
+                    {r.lien}
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
