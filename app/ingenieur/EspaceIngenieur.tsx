@@ -31,11 +31,14 @@ type Mission = {
   statut: string;
   nbJours: number;
   createdAt: string;
-  client: { nom: string };
+  updatedAt: string;
+  client: { nom: string; pays: string | null };
 };
 
 type ProfilData = {
   nom: string;
+  prenom: string | null;
+  type: string | null;
   cvNomFichier: string | null;
   cvImporteLe: string | null;
   cvValide: boolean;
@@ -108,7 +111,9 @@ export default function EspaceIngenieur() {
       <main style={{ maxWidth: 1000, margin: "40px auto", padding: "0 24px", display: "flex", gap: 32 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-            <h1 style={{ fontSize: 22, margin: 0, color: bleuFonce }}>{data.nom}</h1>
+            <h1 style={{ fontSize: 22, margin: 0, color: bleuFonce }}>
+              {data.prenom ? `${data.prenom} ${data.nom}` : data.nom}
+            </h1>
             <StatutBadge data={data} missionActive={missionActive} />
           </div>
           <p style={{ fontSize: 13, color: "#888", marginBottom: 24 }}>Espace ingénieur</p>
@@ -116,7 +121,9 @@ export default function EspaceIngenieur() {
           <Statistiques data={data} />
 
           {onglet === "Profil" && <OngletProfil data={data} recharger={recharger} />}
-          {onglet === "Historique de mission avec Atlas" && <OngletHistorique missions={data.missions} />}
+          {onglet === "Historique de mission avec Atlas" && (
+            <OngletHistorique missions={data.missions} typeContrat={data.type} />
+          )}
           {onglet === "Documents" && <OngletDocuments data={data} />}
           {onglet === "Emploi du temps" && <OngletEmploiDuTemps missionActive={missionActive} />}
           {onglet === "Mon compte" && <OngletCompte missionActive={missionActive} />}
@@ -225,21 +232,21 @@ function Statistiques({ data }: { data: ProfilData }) {
   );
   const anciennete =
     moisAnciennete < 1
-      ? "Ce mois-ci"
+      ? "Moins d'un mois"
       : moisAnciennete < 12
       ? `${moisAnciennete} mois`
       : `${Math.floor(moisAnciennete / 12)} an(s)`;
 
   const stats = [
-    { label: "Missions validées avec Atlas", valeur: String(missionsValidees) },
-    { label: "Mission(s) en cours", valeur: String(missionsEnCours) },
-    { label: "Entretiens réalisés", valeur: String(data.entretiensRealises) },
+    { label: "Missions terminées avec Atlas", valeur: String(missionsValidees) },
+    { label: "Mission(s) en cours avec Atlas", valeur: String(missionsEnCours) },
+    { label: "Entretiens réalisés (tous clients)", valeur: String(data.entretiensRealises) },
     {
-      label: `Note client${data.nombreEvaluations > 1 ? "s" : ""}`,
-      valeur: data.evaluationMoyenne != null ? `${data.evaluationMoyenne.toFixed(1)} / 5` : "—",
+      label: `Note client${data.nombreEvaluations > 1 ? "s" : ""} moyenne`,
+      valeur: data.evaluationMoyenne != null ? `${data.evaluationMoyenne.toFixed(1)} / 5` : "Pas encore de note",
     },
-    { label: "Compétences renseignées", valeur: String(data.competences.length) },
-    { label: "Dans le vivier Atlas depuis", valeur: anciennete },
+    { label: "Compétences techniques cochées", valeur: String(data.competences.length) },
+    { label: "Membre du vivier Atlas depuis", valeur: anciennete },
   ];
 
   return (
@@ -260,6 +267,14 @@ function OngletProfil({ data, recharger }: { data: ProfilData; recharger: () => 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
       <Completude data={data} />
+
+      <div>
+        <p style={{ fontSize: 12, textTransform: "uppercase", color: "#888", marginBottom: 8 }}>
+          Disponibilité &amp; localisation
+        </p>
+        <Disponibilite data={data} recharger={recharger} />
+      </div>
+
       {categories.map((cat) => (
         <div key={cat}>
           <p style={{ fontSize: 12, textTransform: "uppercase", color: "#888", marginBottom: 8 }}>{cat}</p>
@@ -272,13 +287,6 @@ function OngletProfil({ data, recharger }: { data: ProfilData; recharger: () => 
           </div>
         </div>
       ))}
-
-      <div>
-        <p style={{ fontSize: 12, textTransform: "uppercase", color: "#888", marginBottom: 8 }}>
-          Disponibilité &amp; localisation
-        </p>
-        <Disponibilite data={data} recharger={recharger} />
-      </div>
     </div>
   );
 }
@@ -322,10 +330,28 @@ function Completude({ data }: { data: ProfilData }) {
   );
 }
 
+const OPTIONS_SENIORITE = ["Junior", "Confirmé", "Senior", "Expert"];
+
+// Champs extraits du CV dont la valeur est une liste (compétences, langues) :
+// affichés ligne par ligne plutôt qu'en bloc de texte, avec un rappel que ces
+// libellés viennent tels quels du CV — à distinguer des compétences à cocher
+// (section Disponibilité & localisation ci-dessus), utilisées pour le matching.
+const CHAMPS_LISTE = [
+  "Compétences techniques principales",
+  "Compétences secondaires / outils",
+  "Langues parlées",
+];
+
 function ChampEditable({ info, recharger }: { info: InfoCV; recharger: () => void }) {
   const [edition, setEdition] = useState(false);
   const [valeur, setValeur] = useState(info.valeur);
   const [envoi, setEnvoi] = useState(false);
+
+  const estSeniorite = info.libelle.startsWith("Séniorité");
+  const estListe = CHAMPS_LISTE.includes(info.libelle);
+  const elements = estListe
+    ? info.valeur.split(/[,;\n]/).map((v) => v.trim()).filter(Boolean)
+    : [];
 
   async function enregistrer() {
     setEnvoi(true);
@@ -342,16 +368,55 @@ function ChampEditable({ info, recharger }: { info: InfoCV; recharger: () => voi
   return (
     <div style={{ border: "1px solid #e4e7ee", borderRadius: 8, padding: 12 }}>
       <p style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>{info.libelle}</p>
+      {estListe && !edition && (
+        <p style={{ fontSize: 11, color: "#aab0ba", margin: "0 0 6px" }}>
+          Extrait tel quel de votre CV — pour les compétences utilisées dans le matching, voir la liste à cocher
+          ci-dessus.
+        </p>
+      )}
       {edition ? (
-        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-          <textarea
-            value={valeur}
-            onChange={(e) => setValeur(e.target.value)}
-            rows={2}
-            style={{ flex: 1, padding: 6, border: "1px solid #e4e7ee", borderRadius: 6, fontFamily: "inherit", fontSize: 14 }}
-          />
-          <button onClick={enregistrer} disabled={envoi} style={{ padding: "6px 12px", fontSize: 13 }}>
-            {envoi ? "..." : "Enregistrer"}
+        estSeniorite ? (
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <select
+              value={OPTIONS_SENIORITE.includes(valeur) ? valeur : ""}
+              onChange={(e) => setValeur(e.target.value)}
+              style={{ flex: 1, padding: 6, border: "1px solid #e4e7ee", borderRadius: 6, fontFamily: "inherit", fontSize: 14 }}
+            >
+              <option value="">Sélectionnez...</option>
+              {OPTIONS_SENIORITE.map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </select>
+            <button onClick={enregistrer} disabled={envoi} style={{ padding: "6px 12px", fontSize: 13 }}>
+              {envoi ? "..." : "Enregistrer"}
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+            <textarea
+              value={valeur}
+              onChange={(e) => setValeur(e.target.value)}
+              rows={2}
+              style={{ flex: 1, padding: 6, border: "1px solid #e4e7ee", borderRadius: 6, fontFamily: "inherit", fontSize: 14 }}
+            />
+            <button onClick={enregistrer} disabled={envoi} style={{ padding: "6px 12px", fontSize: 13 }}>
+              {envoi ? "..." : "Enregistrer"}
+            </button>
+          </div>
+        )
+      ) : estListe && elements.length > 0 ? (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+          <ul style={{ margin: 0, paddingLeft: 18, flex: 1 }}>
+            {elements.map((el, i) => (
+              <li key={i} style={{ fontSize: 14 }}>
+                {el}
+              </li>
+            ))}
+          </ul>
+          <button onClick={() => setEdition(true)} style={{ fontSize: 12, padding: "4px 10px", flexShrink: 0 }}>
+            Modifier
           </button>
         </div>
       ) : (
@@ -664,7 +729,13 @@ function Ligne({ label, valeur }: { label: string; valeur: string | null | undef
   );
 }
 
-function OngletHistorique({ missions }: { missions: Mission[] }) {
+const LABEL_TYPE_CONTRAT: Record<string, string> = {
+  SALARIE: "Salarié",
+  FREELANCE: "Freelance",
+  PORTAGE: "Portage salarial",
+};
+
+function OngletHistorique({ missions, typeContrat }: { missions: Mission[]; typeContrat: string | null }) {
   if (missions.length === 0) {
     return (
       <p style={{ fontSize: 14, color: "#4b5567" }}>
@@ -675,15 +746,37 @@ function OngletHistorique({ missions }: { missions: Mission[] }) {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {missions.map((m) => (
-        <div key={m.id} style={{ border: "1px solid #e4e7ee", borderRadius: 8, padding: 12 }}>
-          <p style={{ fontWeight: 600, fontSize: 14, margin: 0 }}>{m.client.nom}{m.repere ? ` — ${m.repere}` : ""}</p>
-          <p style={{ fontSize: 13, color: "#888", margin: "4px 0 0" }}>
-            {m.statut} · {m.nbJours} jour(s) · depuis le {new Date(m.createdAt).toLocaleDateString("fr-FR")}
-          </p>
-        </div>
-      ))}
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <thead>
+          <tr style={{ textAlign: "left", borderBottom: "1px solid #e4e7ee" }}>
+            <th style={{ padding: "6px 8px" }}>Client</th>
+            <th style={{ padding: "6px 8px" }}>Mission</th>
+            <th style={{ padding: "6px 8px" }}>Localisation client</th>
+            <th style={{ padding: "6px 8px" }}>Type de contrat</th>
+            <th style={{ padding: "6px 8px" }}>Statut</th>
+            <th style={{ padding: "6px 8px" }}>Début</th>
+            <th style={{ padding: "6px 8px" }}>Fin (ou prévisionnelle)</th>
+            <th style={{ padding: "6px 8px" }}>Jours</th>
+          </tr>
+        </thead>
+        <tbody>
+          {missions.map((m) => (
+            <tr key={m.id} style={{ borderBottom: "1px solid #f0f0f0" }}>
+              <td style={{ padding: "6px 8px", fontWeight: 600 }}>{m.client.nom}</td>
+              <td style={{ padding: "6px 8px" }}>{m.repere ?? "—"}</td>
+              <td style={{ padding: "6px 8px" }}>{m.client.pays ?? "—"}</td>
+              <td style={{ padding: "6px 8px" }}>{typeContrat ? LABEL_TYPE_CONTRAT[typeContrat] ?? typeContrat : "—"}</td>
+              <td style={{ padding: "6px 8px" }}>{m.statut}</td>
+              <td style={{ padding: "6px 8px" }}>{new Date(m.createdAt).toLocaleDateString("fr-FR")}</td>
+              <td style={{ padding: "6px 8px" }}>
+                {m.statut === "En cours" ? "En cours" : new Date(m.updatedAt).toLocaleDateString("fr-FR")}
+              </td>
+              <td style={{ padding: "6px 8px" }}>{m.nbJours}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -753,6 +846,8 @@ function OngletCompte({ missionActive }: { missionActive: boolean }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 520 }}>
       {erreur && <p style={{ color: "crimson", fontSize: 13 }}>{erreur}</p>}
 
+      <ChangementMotDePasse />
+
       <p style={{ fontSize: 12, color: "#888" }}>
         Pour savoir comment vos données sont utilisées et exercer vos droits (accès, rectification, portabilité...),
         consultez notre{" "}
@@ -821,6 +916,126 @@ function OngletCompte({ missionActive }: { missionActive: boolean }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// Changement de mot de passe, avec confirmation double (ancien + nouveau +
+// confirmation du nouveau) puis un message de confirmation finale avant
+// l'envoi, comme demandé — pas de vraie vérification anti-robot en démo,
+// juste une case à cocher symbolique.
+function ChangementMotDePasse() {
+  const [ancien, setAncien] = useState("");
+  const [nouveau, setNouveau] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [pasUnRobot, setPasUnRobot] = useState(false);
+  const [demandeConfirmation, setDemandeConfirmation] = useState(false);
+  const [envoi, setEnvoi] = useState(false);
+  const [erreur, setErreur] = useState("");
+  const [succes, setSucces] = useState(false);
+
+  function validerAvantConfirmation(e: React.FormEvent) {
+    e.preventDefault();
+    setErreur("");
+    setSucces(false);
+    if (nouveau.length < 8) {
+      setErreur("Le nouveau mot de passe doit contenir au moins 8 caractères.");
+      return;
+    }
+    if (nouveau !== confirmation) {
+      setErreur("Les deux mots de passe ne correspondent pas.");
+      return;
+    }
+    if (!pasUnRobot) {
+      setErreur("Merci de cocher la case de vérification.");
+      return;
+    }
+    setDemandeConfirmation(true);
+  }
+
+  async function confirmer() {
+    setEnvoi(true);
+    setErreur("");
+    const res = await fetch("/api/auth/mot-de-passe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ancienMotDePasse: ancien,
+        nouveauMotDePasse: nouveau,
+        confirmationNouveauMotDePasse: confirmation,
+      }),
+    });
+    const d = await res.json().catch(() => ({}));
+    setEnvoi(false);
+    setDemandeConfirmation(false);
+    if (!res.ok) {
+      setErreur(d.error ?? "Erreur, réessayez.");
+      return;
+    }
+    setAncien("");
+    setNouveau("");
+    setConfirmation("");
+    setPasUnRobot(false);
+    setSucces(true);
+  }
+
+  return (
+    <div style={{ border: "1px solid #e4e7ee", borderRadius: 8, padding: 16 }}>
+      <p style={{ fontWeight: 600, fontSize: 14, margin: "0 0 12px" }}>Modifier mon mot de passe</p>
+
+      {succes && (
+        <p style={{ fontSize: 13, color: "#16a34a", background: "#eafaf0", padding: 8, borderRadius: 6, marginBottom: 12 }}>
+          Mot de passe modifié avec succès.
+        </p>
+      )}
+      {erreur && <p style={{ color: "crimson", fontSize: 13, marginBottom: 12 }}>{erreur}</p>}
+
+      {demandeConfirmation ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <p style={{ fontSize: 13, margin: 0 }}>Voulez-vous confirmer la modification de votre mot de passe ?</p>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={confirmer} disabled={envoi} style={{ padding: "8px 16px", fontSize: 13 }}>
+              {envoi ? "..." : "Confirmer"}
+            </button>
+            <button onClick={() => setDemandeConfirmation(false)} style={{ padding: "8px 16px", fontSize: 13 }}>
+              Annuler
+            </button>
+          </div>
+        </div>
+      ) : (
+        <form onSubmit={validerAvantConfirmation} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <input
+            type="password"
+            placeholder="Ancien mot de passe"
+            value={ancien}
+            onChange={(e) => setAncien(e.target.value)}
+            required
+          />
+          <input
+            type="password"
+            placeholder="Nouveau mot de passe (8 caractères min.)"
+            value={nouveau}
+            onChange={(e) => setNouveau(e.target.value)}
+            required
+          />
+          <input
+            type="password"
+            placeholder="Confirmer le nouveau mot de passe"
+            value={confirmation}
+            onChange={(e) => setConfirmation(e.target.value)}
+            required
+          />
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#4b5567" }}>
+            <input type="checkbox" checked={pasUnRobot} onChange={(e) => setPasUnRobot(e.target.checked)} />
+            Je ne suis pas un robot
+          </label>
+          <div>
+            <button type="submit" style={{ padding: "8px 16px", fontSize: 13 }}>
+              Modifier mon mot de passe
+            </button>
+          </div>
+        </form>
+      )}
     </div>
   );
 }
