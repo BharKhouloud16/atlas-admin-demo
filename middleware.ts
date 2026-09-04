@@ -13,8 +13,8 @@ const PUBLIC_PATHS = [
 ];
 
 // Préfixes protégés, groupés par rôle autorisé
-const ADMIN_PREFIXES = ["/admin/clients", "/admin/profils", "/admin/comptes-en-attente", "/admin/feuilles-de-temps",
-  "/api/clients", "/api/profils", "/api/comptes", "/api/generate-contract"];
+const ADMIN_PREFIXES = ["/admin/clients", "/admin/ingenieurs", "/admin/profils", "/admin/comptes-en-attente", "/admin/feuilles-de-temps",
+  "/api/clients", "/api/ingenieurs", "/api/profils", "/api/comptes", "/api/generate-contract"];
 const INGENIEUR_PREFIXES = ["/admin/missions", "/api/missions", "/ingenieur", "/api/ingenieur"]; // aussi accessible à ADMIN
 const CLIENT_PREFIXES = ["/client", "/api/client"];
 // Endpoints partagés entre les 3 rôles, chaque route gérant elle-même le
@@ -100,6 +100,7 @@ export const config = {
     "/client/:path*",
     "/ingenieur/:path*",
     "/api/clients/:path*",
+    "/api/ingenieurs/:path*",
     "/api/profils/:path*",
     "/api/missions/:path*",
     "/api/generate-contract/:path*",
