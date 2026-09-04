@@ -37,6 +37,7 @@ export async function GET() {
       questionnaireValide: true,
       competences: true,
       entretiensRealises: true,
+      realisations: true,
       createdAt: true,
       infosCv: { orderBy: { ordre: "asc" } },
       missions: {
@@ -49,6 +50,7 @@ export async function GET() {
           createdAt: true,
           updatedAt: true,
           client: { select: { nom: true, pays: true } },
+          evaluation: { select: { note: true } },
         },
       },
     },
@@ -66,10 +68,12 @@ export async function GET() {
     _avg: { note: true },
     _count: { note: true },
   });
+  const missionsTerminees = profil.missions.filter((m) => m.statut === "Terminée").length;
 
   return NextResponse.json({
     ...profil,
     evaluationMoyenne: agregatEvaluations._avg.note,
     nombreEvaluations: agregatEvaluations._count.note,
+    missionsTerminees,
   });
 }
