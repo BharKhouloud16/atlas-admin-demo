@@ -600,6 +600,7 @@ function LigneProfil({
             <a href={`/api/ingenieur/cv/fichier?profilId=${p.id}`} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>
               Ouvrir
             </a>
+            <BoutonLienPartage type="cv" profilId={p.id} />
             {cvEnAlerte(p) && (
               <span
                 title={`CV importé le ${p.cvImporteLe ? new Date(p.cvImporteLe).toLocaleDateString("fr-FR") : "?"}, non encore validé`}
@@ -690,10 +691,51 @@ function DetailProfil({ l, badge }: { l: Ligne; badge: ReturnType<typeof calcule
               controls
               style={{ maxWidth: 280, borderRadius: 8, border: "1px solid #e4e7ee" }}
             />
+            <div style={{ marginTop: 6 }}>
+              <BoutonLienPartage type="video" profilId={l.p.id} />
+            </div>
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+// Génère un lien de partage temporaire (24h, voir lib/url-signee.ts et
+// POST /api/ingenieur/{cv,video}/lien-partage) vers le CV ou la vidéo d'un
+// ingénieur, utilisable sans compte — utile pour l'envoyer par email à un
+// prospect qui n'a pas encore de compte sur la plateforme.
+function BoutonLienPartage({ type, profilId }: { type: "cv" | "video"; profilId: string }) {
+  const [etat, setEtat] = useState<"repos" | "chargement" | "copie" | "erreur">("repos");
+
+  async function genererEtCopier() {
+    setEtat("chargement");
+    try {
+      const reponse = await fetch(`/api/ingenieur/${type}/lien-partage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profilId }),
+      });
+      if (!reponse.ok) throw new Error();
+      const { url } = await reponse.json();
+      await navigator.clipboard.writeText(url);
+      setEtat("copie");
+      setTimeout(() => setEtat("repos"), 2500);
+    } catch {
+      setEtat("erreur");
+      setTimeout(() => setEtat("repos"), 2500);
+    }
+  }
+
+  return (
+    <button
+      onClick={genererEtCopier}
+      disabled={etat === "chargement"}
+      title="Générer un lien de partage valable 24h, utilisable sans compte"
+      style={{ fontSize: 11, padding: "2px 8px", borderRadius: 5, border: "1px solid #ccc", background: "#fff", cursor: "pointer" }}
+    >
+      {etat === "chargement" ? "..." : etat === "copie" ? "Lien copié ✓" : etat === "erreur" ? "Échec" : "Copier lien (24h)"}
+    </button>
   );
 }
 
