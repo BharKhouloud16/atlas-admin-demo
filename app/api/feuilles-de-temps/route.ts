@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
-import { craEstEditableParIngenieur, totauxDepuisDetail } from "@/lib/feuilles-de-temps";
+import { craEstEditableParIngenieur, totauxDepuisDetail, libelleMois } from "@/lib/feuilles-de-temps";
+import { journaliser } from "@/lib/audit";
+import { envoyerEmailCraRejete } from "@/lib/email";
 
 // Feuilles de temps (CRA) : un seul endpoint, comportement différent selon
 // le rôle (même approche que /api/missions) — voir lib/feuilles-de-temps.ts
@@ -150,10 +152,35 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json(maj);
     }
     if (action === "rejeter") {
+      const motif = (motifRejet ?? "").trim() || "Non précisé.";
       const maj = await prisma.feuilleDeTemps.update({
         where: { id },
-        data: { statut: "Rejetee", motifRejet: (motifRejet ?? "").trim() || "Non précisé." },
+        data: { statut: "Rejetee", motifRejet: motif },
       });
+
+      await journaliser({
+        acteurEmail: session.email,
+        acteurRole: "ADMIN",
+        action: "rejet_cra",
+        cible: feuille.id,
+        detail: `Feuille de ${feuille.mois} (mission ${feuille.missionId}) rejetée — motif : ${motif}`,
+      });
+
+      // Notifie l'ingénieur — récupère son email via le profil de la mission
+      // (le compte User n'est pas directement lié à la mission).
+      const compteIngenieur = await prisma.user.findUnique({
+        where: { profilId: feuille.mission.profilId },
+        include: { profil: true },
+      });
+      if (compteIngenieur) {
+        await envoyerEmailCraRejete({
+          to: compteIngenieur.email,
+          nom: compteIngenieur.profil?.nom ?? "",
+          mois: libelleMois(feuille.mois),
+          motif,
+        });
+      }
+
       return NextResponse.json(maj);
     }
     return NextResponse.json({ error: "Action invalide." }, { status: 400 });
