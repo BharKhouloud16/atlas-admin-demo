@@ -27,16 +27,32 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Accès non autorisé" }, { status: 403 });
   }
 
-  const profil = await prisma.profil.findUnique({
-    where: { id: profilId },
-    select: { cvUrl: true, cvNomFichier: true },
-  });
+  // Historique des versions (voir prisma/schema.prisma, VersionCv) :
+  // ?versionId=... sert une ancienne version archivée plutôt que le CV
+  // actuel, avec les mêmes vérifications d'accès ci-dessus (déjà limitées
+  // au bon profilId avant d'arriver ici).
+  const versionId = req.nextUrl.searchParams.get("versionId");
 
-  if (!profil?.cvUrl) {
+  let cvUrl: string | null;
+  let cvNomFichier: string | null;
+  if (versionId) {
+    const version = await prisma.versionCv.findUnique({ where: { id: versionId } });
+    if (!version || version.profilId !== profilId) {
+      return NextResponse.json({ error: "Version introuvable" }, { status: 404 });
+    }
+    cvUrl = version.cvUrl;
+    cvNomFichier = version.cvNomFichier;
+  } else {
+    const profil = await prisma.profil.findUnique({ where: { id: profilId }, select: { cvUrl: true, cvNomFichier: true } });
+    cvUrl = profil?.cvUrl ?? null;
+    cvNomFichier = profil?.cvNomFichier ?? null;
+  }
+
+  if (!cvUrl) {
     return NextResponse.json({ error: "Aucun CV importé" }, { status: 404 });
   }
 
-  const fichier = await obtenirFichier(profil.cvUrl);
+  const fichier = await obtenirFichier(cvUrl);
   if (!fichier) {
     return NextResponse.json({ error: "Fichier introuvable" }, { status: 404 });
   }
@@ -46,7 +62,7 @@ export async function GET(req: NextRequest) {
       "Content-Type": fichier.contentType,
       "X-Content-Type-Options": "nosniff",
       "Cache-Control": "private, no-cache",
-      "Content-Disposition": `inline; filename="${profil.cvNomFichier ?? "cv"}"`,
+      "Content-Disposition": `inline; filename="${cvNomFichier ?? "cv"}"`,
     },
   });
 }
