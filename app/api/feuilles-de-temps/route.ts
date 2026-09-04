@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
-import { craEstEditableParIngenieur } from "@/lib/feuilles-de-temps";
+import { craEstEditableParIngenieur, totauxDepuisDetail } from "@/lib/feuilles-de-temps";
 
 // Feuilles de temps (CRA) : un seul endpoint, comportement différent selon
 // le rôle (même approche que /api/missions) — voir lib/feuilles-de-temps.ts
@@ -24,7 +24,7 @@ export async function GET() {
     const [missions, feuilles] = await Promise.all([
       prisma.mission.findMany({
         where: { profilId: session.profilId },
-        select: { id: true, repere: true, statut: true, client: { select: { nom: true } } },
+        select: { id: true, repere: true, statut: true, client: { select: { nom: true, pays: true } } },
         orderBy: { createdAt: "desc" },
       }),
       prisma.feuilleDeTemps.findMany({
@@ -61,13 +61,29 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
-  const { missionId, mois, joursTravailles, heuresSupplementaires, commentaire, soumettre } = body;
+  const { missionId, mois, joursTravailles, heuresSupplementaires, commentaire, soumettre, detailJours } = body;
 
   if (!missionId || !/^\d{4}-\d{2}$/.test(mois ?? "")) {
     return NextResponse.json({ error: "Mission et mois (AAAA-MM) requis." }, { status: 400 });
   }
-  const jours = Number(joursTravailles);
-  const heuresSup = Number(heuresSupplementaires) || 0;
+
+  // Le détail jour par jour (calendrier façon Boond, voir
+  // components/CalendrierCra.tsx) est la source de vérité quand il est
+  // fourni : les totaux sont recalculés ici plutôt que de faire confiance
+  // aux nombres agrégés envoyés par le client, pour éviter toute
+  // incohérence entre le calendrier affiché et la feuille enregistrée.
+  // Les anciennes feuilles (saisies avant l'ajout du calendrier) n'ont pas
+  // de détail : dans ce cas on retombe sur les nombres agrégés envoyés.
+  let jours: number;
+  let heuresSup: number;
+  if (Array.isArray(detailJours)) {
+    const totaux = totauxDepuisDetail(detailJours);
+    jours = totaux.joursTravailles;
+    heuresSup = totaux.heuresSupplementaires;
+  } else {
+    jours = Number(joursTravailles);
+    heuresSup = Number(heuresSupplementaires) || 0;
+  }
   if (!Number.isFinite(jours) || jours < 0 || jours > 31) {
     return NextResponse.json({ error: "Nombre de jours travaillés invalide." }, { status: 400 });
   }
@@ -92,6 +108,7 @@ export async function POST(req: NextRequest) {
     mois,
     joursTravailles: jours,
     heuresSupplementaires: heuresSup,
+    detailJours: Array.isArray(detailJours) ? detailJours : undefined,
     commentaire: commentaire?.trim() || null,
     statut: soumettre ? "Soumise" : "Brouillon",
     motifRejet: null as string | null,
