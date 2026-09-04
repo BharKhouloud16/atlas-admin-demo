@@ -9,6 +9,7 @@ import { bleu, bleuFonce } from "@/lib/theme";
 type Profil = {
   id: string;
   nom: string;
+  prenom: string | null;
   seniorite: string | null;
   anneesExperience: number | null;
   tjmEstime: number | null;
@@ -48,6 +49,10 @@ type Ligne = {
 
 const SENIORITES = ["Junior", "Confirmé", "Senior", "Expert"];
 
+function nomComplet(p: Profil): string {
+  return p.prenom ? `${p.prenom} ${p.nom}` : p.nom;
+}
+
 // Tableau de bord Admin pour le matching des profils ingénieurs : vue
 // d'ensemble (KPI + graphiques) puis tableau détaillé avec, pour chaque
 // profil, un score indicatif de "proposabilité" et une suggestion d'action
@@ -60,12 +65,14 @@ export default function ProfilsPage() {
   const [recherche, setRecherche] = useState("");
   const [filtreCompetence, setFiltreCompetence] = useState("");
   const [filtrePays, setFiltrePays] = useState("");
+  const [nombreDesactives, setNombreDesactives] = useState(0);
 
   useEffect(() => {
     fetch("/api/profils")
       .then((r) => r.json())
       .then((data) => {
-        setProfils(Array.isArray(data) ? data : []);
+        setProfils(Array.isArray(data.profils) ? data.profils : []);
+        setNombreDesactives(typeof data.nombreDesactives === "number" ? data.nombreDesactives : 0);
         setChargement(false);
       });
   }, []);
@@ -89,7 +96,7 @@ export default function ProfilsPage() {
   const lignesFiltrees = useMemo(() => {
     const rechercheNorm = recherche.trim().toLowerCase();
     return lignes.filter((l) => {
-      if (rechercheNorm && !l.p.nom.toLowerCase().includes(rechercheNorm)) return false;
+      if (rechercheNorm && !nomComplet(l.p).toLowerCase().includes(rechercheNorm)) return false;
       if (filtreCompetence && !l.p.competences.includes(filtreCompetence)) return false;
       if (filtrePays) {
         const pays = l.p.paysResidence === "Autre" ? l.p.paysResidencePrecision : l.p.paysResidence;
@@ -102,7 +109,7 @@ export default function ProfilsPage() {
   const lignesTriees = useMemo(() => {
     const copie = [...lignesFiltrees];
     if (tri === "score") copie.sort((a, b) => b.score - a.score);
-    else copie.sort((a, b) => a.p.nom.localeCompare(b.p.nom));
+    else copie.sort((a, b) => nomComplet(a.p).localeCompare(nomComplet(b.p)));
     return copie;
   }, [lignesFiltrees, tri]);
 
@@ -124,7 +131,7 @@ export default function ProfilsPage() {
     const echapper = (v: string) => `"${v.replace(/"/g, '""')}"`;
     const lignesCsv = lignesTriees.map((l) =>
       [
-        l.p.nom,
+        nomComplet(l.p),
         String(l.score),
         l.p.seniorite ?? "",
         (l.p.paysResidence === "Autre" ? l.p.paysResidencePrecision : l.p.paysResidence) ?? "",
@@ -186,6 +193,25 @@ export default function ProfilsPage() {
         convertie en euros à titre indicatif (taux fixes). Ces indicateurs sont une aide à la décision, pas une
         vérité absolue.
       </p>
+
+      {nombreDesactives > 0 && (
+        <p
+          style={{
+            fontSize: 12,
+            color: "#92400e",
+            background: "#fffbeb",
+            border: "1px solid #fde68a",
+            borderRadius: 8,
+            padding: "8px 12px",
+            marginBottom: 20,
+            maxWidth: 760,
+          }}
+        >
+          {nombreDesactives} profil{nombreDesactives > 1 ? "s" : ""} masqué{nombreDesactives > 1 ? "s" : ""} ici
+          car l&apos;ingénieur a temporairement désactivé son compte — il{nombreDesactives > 1 ? "s" : ""}{" "}
+          réapparaîtr{nombreDesactives > 1 ? "ont" : "a"} automatiquement dès réactivation.
+        </p>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
         <Kpi label="Profils" valeur={String(total)} />
@@ -393,7 +419,7 @@ function LigneProfil({ l, onEntretiensChange }: { l: Ligne; onEntretiensChange: 
 
   return (
     <tr style={{ borderBottom: "1px solid #f0f0f0" }}>
-      <td style={{ padding: "6px 8px" }}>{p.nom}</td>
+      <td style={{ padding: "6px 8px" }}>{nomComplet(p)}</td>
       <td style={{ padding: "6px 8px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <div style={{ width: 48, background: "#f0f0f0", borderRadius: 4, height: 8, overflow: "hidden" }}>
