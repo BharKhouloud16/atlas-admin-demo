@@ -45,10 +45,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
+          # Pas de `cache: npm` ici : ce dépôt est géré sans installation
+          # locale (déploiement par upload web GitHub, voir mémoire projet),
+          # donc aucun package-lock.json n'est commité — `actions/setup-node`
+          # exigerait un fichier de verrouillage pour son cache, et `npm ci`
+          # aussi. On utilise `npm install` ci-dessous à la place.
 
       - name: Installation des dépendances
-        run: npm ci
+        run: npm install
 
       - name: Vérification des types TypeScript
         run: npx tsc --noEmit
