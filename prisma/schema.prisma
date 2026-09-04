@@ -228,6 +228,12 @@ model FeuilleDeTemps {
   joursTravailles        Float     @default(0)
   heuresSupplementaires  Float     @default(0)
   commentaire            String?
+  // Détail jour par jour saisi via le calendrier façon Boond (voir
+  // components/CalendrierCra.tsx) : [{date:"2026-09-01", travaille:true,
+  // heures:8, commentaire:null}, ...]. joursTravailles/heuresSupplementaires
+  // ci-dessus restent les totaux dérivés (utilisés par l'Admin/Client et les
+  // anciennes feuilles saisies avant ce calendrier, qui n'ont pas ce détail).
+  detailJours            Json?
   // Brouillon (édition libre par l'ingénieur) -> Soumise (verrouillée, en
   // attente Admin) -> ValideeAdmin (en attente Client) -> ValideeClient
   // (définitive, facturable) ; Rejetee renvoie à l'ingénieur avec motifRejet,
