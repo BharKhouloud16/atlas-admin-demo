@@ -39,7 +39,7 @@ export async function PATCH(req: NextRequest) {
 
   const user = await prisma.user.update({
     where: { id: userId },
-    data: { actif: true },
+    data: { actif: true, valideLe: new Date() },
     include: { profil: true, client: true },
   });
 
