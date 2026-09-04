@@ -3,6 +3,17 @@
 import { useEffect, useState } from "react";
 import { bleu } from "@/lib/theme";
 import { libelleMois, type StatutCra } from "@/lib/feuilles-de-temps";
+import type { Realisation } from "@/app/api/ingenieur/realisations/route";
+import type { BadgeConfiance } from "@/lib/scoring";
+
+type ProfilVitrine = {
+  id: string;
+  nom: string;
+  prenom: string | null;
+  realisations: Realisation[] | null;
+  badge: BadgeConfiance;
+  aVideo: boolean;
+};
 
 type Mission = {
   id: string;
@@ -10,7 +21,7 @@ type Mission = {
   statut: string;
   nbJours: number;
   createdAt: string;
-  profil: { nom: string };
+  profil: ProfilVitrine;
 };
 
 type Document = {
@@ -42,6 +53,16 @@ export default function ClientDashboard() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [feuilles, setFeuilles] = useState<FeuilleClient[]>([]);
   const [missionsEvaluables, setMissionsEvaluables] = useState<MissionEvaluable[]>([]);
+  const [ouvertes, setOuvertes] = useState<Set<string>>(new Set());
+
+  function basculer(id: string) {
+    setOuvertes((prev) => {
+      const suivant = new Set(prev);
+      if (suivant.has(id)) suivant.delete(id);
+      else suivant.add(id);
+      return suivant;
+    });
+  }
 
   function rechargerFeuilles() {
     fetch("/api/feuilles-de-temps").then((r) => r.json()).then((d) => setFeuilles(d.feuilles ?? []));
@@ -67,14 +88,40 @@ export default function ClientDashboard() {
       <h1>Suivi de vos missions</h1>
       {missions.length === 0 && <p style={{ color: "#888" }}>Aucune mission pour l'instant.</p>}
       <ul style={{ listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-        {missions.map((m) => (
-          <li key={m.id} style={{ border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
-            <p style={{ margin: 0, fontWeight: 600 }}>{m.repere ?? m.profil.nom}</p>
-            <p style={{ margin: 0, fontSize: 13, color: "#666" }}>
-              Statut : {m.statut} · {m.nbJours} jour(s) · démarrée le {new Date(m.createdAt).toLocaleDateString("fr-FR")}
-            </p>
-          </li>
-        ))}
+        {missions.map((m) => {
+          const ouverte = ouvertes.has(m.id);
+          const aVitrine = (m.profil.realisations?.length ?? 0) > 0 || m.profil.badge || m.profil.aVideo;
+          return (
+            <li key={m.id} style={{ border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+                <div>
+                  <p style={{ margin: 0, fontWeight: 600 }}>{m.repere ?? m.profil.nom}</p>
+                  <p style={{ margin: 0, fontSize: 13, color: "#666" }}>
+                    Statut : {m.statut} · {m.nbJours} jour(s) · démarrée le {new Date(m.createdAt).toLocaleDateString("fr-FR")}
+                  </p>
+                  {m.profil.badge && (
+                    <span
+                      title={m.profil.badge.explication}
+                      style={{ display: "inline-block", marginTop: 6, fontSize: 11, padding: "2px 8px", borderRadius: 999, border: `1px solid ${m.profil.badge.couleur}`, color: m.profil.badge.couleur }}
+                    >
+                      {m.profil.badge.niveau === "confirme" ? "★ " : ""}
+                      {m.profil.badge.label}
+                    </span>
+                  )}
+                </div>
+                {aVitrine && (
+                  <button
+                    onClick={() => basculer(m.id)}
+                    style={{ fontSize: 12, padding: "5px 10px", background: "none", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer" }}
+                  >
+                    {ouverte ? "Masquer le profil" : "Voir le profil"}
+                  </button>
+                )}
+              </div>
+              {ouverte && <ProfilVitrineDetail profil={m.profil} />}
+            </li>
+          );
+        })}
       </ul>
 
       <h1 style={{ marginTop: 32 }}>Vos documents</h1>
@@ -90,6 +137,52 @@ export default function ClientDashboard() {
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+// Aperçu "vitrine" du profil de l'ingénieur, côté client : portfolio de
+// réalisations et vidéo de présentation, en lecture seule — jamais de score
+// de matching ni de TJM (réservés à l'Admin, voir /api/client/missions).
+function ProfilVitrineDetail({ profil }: { profil: ProfilVitrine }) {
+  const realisations = profil.realisations ?? [];
+
+  return (
+    <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #eee", display: "flex", flexDirection: "column", gap: 12 }}>
+      {profil.aVideo && (
+        <div>
+          <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 6px" }}>
+            Vidéo de présentation
+          </p>
+          <video
+            src={`/api/ingenieur/video/fichier?profilId=${profil.id}`}
+            controls
+            style={{ maxWidth: 320, borderRadius: 8, border: "1px solid #eee" }}
+          />
+        </div>
+      )}
+      <div>
+        <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 6px" }}>
+          Réalisations
+        </p>
+        {realisations.length === 0 ? (
+          <p style={{ fontSize: 12, color: "#aaa", margin: 0 }}>Aucune réalisation renseignée pour l&apos;instant.</p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {realisations.map((r) => (
+              <div key={r.id} style={{ border: "1px solid #eee", borderRadius: 6, padding: 8 }}>
+                <p style={{ margin: 0, fontSize: 12, fontWeight: 600 }}>{r.titre}</p>
+                {r.description && <p style={{ margin: "3px 0 0", fontSize: 12, color: "#666" }}>{r.description}</p>}
+                {r.lien && (
+                  <a href={r.lien} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>
+                    {r.lien}
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
