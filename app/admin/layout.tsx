@@ -8,6 +8,7 @@ import NavAdmin from "@/components/NavAdmin";
 
 const LIENS_NAV = [
   { href: "/admin", label: "Tableau de bord", roles: ["ADMIN", "INGENIEUR"] },
+  { href: "/admin/recherche", label: "Recherche", roles: ["ADMIN"] },
   { href: "/admin/missions", label: "Missions", roles: ["ADMIN", "INGENIEUR"] },
   { href: "/admin/clients", label: "Clients", roles: ["ADMIN"] },
   { href: "/admin/ingenieurs", label: "Ingénieurs", roles: ["ADMIN"] },
