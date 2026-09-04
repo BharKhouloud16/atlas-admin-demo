@@ -148,11 +148,11 @@ export function calculerRegimeSuggere(paysResidence: string, nationalite?: strin
   return "Freelance international (régime à étudier au cas par cas selon le pays de résidence)";
 }
 
-// Taux de change indicatifs et fixes (non connectés à un service de change
-// en temps réel) — utilisés uniquement pour donner à l'Admin un ordre de
-// grandeur en euros du TJM souhaité par l'ingénieur, afin de faciliter la
-// comparaison avec le TJM estimé du profil et le TJM de vente au client. À
-// rafraîchir périodiquement ; ne pas utiliser pour de la facturation réelle.
+// Taux de change indicatifs et fixes — valeur de repli si les taux live
+// (voir lib/taux-change.ts, obtenirTauxChange, USD/GBP/CHF/CAD via
+// Frankfurter/BCE) n'ont pas pu être récupérés, et taux définitif pour les
+// devises non couvertes par cette source (MAD/TND/DZD/AED/SAR/QAR). Ne pas
+// utiliser pour de la facturation réelle.
 const TAUX_VERS_EUR: Record<string, number> = {
   EUR: 1,
   USD: 0.92,
@@ -167,8 +167,13 @@ const TAUX_VERS_EUR: Record<string, number> = {
   CAD: 0.68,
 };
 
-export function convertirEnEur(montant: number, devise: string): number | null {
-  const taux = TAUX_VERS_EUR[devise];
+// tauxPersonnalises : passer les taux live du jour (lib/taux-change.ts,
+// obtenirTauxChange côté serveur puis /api/taux-change côté client) pour
+// une conversion plus fraîche ; sans ce paramètre, retombe sur les taux
+// fixes ci-dessus (comportement historique, toujours utilisé par les
+// appelants qui n'ont pas encore été mis à jour).
+export function convertirEnEur(montant: number, devise: string, tauxPersonnalises?: Record<string, number>): number | null {
+  const taux = (tauxPersonnalises && tauxPersonnalises[devise]) ?? TAUX_VERS_EUR[devise];
   if (!taux || !Number.isFinite(montant)) return null;
   return Math.round(montant * taux * 100) / 100;
 }
