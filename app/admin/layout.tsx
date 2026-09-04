@@ -15,6 +15,7 @@ const LIENS_NAV = [
   { href: "/admin/feuilles-de-temps", label: "Feuilles de temps", roles: ["ADMIN"] },
   { href: "/admin/demandes", label: "Demandes de contact", roles: ["ADMIN"] },
   { href: "/admin/comptes-en-attente", label: "Comptes en attente", roles: ["ADMIN"] },
+  { href: "/admin/journal", label: "Journal d'activité", roles: ["ADMIN"] },
 ] as const;
 
 const LABEL_ROLE: Record<string, string> = {
