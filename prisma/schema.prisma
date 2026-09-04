@@ -172,6 +172,16 @@ model Profil {
   // statistiques personnelles (voir EspaceIngenieur.tsx).
   entretiensRealises         Int          @default(0)
 
+  // Portfolio de réalisations concrètes, façon Malt : distinct de
+  // l'expérience déclarative extraite du CV (InfoCV, catégorie
+  // "experience") — ici l'ingénieur met en avant jusqu'à 10 réalisations
+  // (titre, description, lien optionnel) visibles par l'Admin et servant
+  // à convaincre un client. Voir app/api/ingenieur/realisations/route.ts.
+  // Stocké en JSON plutôt qu'un modèle dédié pour rester simple (pas de
+  // relation, pas de tri serveur nécessaire) : [{id, titre, description,
+  // lien}, ...].
+  realisations               Json?
+
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
   missions            Mission[]
