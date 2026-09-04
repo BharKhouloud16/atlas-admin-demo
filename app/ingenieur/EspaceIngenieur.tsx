@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import { DISPONIBILITES, STATUTS_EN_MISSION, MISSIONS_APRES, PREAVIS } from "@/lib/disponibilite";
 import { PAYS, NATIONALITES, DEVISES, calculerRegimeSuggere } from "@/lib/localisation";
 import { COMPETENCES_GROUPES } from "@/lib/competences";
-import { bleu, bleuFonce, grisTexte } from "@/lib/theme";
+import { bleu, bleuFonce, grisTexte, bordure } from "@/lib/theme";
+import LogoAtlas from "@/components/LogoAtlas";
+import BoutonDeconnexion from "@/components/BoutonDeconnexion";
 import {
   type StatutCra,
   LABEL_STATUT_CRA,
@@ -83,55 +85,76 @@ export default function EspaceIngenieur() {
   const missionActive = data.missions.some((m) => m.statut === "En cours");
 
   return (
-    <main style={{ maxWidth: 1000, margin: "40px auto", padding: 24, display: "flex", gap: 32 }}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-          <h1 style={{ fontSize: 22, margin: 0, color: bleuFonce }}>{data.nom}</h1>
-          <StatutBadge data={data} missionActive={missionActive} />
+    <>
+      <header
+        style={{
+          background: "#fff",
+          borderBottom: `1px solid ${bordure}`,
+          padding: "14px 24px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 16,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <LogoAtlas href="/ingenieur" />
+          <span style={{ fontSize: 12, fontWeight: 600, color: grisTexte, borderLeft: `1px solid ${bordure}`, paddingLeft: 14 }}>
+            Espace Ingénieur
+          </span>
         </div>
-        <p style={{ fontSize: 13, color: "#888", marginBottom: 24 }}>Espace ingénieur</p>
+        <BoutonDeconnexion />
+      </header>
+      <main style={{ maxWidth: 1000, margin: "40px auto", padding: "0 24px", display: "flex", gap: 32 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+            <h1 style={{ fontSize: 22, margin: 0, color: bleuFonce }}>{data.nom}</h1>
+            <StatutBadge data={data} missionActive={missionActive} />
+          </div>
+          <p style={{ fontSize: 13, color: "#888", marginBottom: 24 }}>Espace ingénieur</p>
 
-        <Statistiques data={data} />
+          <Statistiques data={data} />
 
-        {onglet === "Profil" && <OngletProfil data={data} recharger={recharger} />}
-        {onglet === "Historique de mission avec Atlas" && <OngletHistorique missions={data.missions} />}
-        {onglet === "Documents" && <OngletDocuments data={data} />}
-        {onglet === "Emploi du temps" && <OngletEmploiDuTemps missionActive={missionActive} />}
-        {onglet === "Mon compte" && <OngletCompte missionActive={missionActive} />}
-      </div>
+          {onglet === "Profil" && <OngletProfil data={data} recharger={recharger} />}
+          {onglet === "Historique de mission avec Atlas" && <OngletHistorique missions={data.missions} />}
+          {onglet === "Documents" && <OngletDocuments data={data} />}
+          {onglet === "Emploi du temps" && <OngletEmploiDuTemps missionActive={missionActive} />}
+          {onglet === "Mon compte" && <OngletCompte missionActive={missionActive} />}
+        </div>
 
-      <nav style={{ width: 220, flexShrink: 0 }}>
-        <ul style={{ listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: 4 }}>
-          {ONGLETS.map((o) => {
-            const verrouille = o === "Emploi du temps" && !missionActive;
-            return (
-              <li key={o}>
-                <button
-                  onClick={() => !verrouille && setOnglet(o)}
-                  disabled={verrouille}
-                  title={verrouille ? "Disponible dès que vous êtes en mission avec Atlas" : undefined}
-                  style={{
-                    width: "100%",
-                    textAlign: "left",
-                    padding: "10px 12px",
-                    borderRadius: 8,
-                    border: "1px solid " + (onglet === o ? bleu : "#e4e7ee"),
-                    background: onglet === o ? bleu : "#fff",
-                    color: onglet === o ? "#fff" : verrouille ? "#aab0ba" : bleuFonce,
-                    fontSize: 13,
-                    fontWeight: 600,
-                    cursor: verrouille ? "not-allowed" : "pointer",
-                  }}
-                >
-                  {o}
-                  {verrouille && <span style={{ fontWeight: 400, fontSize: 11 }}> (verrouillé)</span>}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      </nav>
-    </main>
+        <nav style={{ width: 220, flexShrink: 0 }}>
+          <ul style={{ listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+            {ONGLETS.map((o) => {
+              const verrouille = o === "Emploi du temps" && !missionActive;
+              return (
+                <li key={o}>
+                  <button
+                    onClick={() => !verrouille && setOnglet(o)}
+                    disabled={verrouille}
+                    title={verrouille ? "Disponible dès que vous êtes en mission avec Atlas" : undefined}
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      border: "1px solid " + (onglet === o ? bleu : "#e4e7ee"),
+                      background: onglet === o ? bleu : "#fff",
+                      color: onglet === o ? "#fff" : verrouille ? "#aab0ba" : bleuFonce,
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: verrouille ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {o}
+                    {verrouille && <span style={{ fontWeight: 400, fontSize: 11 }}> (verrouillé)</span>}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+      </main>
+    </>
   );
 }
 
