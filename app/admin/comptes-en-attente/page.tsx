@@ -25,13 +25,20 @@ function heuresEnAttente(createdAt: string): number {
   return Math.floor((Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60));
 }
 
+const PAR_PAGE = 10;
+
 export default function ComptesEnAttentePage() {
   const [comptes, setComptes] = useState<CompteEnAttente[]>([]);
+  const [page, setPage] = useState(1);
 
   function charger() {
     fetch("/api/comptes").then((r) => r.json()).then(setComptes);
   }
   useEffect(charger, []);
+
+  const nombrePages = Math.max(1, Math.ceil(comptes.length / PAR_PAGE));
+  const pageEffective = Math.min(page, nombrePages);
+  const comptesPage = comptes.slice((pageEffective - 1) * PAR_PAGE, pageEffective * PAR_PAGE);
 
   async function valider(userId: string) {
     await fetch("/api/comptes", {
@@ -47,7 +54,7 @@ export default function ComptesEnAttentePage() {
       <h1>Comptes en attente de validation</h1>
       {comptes.length === 0 && <p style={{ color: "#888" }}>Aucun compte en attente.</p>}
       <ul style={{ listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: 12 }}>
-        {comptes.map((c) => {
+        {comptesPage.map((c) => {
           const heures = heuresEnAttente(c.createdAt);
           const enAlerte = heures >= SEUIL_ALERTE_HEURES;
           return (
@@ -85,6 +92,27 @@ export default function ComptesEnAttentePage() {
           );
         })}
       </ul>
+      {nombrePages > 1 && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginTop: 16 }}>
+          <button
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={pageEffective <= 1}
+            style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #ccc", background: "#fff", cursor: pageEffective <= 1 ? "default" : "pointer", opacity: pageEffective <= 1 ? 0.4 : 1 }}
+          >
+            ← Précédent
+          </button>
+          <span style={{ fontSize: 13, color: "#667" }}>
+            Page {pageEffective} / {nombrePages}
+          </span>
+          <button
+            onClick={() => setPage((p) => Math.min(nombrePages, p + 1))}
+            disabled={pageEffective >= nombrePages}
+            style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #ccc", background: "#fff", cursor: pageEffective >= nombrePages ? "default" : "pointer", opacity: pageEffective >= nombrePages ? 0.4 : 1 }}
+          >
+            Suivant →
+          </button>
+        </div>
+      )}
     </div>
   );
 }
