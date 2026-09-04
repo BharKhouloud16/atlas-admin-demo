@@ -2,29 +2,29 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { obtenirFichier } from "@/lib/storage";
+import { verifierUrlSignee } from "@/lib/url-signee";
 
 // Sert la vidéo de présentation (stockée en privé sur Vercel Blob) :
 // - à l'ingénieur propriétaire (aucun ?profilId requis) ;
 // - à un ADMIN qui consulte un profil (?profilId=...) ;
 // - à un CLIENT ayant une mission (passée ou en cours) avec ce profil
 //   (?profilId=...) — un client ne peut voir la vidéo que des ingénieurs
-//   avec qui il a réellement travaillé, jamais l'ensemble du vivier.
-// Jamais d'URL publique : tout accès passe par cette route, qui vérifie les
-// droits avant de streamer le contenu.
+//   avec qui il a réellement travaillé, jamais l'ensemble du vivier ;
+// - à quiconque possède un lien de partage signé et non expiré
+//   (?partage=..., voir POST /api/ingenieur/video/lien-partage et
+//   lib/url-signee.ts).
+// Jamais d'URL publique brute : tout accès passe par cette route.
 export async function GET(req: NextRequest) {
   const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ error: "Accès non autorisé" }, { status: 403 });
-  }
-
   const profilIdDemande = req.nextUrl.searchParams.get("profilId");
+  const partage = req.nextUrl.searchParams.get("partage");
 
   let profilId: string | null = null;
-  if (session.role === "ADMIN" && profilIdDemande) {
+  if (session?.role === "ADMIN" && profilIdDemande) {
     profilId = profilIdDemande;
-  } else if (session.role === "INGENIEUR") {
+  } else if (session?.role === "INGENIEUR") {
     profilId = session.profilId;
-  } else if (session.role === "CLIENT" && profilIdDemande && session.clientId) {
+  } else if (session?.role === "CLIENT" && profilIdDemande && session.clientId) {
     const mission = await prisma.mission.findFirst({
       where: { profilId: profilIdDemande, clientId: session.clientId },
       select: { id: true },
@@ -32,6 +32,8 @@ export async function GET(req: NextRequest) {
     if (mission) {
       profilId = profilIdDemande;
     }
+  } else if (!session && profilIdDemande && verifierUrlSignee(`video:${profilIdDemande}`, partage)) {
+    profilId = profilIdDemande;
   }
 
   if (!profilId) {
