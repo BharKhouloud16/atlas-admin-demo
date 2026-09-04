@@ -16,7 +16,12 @@ const PUBLIC_PATHS = [
 const ADMIN_PREFIXES = ["/admin/clients", "/admin/ingenieurs", "/admin/profils", "/admin/comptes-en-attente", "/admin/feuilles-de-temps",
   "/api/clients", "/api/ingenieurs", "/api/profils", "/api/comptes", "/api/generate-contract"];
 const INGENIEUR_PREFIXES = ["/admin/missions", "/api/missions", "/ingenieur", "/api/ingenieur"]; // aussi accessible à ADMIN
-const CLIENT_PREFIXES = ["/client", "/api/client"];
+// "/api/client/" se termine par un slash pour ne matcher QUE les routes
+// client (/api/client/missions, /api/client/documents...) — un préfixe nu
+// "/api/client" matchait aussi "/api/clients" (route Admin) par erreur via
+// startsWith, ce qui bloquait l'Admin sur /admin/clients (bug trouvé le 4
+// sept. lors du test de la nouvelle page /admin/clients).
+const CLIENT_PREFIXES = ["/client", "/api/client/"];
 // Endpoints partagés entre les 3 rôles, chaque route gérant elle-même le
 // détail des permissions (voir app/api/feuilles-de-temps et
 // app/api/evaluations) — accessibles à ADMIN par défaut (cf. plus bas),
