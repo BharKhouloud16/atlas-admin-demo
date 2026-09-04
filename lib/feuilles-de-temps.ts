@@ -41,3 +41,26 @@ export function libelleMois(mois: string): string {
   if (!annee || !m) return mois;
   return new Date(annee, m - 1, 1).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
 }
+
+// Détail jour par jour du calendrier CRA façon Boond (voir
+// components/CalendrierCra.tsx, colonne FeuilleDeTemps.detailJours) — type
+// et calcul des totaux mis ici plutôt que dans le composant (qui est "use
+// client") pour pouvoir être réutilisés côté serveur par
+// app/api/feuilles-de-temps/route.ts, qui recalcule les totaux à partir du
+// détail envoyé plutôt que de faire confiance aux nombres agrégés du client.
+export type JourCra = { date: string; travaille: boolean; heures: number; commentaire?: string };
+
+export function totauxDepuisDetail(detail: JourCra[]): { joursTravailles: number; heuresSupplementaires: number } {
+  let heuresNormales = 0;
+  let heuresSup = 0;
+  for (const j of detail) {
+    if (!j.travaille) continue;
+    const h = j.heures || 0;
+    heuresNormales += Math.min(h, 8);
+    heuresSup += Math.max(h - 8, 0);
+  }
+  return {
+    joursTravailles: Math.round((heuresNormales / 8) * 2) / 2,
+    heuresSupplementaires: Math.round(heuresSup * 2) / 2,
+  };
+}
