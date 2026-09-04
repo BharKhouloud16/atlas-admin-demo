@@ -43,6 +43,12 @@ model User {
   actif        Boolean  @default(true) // false pour tout compte auto-inscrit, en attente de validation
   createdAt    DateTime @default(now())
 
+  // Traçabilité pour la nouvelle rubrique Admin "Ingénieurs" (liste des
+  // comptes validés, voir /admin/ingenieurs) : quand le compte a été validé
+  // par un Admin, et sa toute première connexion réussie.
+  valideLe            DateTime?
+  premiereConnexionLe DateTime?
+
   // Vérification de l'adresse email à l'inscription (voir lib/email.ts,
   // app/api/auth/verifier-email/route.ts). Par défaut true pour ne jamais
   // bloquer un compte déjà existant (ADMIN créé en base, ou comptes créés
@@ -78,6 +84,7 @@ model User {
 model Client {
   id                  String    @id @default(cuid())
   nom                 String    // raison sociale
+  pays                String?   // pays d'implantation du client (affiché dans l'historique de mission ingénieur, et sert à terme au calendrier de jours fériés des feuilles de temps)
   secteur             String?
   contactReferent     String?   // nom de la personne de contact côté client
   email               String?
@@ -101,7 +108,8 @@ model Client {
 // l'analyse du profil (séniorité, compétences) — voir lib/analyse-profil.ts.
 model Profil {
   id                  String       @id @default(cuid())
-  nom                 String
+  nom                 String       // nom de famille (avant la refonte, contenait le nom complet — voir prenom)
+  prenom              String?      // prénom, saisi séparément à l'inscription depuis la refonte du 4 sept.
   type                TypeContrat?
   montantSaisi        Float?       // laissé vide jusqu'à ce qu'un contrat soit négocié
 
