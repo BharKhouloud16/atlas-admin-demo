@@ -38,6 +38,9 @@ export async function GET() {
       competences: true,
       entretiensRealises: true,
       realisations: true,
+      videoUrl: true,
+      videoNomFichier: true,
+      videoImporteLe: true,
       createdAt: true,
       infosCv: { orderBy: { ordre: "asc" } },
       missions: {
