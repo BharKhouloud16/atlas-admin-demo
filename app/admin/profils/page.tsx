@@ -79,6 +79,12 @@ export default function ProfilsPage() {
   const [filtrePays, setFiltrePays] = useState("");
   const [nombreDesactives, setNombreDesactives] = useState(0);
   const [ouverts, setOuverts] = useState<Set<string>>(new Set());
+  // Taux de change du jour (voir lib/taux-change.ts, /api/taux-change) —
+  // undefined tant que non chargés : convertirEnEur retombe alors sur ses
+  // taux fixes internes, donc l'affichage reste correct pendant le chargement.
+  const [taux, setTaux] = useState<Record<string, number> | undefined>(undefined);
+  const [page, setPage] = useState(1);
+  const PAR_PAGE = 25;
 
   function basculerDetail(id: string) {
     setOuverts((prev) => {
@@ -97,18 +103,28 @@ export default function ProfilsPage() {
         setNombreDesactives(typeof data.nombreDesactives === "number" ? data.nombreDesactives : 0);
         setChargement(false);
       });
+    fetch("/api/taux-change")
+      .then((r) => r.json())
+      .then((data) => setTaux(data.taux))
+      .catch(() => {}); // best-effort : convertirEnEur retombe sur ses taux fixes en cas d'échec
   }, []);
+
+  // Revenir à la page 1 dès que la recherche ou un filtre change, sinon on
+  // peut se retrouver sur une page vide après avoir réduit les résultats.
+  useEffect(() => {
+    setPage(1);
+  }, [recherche, filtreCompetence, filtrePays, tri]);
 
   const lignes: Ligne[] = useMemo(() => {
     return profils.map((p) => {
       const tjmSouhaiteEur =
-        p.tjmSouhaite != null && p.tjmSouhaiteDevise ? convertirEnEur(p.tjmSouhaite, p.tjmSouhaiteDevise) : null;
+        p.tjmSouhaite != null && p.tjmSouhaiteDevise ? convertirEnEur(p.tjmSouhaite, p.tjmSouhaiteDevise, taux) : null;
       const comparaison = comparerTjm(p.tjmEstime, tjmSouhaiteEur);
       const score = calculerScore(p, comparaison);
       const suggestion = suggestionPourProfil(p, comparaison, score);
       return { p, tjmSouhaiteEur, comparaison, score, suggestion };
     });
-  }, [profils]);
+  }, [profils, taux]);
 
   const paysDisponibles = useMemo(() => {
     const ensemble = new Set(profils.map((p) => (p.paysResidence === "Autre" ? p.paysResidencePrecision : p.paysResidence)).filter(Boolean) as string[]);
@@ -134,6 +150,14 @@ export default function ProfilsPage() {
     else copie.sort((a, b) => nomComplet(a.p).localeCompare(nomComplet(b.p)));
     return copie;
   }, [lignesFiltrees, tri]);
+
+  // Pagination client (25/page) — la liste des profils grandit avec le
+  // temps et un tableau de plusieurs centaines de lignes devient long à
+  // parcourir/rendre. L'export CSV et le tri restent volontairement sur
+  // lignesTriees (l'ensemble complet filtré), seul l'affichage est paginé.
+  const nombrePages = Math.max(1, Math.ceil(lignesTriees.length / PAR_PAGE));
+  const pageEffective = Math.min(page, nombrePages);
+  const lignesPage = lignesTriees.slice((pageEffective - 1) * PAR_PAGE, pageEffective * PAR_PAGE);
 
   function exporterCsv() {
     const entetes = [
@@ -351,7 +375,7 @@ export default function ProfilsPage() {
             </tr>
           </thead>
           <tbody>
-            {lignesTriees.map((l) => (
+            {lignesPage.map((l) => (
               <LigneProfil
                 key={l.p.id}
                 l={l}
@@ -369,6 +393,27 @@ export default function ProfilsPage() {
         )}
         {profils.length > 0 && lignesTriees.length === 0 && (
           <p style={{ fontSize: 13, color: "#888", marginTop: 12 }}>Aucun profil ne correspond à ces filtres.</p>
+        )}
+        {nombrePages > 1 && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginTop: 16 }}>
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={pageEffective <= 1}
+              style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${bleuFonce}22`, background: "#fff", cursor: pageEffective <= 1 ? "default" : "pointer", opacity: pageEffective <= 1 ? 0.4 : 1 }}
+            >
+              ← Précédent
+            </button>
+            <span style={{ fontSize: 13, color: "#667" }}>
+              Page {pageEffective} / {nombrePages}
+            </span>
+            <button
+              onClick={() => setPage((p) => Math.min(nombrePages, p + 1))}
+              disabled={pageEffective >= nombrePages}
+              style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${bleuFonce}22`, background: "#fff", cursor: pageEffective >= nombrePages ? "default" : "pointer", opacity: pageEffective >= nombrePages ? 0.4 : 1 }}
+            >
+              Suivant →
+            </button>
+          </div>
         )}
       </div>
     </div>
