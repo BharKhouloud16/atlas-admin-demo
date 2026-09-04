@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
+import { motDePasseSchema, premierMessageZod } from "@/lib/validation";
+import { validerMotDePasse } from "@/lib/password-policy";
 
 // Changement de mot de passe par l'utilisateur connecté lui-même (voir
 // EspaceIngenieur.tsx -> "Mon compte"). Accessible aux 3 rôles : la session
@@ -13,16 +15,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
   }
 
-  const { ancienMotDePasse, nouveauMotDePasse, confirmationNouveauMotDePasse } = await req.json();
+  const corps = await req.json();
+  const analyse = motDePasseSchema.safeParse(corps);
+  if (!analyse.success) {
+    return NextResponse.json({ error: premierMessageZod(analyse.error) }, { status: 400 });
+  }
+  const { ancienMotDePasse, nouveauMotDePasse } = analyse.data;
 
-  if (!ancienMotDePasse || !nouveauMotDePasse || !confirmationNouveauMotDePasse) {
-    return NextResponse.json({ error: "Tous les champs sont requis" }, { status: 400 });
-  }
-  if (nouveauMotDePasse.length < 8) {
-    return NextResponse.json({ error: "Le nouveau mot de passe doit contenir au moins 8 caractères" }, { status: 400 });
-  }
-  if (nouveauMotDePasse !== confirmationNouveauMotDePasse) {
-    return NextResponse.json({ error: "Les deux mots de passe ne correspondent pas" }, { status: 400 });
+  const politique = await validerMotDePasse(nouveauMotDePasse);
+  if (!politique.ok) {
+    return NextResponse.json({ error: politique.erreur }, { status: 400 });
   }
 
   const user = await prisma.user.findUnique({ where: { email: session.email } });
