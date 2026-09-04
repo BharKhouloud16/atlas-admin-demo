@@ -35,6 +35,7 @@ type Profil = {
   competences: string[];
   entretiensRealises: number;
   realisations: Realisation[] | null;
+  videoUrl: string | null;
   missionsTerminees: number;
   evaluationMoyenne: number | null;
   nombreEvaluations: number;
@@ -632,6 +633,18 @@ function DetailProfil({ l, badge }: { l: Ligne; badge: ReturnType<typeof calcule
                 )}
               </div>
             ))}
+          </div>
+        )}
+        {l.p.videoUrl && (
+          <div style={{ marginTop: 14 }}>
+            <p style={{ fontSize: 12, textTransform: "uppercase", color: "#888", marginBottom: 8 }}>
+              Vidéo de présentation
+            </p>
+            <video
+              src={`/api/ingenieur/video/fichier?profilId=${l.p.id}`}
+              controls
+              style={{ maxWidth: 280, borderRadius: 8, border: "1px solid #e4e7ee" }}
+            />
           </div>
         )}
       </div>
