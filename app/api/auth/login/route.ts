@@ -2,13 +2,25 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { createSession } from "@/lib/auth";
+import { loginSchema, premierMessageZod } from "@/lib/validation";
+import { adresseIp, verifierLimiteIp, enregistrerEchecConnexion, reinitialiserEchecsConnexion } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
-  const { email, password } = await req.json();
-
-  if (!email || !password) {
-    return NextResponse.json({ error: "Email et mot de passe requis" }, { status: 400 });
+  const ip = adresseIp(req);
+  const autoriseParIp = await verifierLimiteIp(`login:${ip}`);
+  if (!autoriseParIp) {
+    return NextResponse.json(
+      { error: "Trop de tentatives de connexion depuis cette adresse. Réessayez dans quelques minutes." },
+      { status: 429 }
+    );
   }
+
+  const corps = await req.json();
+  const analyse = loginSchema.safeParse(corps);
+  if (!analyse.success) {
+    return NextResponse.json({ error: premierMessageZod(analyse.error) }, { status: 400 });
+  }
+  const { email, password } = analyse.data;
 
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) {
@@ -16,10 +28,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Identifiants invalides" }, { status: 401 });
   }
 
+  if (user.verrouilleJusqua && user.verrouilleJusqua.getTime() > Date.now()) {
+    return NextResponse.json(
+      { error: "Compte temporairement verrouillé après plusieurs échecs de connexion. Réessayez dans quelques minutes." },
+      { status: 429 }
+    );
+  }
+
   const valid = await bcrypt.compare(password, user.passwordHash);
   if (!valid) {
+    await enregistrerEchecConnexion(user.id, user.echecsConnexion);
     return NextResponse.json({ error: "Identifiants invalides" }, { status: 401 });
   }
+
+  await reinitialiserEchecsConnexion(user.id);
 
   if (!user.emailVerifie) {
     return NextResponse.json(
