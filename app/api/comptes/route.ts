@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { envoyerEmailCompteValide } from "@/lib/email";
+import { journaliser } from "@/lib/audit";
 
 // Réservé à l'Admin — le middleware protège déjà /api/comptes, mais on
 // revérifie le rôle ici (defense in depth, comme pour les autres routes).
@@ -28,7 +29,8 @@ export async function GET() {
 // CV (voir /ingenieur/cv et /ingenieur/cv/verifier), sur la base de
 // l'analyse de son profil.
 export async function PATCH(req: NextRequest) {
-  if (!(await requireAdmin())) {
+  const session = await requireAdmin();
+  if (!session) {
     return NextResponse.json({ error: "Accès non autorisé" }, { status: 403 });
   }
 
@@ -47,6 +49,14 @@ export async function PATCH(req: NextRequest) {
   if (nom) {
     await envoyerEmailCompteValide({ to: user.email, nom, role: user.role === "INGENIEUR" ? "INGENIEUR" : "CLIENT" });
   }
+
+  await journaliser({
+    acteurEmail: session.email,
+    acteurRole: "ADMIN",
+    action: "validation_compte",
+    cible: user.id,
+    detail: `Compte ${user.role} (${user.email}) validé.`,
+  });
 
   return NextResponse.json({ ok: true });
 }
