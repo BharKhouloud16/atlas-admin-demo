@@ -600,6 +600,15 @@ function LigneProfil({
             <a href={`/api/ingenieur/cv/fichier?profilId=${p.id}`} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>
               Ouvrir
             </a>
+            <a
+              href={`/api/ingenieur/cv/export-pdf?profilId=${p.id}`}
+              target="_blank"
+              rel="noreferrer"
+              title="Générer une fiche PDF présentable (CV Atlas) à partir des informations validées"
+              style={{ fontSize: 12 }}
+            >
+              CV Atlas
+            </a>
             <BoutonLienPartage type="cv" profilId={p.id} />
             {cvEnAlerte(p) && (
               <span
