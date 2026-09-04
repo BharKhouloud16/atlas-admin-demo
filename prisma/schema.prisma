@@ -79,6 +79,51 @@ model User {
 
   clientId     String?  @unique // renseigné pour un compte CLIENT : relie à sa fiche Client
   client       Client?  @relation(fields: [clientId], references: [id])
+
+  // Verrouillage progressif après échecs de connexion successifs (voir
+  // app/api/auth/login/route.ts, lib/rate-limit.ts) : ralentit un bruteforce
+  // ciblé sur un compte précis sans dépendre d'un service externe type
+  // Redis. Remis à zéro dès qu'une connexion réussit.
+  echecsConnexion  Int       @default(0)
+  verrouilleJusqua DateTime?
+
+  // Authentification à deux facteurs (TOTP) — pour l'instant réservée au
+  // rôle ADMIN (le compte le plus sensible, accès aux coûts/marges
+  // internes). totpSecret reste vide tant que la configuration n'est pas
+  // terminée (voir /admin -> "Sécurité", app/api/auth/2fa).
+  totpSecret       String?
+  totpActif        Boolean  @default(false)
+  totpCodesSecours String? // JSON string[] de codes à usage unique (hashés bcrypt)
+}
+
+// Throttle par IP sur les endpoints sensibles (connexion, inscription) —
+// complète le verrouillage par compte ci-dessus : protège aussi contre un
+// bruteforce réparti sur plusieurs emails (y compris des emails qui
+// n'existent pas, contre lesquels le verrouillage par compte ne peut rien).
+// Fenêtre glissante simple en base plutôt qu'un service externe (Redis...),
+// suffisant pour le volume de cette démo — voir lib/rate-limit.ts.
+model TentativeIp {
+  id           String   @id @default(cuid())
+  cle          String   @unique // ex. "login:1.2.3.4"
+  compteur     Int      @default(0)
+  fenetreDebut DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// Journal d'audit des actions administratives sensibles (validation de
+// compte, création d'un profil avec son TJM initial, rejet d'un CRA...) —
+// voir lib/audit.ts. Attendu par tout client ESN/staffing sérieux : qui a
+// fait quoi, et quand. Consultable dans /admin/journal.
+model JournalActivite {
+  id          String   @id @default(cuid())
+  acteurEmail String
+  acteurRole  Role
+  action      String // ex. "validation_compte", "creation_profil", "rejet_cra"
+  cible       String? // id de l'entité concernée (userId, profilId, feuilleId...)
+  detail      String?
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 model Client {
