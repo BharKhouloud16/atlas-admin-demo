@@ -15,6 +15,8 @@ export async function GET() {
     where: { id: session.profilId },
     select: {
       nom: true,
+      prenom: true,
+      type: true,
       cvNomFichier: true,
       cvImporteLe: true,
       cvValide: true,
@@ -45,7 +47,8 @@ export async function GET() {
           statut: true,
           nbJours: true,
           createdAt: true,
-          client: { select: { nom: true } },
+          updatedAt: true,
+          client: { select: { nom: true, pays: true } },
         },
       },
     },
