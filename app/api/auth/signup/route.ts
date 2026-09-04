@@ -3,6 +3,9 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { envoyerEmailInscriptionEnAttente, envoyerEmailVerificationAdresse } from "@/lib/email";
+import { signupSchema, premierMessageZod } from "@/lib/validation";
+import { validerMotDePasse } from "@/lib/password-policy";
+import { adresseIp, verifierLimiteIp } from "@/lib/rate-limit";
 
 // Durée de validité du lien de vérification d'adresse email
 const VALIDITE_TOKEN_MS = 24 * 60 * 60 * 1000; // 24h
@@ -16,32 +19,27 @@ function genererTokenVerification() {
 // Le compte créé démarre avec actif=false : il ne peut pas se connecter tant
 // qu'un ADMIN ne l'a pas validé depuis /admin/comptes-en-attente.
 export async function POST(req: NextRequest) {
-  const body = await req.json();
-  const { email, password, role, nom, consentementRgpd } = body;
+  const ip = adresseIp(req);
+  const autoriseParIp = await verifierLimiteIp(`signup:${ip}`);
+  if (!autoriseParIp) {
+    return NextResponse.json(
+      { error: "Trop de tentatives d'inscription depuis cette adresse. Réessayez plus tard." },
+      { status: 429 }
+    );
+  }
+
+  const corpsBrut = await req.json();
+  const analyse = signupSchema.safeParse(corpsBrut);
+  if (!analyse.success) {
+    return NextResponse.json({ error: premierMessageZod(analyse.error) }, { status: 400 });
+  }
+  const body = analyse.data;
+  const { email, password, role, nom } = body;
   const prenom: string | undefined = body.prenom;
 
-  if (!email || !password || !role || !nom) {
-    return NextResponse.json({ error: "Email, mot de passe, rôle et nom sont requis" }, { status: 400 });
-  }
-  if (role === "INGENIEUR" && !prenom) {
-    return NextResponse.json({ error: "Le prénom est requis" }, { status: 400 });
-  }
-  if (role !== "INGENIEUR" && role !== "CLIENT") {
-    return NextResponse.json({ error: "Inscription possible uniquement pour Ingénieur ou Client" }, { status: 400 });
-  }
-  if (password.length < 8) {
-    return NextResponse.json({ error: "Le mot de passe doit contenir au moins 8 caractères" }, { status: 400 });
-  }
-  if (role === "CLIENT" && !body.telephone) {
-    return NextResponse.json({ error: "Le numéro de téléphone est requis" }, { status: 400 });
-  }
-  // Consentement RGPD obligatoire au traitement des données (voir
-  // /confidentialite) — horodaté comme preuve de consentement.
-  if (consentementRgpd !== true) {
-    return NextResponse.json(
-      { error: "Merci d'accepter le traitement de vos données (RGPD) pour créer un compte." },
-      { status: 400 }
-    );
+  const politique = await validerMotDePasse(password);
+  if (!politique.ok) {
+    return NextResponse.json({ error: politique.erreur }, { status: 400 });
   }
 
   const existing = await prisma.user.findUnique({ where: { email } });
