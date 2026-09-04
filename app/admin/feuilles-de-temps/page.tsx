@@ -120,8 +120,20 @@ export default function FeuillesDeTempsAdminPage() {
               {f.mission.profil.nom} — {libelleMois(f.mois)} · {f.joursTravailles} j
               {f.heuresSupplementaires > 0 ? ` · ${f.heuresSupplementaires} h sup` : ""}
             </span>
-            <span style={{ fontSize: 11, fontWeight: 600, color: COULEUR_STATUT_CRA[f.statut] }}>
-              {LABEL_STATUT_CRA[f.statut]}
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+              {f.statut === "ValideeClient" && (
+                <a
+                  href={`/api/feuilles-de-temps/facture?feuilleId=${f.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ fontSize: 11, fontWeight: 600 }}
+                >
+                  Facture PDF
+                </a>
+              )}
+              <span style={{ fontSize: 11, fontWeight: 600, color: COULEUR_STATUT_CRA[f.statut] }}>
+                {LABEL_STATUT_CRA[f.statut]}
+              </span>
             </span>
           </div>
         ))}
