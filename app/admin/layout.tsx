@@ -1,8 +1,30 @@
 import { redirect } from "next/navigation";
-import Link from "next/link";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { bleuFonce, grisTexte, bordure, fondClair } from "@/lib/theme";
+import LogoAtlas from "@/components/LogoAtlas";
+import BoutonDeconnexion from "@/components/BoutonDeconnexion";
+import NavAdmin from "@/components/NavAdmin";
 
+const LIENS_NAV = [
+  { href: "/admin", label: "Tableau de bord", roles: ["ADMIN", "INGENIEUR"] },
+  { href: "/admin/missions", label: "Missions", roles: ["ADMIN", "INGENIEUR"] },
+  { href: "/admin/clients", label: "Clients", roles: ["ADMIN"] },
+  { href: "/admin/profils", label: "Profils", roles: ["ADMIN"] },
+  { href: "/admin/feuilles-de-temps", label: "Feuilles de temps", roles: ["ADMIN"] },
+  { href: "/admin/demandes", label: "Demandes de contact", roles: ["ADMIN"] },
+  { href: "/admin/comptes-en-attente", label: "Comptes en attente", roles: ["ADMIN"] },
+] as const;
+
+const LABEL_ROLE: Record<string, string> = {
+  ADMIN: "Administrateur",
+  INGENIEUR: "Ingénieur",
+};
+
+// Tableau de bord Admin — et, pour /admin/missions uniquement, également
+// utilisé par un compte INGENIEUR (voir plus bas). Reprend la charte
+// graphique de la page d'accueil (voir app/page.tsx et lib/theme.ts) :
+// logo, palette bleu/bleuFonce, plutôt que le rendu texte brut d'origine.
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   // Le middleware protège déjà ces routes, mais on revérifie ici pour
   // ne jamais rendre de contenu admin sans session valide (defense in depth).
@@ -27,22 +49,38 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     if (profil && profil.cvValide && !profil.questionnaireValide) redirect("/ingenieur/disponibilite");
   }
 
+  const liens = LIENS_NAV.filter((l) => l.roles.includes(session.role as "ADMIN" | "INGENIEUR"));
+
   return (
-    <div style={{ display: "flex", minHeight: "100vh" }}>
-      <nav style={{ width: 200, borderRight: "1px solid #e5e5e5", padding: 16 }}>
-        <p style={{ fontWeight: 600, marginBottom: 4 }}>Atlas admin</p>
-        <p style={{ fontSize: 12, color: "#888", marginBottom: 16 }}>{session.role}</p>
-        <ul style={{ listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-          <li><Link href="/admin">Tableau de bord</Link></li>
-          <li><Link href="/admin/missions">Missions</Link></li>
-          {session.role === "ADMIN" && <li><Link href="/admin/clients">Clients</Link></li>}
-          {session.role === "ADMIN" && <li><Link href="/admin/profils">Profils</Link></li>}
-          {session.role === "ADMIN" && <li><Link href="/admin/feuilles-de-temps">Feuilles de temps</Link></li>}
-          {session.role === "ADMIN" && <li><Link href="/admin/demandes">Demandes de contact</Link></li>}
-          {session.role === "ADMIN" && <li><Link href="/admin/comptes-en-attente">Comptes en attente</Link></li>}
-        </ul>
-      </nav>
-      <main style={{ flex: 1, padding: 24 }}>{children}</main>
+    <div style={{ minHeight: "100vh", background: fondClair }}>
+      <header
+        style={{
+          background: "#fff",
+          borderBottom: `1px solid ${bordure}`,
+          padding: "14px 24px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 16,
+        }}
+      >
+        <LogoAtlas href="/admin" />
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <span style={{ fontSize: 13, color: grisTexte }}>
+            {session.email} <span style={{ color: "#c3c9d4" }}>·</span> {LABEL_ROLE[session.role] ?? session.role}
+          </span>
+          <BoutonDeconnexion />
+        </div>
+      </header>
+
+      <div style={{ display: "flex", maxWidth: 1280, margin: "0 auto" }}>
+        <nav style={{ width: 220, flexShrink: 0, padding: "24px 16px" }}>
+          <NavAdmin liens={liens} />
+        </nav>
+        <main style={{ flex: 1, minWidth: 0, padding: "24px 24px 48px", background: "#fff", margin: "24px 24px 24px 0", borderRadius: 12, border: `1px solid ${bordure}` }}>
+          {children}
+        </main>
+      </div>
     </div>
   );
 }
