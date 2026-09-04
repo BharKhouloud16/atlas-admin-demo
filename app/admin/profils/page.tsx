@@ -659,6 +659,7 @@ function DetailProfil({ l, badge }: { l: Ligne; badge: ReturnType<typeof calcule
             {badge.label} — {badge.explication}
           </p>
         )}
+        {l.p.cvUrl && <HistoriqueCv profilId={l.p.id} />}
       </div>
       <div>
         <p style={{ fontSize: 12, textTransform: "uppercase", color: "#888", marginBottom: 8 }}>
@@ -696,6 +697,65 @@ function DetailProfil({ l, badge }: { l: Ligne; badge: ReturnType<typeof calcule
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// Historique des versions du CV (voir prisma/schema.prisma, VersionCv, et
+// GET /api/ingenieur/cv/historique) : chaque réimport archive l'ancienne
+// version au lieu de l'écraser silencieusement — un Admin peut ainsi
+// retrouver et rouvrir un CV précédent. Chargé automatiquement à
+// l'ouverture du panneau de détail (celui-ci n'est monté que si
+// `ouvert` est vrai, cf. plus haut).
+type VersionCvApi = { id: string; cvNomFichier: string | null; importeLe: string };
+function HistoriqueCv({ profilId }: { profilId: string }) {
+  const [etat, setEtat] = useState<"chargement" | "prêt" | "erreur">("chargement");
+  const [versions, setVersions] = useState<VersionCvApi[]>([]);
+
+  useEffect(() => {
+    let annule = false;
+    fetch(`/api/ingenieur/cv/historique?profilId=${profilId}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d) => {
+        if (!annule) {
+          setVersions(d.versions ?? []);
+          setEtat("prêt");
+        }
+      })
+      .catch(() => {
+        if (!annule) setEtat("erreur");
+      });
+    return () => {
+      annule = true;
+    };
+  }, [profilId]);
+
+  if (etat === "chargement") return null;
+  if (etat === "erreur" || versions.length === 0) return null;
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <p style={{ fontSize: 12, textTransform: "uppercase", color: "#888", marginBottom: 8 }}>
+        Historique du CV ({versions.length})
+      </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 140, overflowY: "auto" }}>
+        {versions.map((v) => (
+          <a
+            key={v.id}
+            href={`/api/ingenieur/cv/fichier?profilId=${profilId}&versionId=${v.id}`}
+            target="_blank"
+            rel="noreferrer"
+            style={{ fontSize: 11, color: "#4b5567", display: "flex", justifyContent: "space-between", gap: 8 }}
+          >
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {v.cvNomFichier ?? "CV"}
+            </span>
+            <span style={{ flexShrink: 0, color: "#aaa" }}>
+              {new Date(v.importeLe).toLocaleDateString("fr-FR")}
+            </span>
+          </a>
+        ))}
       </div>
     </div>
   );
