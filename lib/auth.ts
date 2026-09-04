@@ -1,8 +1,7 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
+import { secretCourant, secretsVerification } from "@/lib/session-secret";
 
-// Secret défini dans .env — jamais commité (voir .env.example)
-const secret = new TextEncoder().encode(process.env.SESSION_SECRET);
 const COOKIE_NAME = "atlas_session";
 const SESSION_DURATION = "8h";
 
@@ -19,7 +18,7 @@ export async function createSession(user: SessionUser) {
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(SESSION_DURATION)
-    .sign(secret);
+    .sign(secretCourant);
 
   cookies().set(COOKIE_NAME, token, {
     httpOnly: true,
@@ -37,13 +36,17 @@ export async function destroySession() {
 export async function getSession(): Promise<SessionUser | null> {
   const token = cookies().get(COOKIE_NAME)?.value;
   if (!token) return null;
-  try {
-    const { payload } = await jwtVerify(token, secret);
-    return payload as unknown as SessionUser;
-  } catch {
-    // token expiré ou invalide
-    return null;
+  // Essaie le secret courant, puis l'ancien si une rotation est en cours
+  // (voir lib/session-secret.ts) — un seul des deux doit vérifier le token.
+  for (const s of secretsVerification) {
+    try {
+      const { payload } = await jwtVerify(token, s);
+      return payload as unknown as SessionUser;
+    } catch {
+      // essaie le secret suivant (ou échoue définitivement ci-dessous)
+    }
   }
+  return null;
 }
 
 export const SESSION_COOKIE_NAME = COOKIE_NAME;
