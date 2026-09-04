@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { bleu, bleuFonce, grisTexte, bordure } from "@/lib/theme";
+import LogoAtlas from "@/components/LogoAtlas";
 
 // v1.2 : connexion pré-filtrée par rôle. La page reste un point d'entrée
 // unique (même mécanisme d'authentification /api/auth/login, le rôle réel
@@ -65,32 +67,81 @@ export default function ConnexionPage() {
   const contexte = role ? CONTEXTES[role] : null;
 
   return (
-    <main style={{ maxWidth: 360, margin: "80px auto", padding: 24 }}>
-      <p style={{ fontSize: 13, marginBottom: 4 }}>
-        <Link href="/" style={{ color: "#2557d6", textDecoration: "none" }}>← Retour à l&apos;accueil</Link>
-      </p>
-      <h1 style={{ fontSize: 20, marginBottom: 4 }}>Atlas Quality Partners</h1>
-      <h2 style={{ fontSize: 15, fontWeight: 600, color: "#4b5567", marginTop: 0, marginBottom: 24 }}>
-        {contexte ? contexte.titre : "Connexion"}
-      </h2>
-      {contexte && (
-        <p style={{ fontSize: 13, color: "#4b5567", marginTop: -16, marginBottom: 20 }}>{contexte.sousTitre}</p>
-      )}
-      {info && (
-        <p style={{ fontSize: 13, color: "#16a34a", background: "#eafaf0", padding: 10, borderRadius: 6, marginTop: -8, marginBottom: 16 }}>
-          {info}
+    <main
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+        background: "linear-gradient(180deg,#f4f7fe 0%,#ffffff 100%)",
+      }}
+    >
+      <div style={{ marginBottom: 28 }}>
+        <LogoAtlas />
+      </div>
+
+      <div
+        style={{
+          width: "100%",
+          maxWidth: 380,
+          background: "#fff",
+          border: `1px solid ${bordure}`,
+          borderRadius: 12,
+          padding: 32,
+          boxShadow: "0 2px 12px rgba(18,34,74,0.06)",
+        }}
+      >
+        <p style={{ fontSize: 13, marginBottom: 18 }}>
+          <Link href="/" style={{ color: bleu, textDecoration: "none" }}>
+            ← Retour à l&apos;accueil
+          </Link>
         </p>
-      )}
-      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-        <input type="password" placeholder="Mot de passe" value={password} onChange={(e) => setPassword(e.target.value)} required />
-        {error && <p style={{ color: "crimson", fontSize: 13 }}>{error}</p>}
-        <button type="submit" disabled={loading}>{loading ? "Connexion..." : "Se connecter"}</button>
-      </form>
-      <p style={{ fontSize: 13, marginTop: 16 }}>
-        Ingénieur ou client, pas encore de compte ?{" "}
-        <Link href={role ? `/inscription?role=${role}` : "/inscription"}>S&apos;inscrire</Link>
-      </p>
+        <h1 style={{ fontSize: 20, marginBottom: 4, color: bleuFonce }}>
+          {contexte ? contexte.titre : "Connexion"}
+        </h1>
+        {contexte && (
+          <p style={{ fontSize: 13, color: grisTexte, marginTop: 0, marginBottom: 20 }}>{contexte.sousTitre}</p>
+        )}
+        {!contexte && <p style={{ fontSize: 13, color: grisTexte, marginTop: 0, marginBottom: 20 }}>Accédez à votre espace.</p>}
+
+        {info && (
+          <p style={{ fontSize: 13, color: "#16a34a", background: "#eafaf0", padding: 10, borderRadius: 8, marginBottom: 16 }}>
+            {info}
+          </p>
+        )}
+
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <input
+            type="email"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            style={{ width: "100%" }}
+          />
+          <input
+            type="password"
+            placeholder="Mot de passe"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            style={{ width: "100%" }}
+          />
+          {error && <p style={{ color: "crimson", fontSize: 13, margin: 0 }}>{error}</p>}
+          <button type="submit" disabled={loading} style={{ width: "100%", marginTop: 4 }}>
+            {loading ? "Connexion..." : "Se connecter"}
+          </button>
+        </form>
+
+        <p style={{ fontSize: 13, marginTop: 20, marginBottom: 0, color: grisTexte }}>
+          Ingénieur ou client, pas encore de compte ?{" "}
+          <Link href={role ? `/inscription?role=${role}` : "/inscription"} style={{ color: bleu }}>
+            S&apos;inscrire
+          </Link>
+        </p>
+      </div>
     </main>
   );
 }
