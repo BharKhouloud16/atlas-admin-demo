@@ -14,7 +14,8 @@ export default function InscriptionPage() {
   const [roleImpose, setRoleImpose] = useState(false); // true si on arrive via ?role=... (boutons de la page d'accueil)
 
   // Champs communs
-  const [nom, setNom] = useState(""); // nom & prénom (ingénieur) ou raison sociale (partenaire)
+  const [nom, setNom] = useState(""); // nom de famille (ingénieur) ou raison sociale (partenaire)
+  const [prenom, setPrenom] = useState(""); // prénom (ingénieur uniquement)
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
@@ -61,6 +62,10 @@ export default function InscriptionPage() {
       setError("Le numéro de téléphone est requis.");
       return;
     }
+    if (role === "INGENIEUR" && !prenom) {
+      setError("Le prénom est requis.");
+      return;
+    }
     if (!consentementRgpd) {
       setError("Merci d'accepter le traitement de vos données pour continuer.");
       return;
@@ -78,7 +83,7 @@ export default function InscriptionPage() {
         consentementRgpd,
         ...(role === "CLIENT"
           ? { identifiantEntreprise, formeJuridique, contactReferent, telephone }
-          : {}),
+          : { prenom }),
       }),
     });
     const data = await res.json();
@@ -207,12 +212,31 @@ export default function InscriptionPage() {
       )}
 
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <input
-          placeholder={role === "CLIENT" ? "Raison sociale" : "Nom et prénom"}
-          value={nom}
-          onChange={(e) => setNom(e.target.value)}
-          required
-        />
+        {role === "CLIENT" ? (
+          <input
+            placeholder="Raison sociale"
+            value={nom}
+            onChange={(e) => setNom(e.target.value)}
+            required
+          />
+        ) : (
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              placeholder="Prénom"
+              value={prenom}
+              onChange={(e) => setPrenom(e.target.value)}
+              required
+              style={{ flex: 1 }}
+            />
+            <input
+              placeholder="Nom"
+              value={nom}
+              onChange={(e) => setNom(e.target.value)}
+              required
+              style={{ flex: 1 }}
+            />
+          </div>
+        )}
 
         {role === "CLIENT" && (
           <>
@@ -272,8 +296,7 @@ export default function InscriptionPage() {
 
       <p style={{ fontSize: 12, color: "#888", marginTop: 16 }}>
         Votre compte sera actif après validation par l&apos;administrateur.
-        {role === "INGENIEUR" &&
-          " Vous pourrez ensuite importer votre CV : le type de contrat et le tarif seront déterminés à partir de votre profil."}
+        {role === "INGENIEUR" && " Vous pourrez ensuite importer votre CV."}
       </p>
       </div>
     </main>
