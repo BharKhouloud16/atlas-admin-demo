@@ -21,6 +21,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Identifiants invalides" }, { status: 401 });
   }
 
+  if (!user.emailVerifie) {
+    return NextResponse.json(
+      {
+        error:
+          "Merci de confirmer votre adresse email avant de vous connecter (lien envoyé lors de votre inscription).",
+      },
+      { status: 403 }
+    );
+  }
+
   if (!user.actif) {
     return NextResponse.json(
       { error: "Votre compte est en attente de validation par l'administrateur." },
@@ -33,9 +43,21 @@ export async function POST(req: NextRequest) {
     role: user.role,
     profilId: user.profilId,
     clientId: user.clientId,
+    desactive: user.desactive,
   });
 
-  // indique au front vers quel espace rediriger
-  const redirect = user.role === "CLIENT" ? "/client" : "/admin";
+  if (!user.premiereConnexionLe) {
+    await prisma.user.update({ where: { id: user.id }, data: { premiereConnexionLe: new Date() } });
+  }
+
+  // indique au front vers quel espace rediriger : un ingénieur ayant
+  // temporairement désactivé son compte est redirigé vers l'écran de
+  // réactivation plutôt que son espace habituel (voir middleware.ts).
+  const redirect =
+    user.role === "INGENIEUR" && user.desactive
+      ? "/ingenieur/compte-desactive"
+      : user.role === "CLIENT"
+      ? "/client"
+      : "/admin";
   return NextResponse.json({ ok: true, role: user.role, redirect });
 }
