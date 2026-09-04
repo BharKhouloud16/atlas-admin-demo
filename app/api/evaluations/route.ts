@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
+import { envoyerEmailNouvelleEvaluation } from "@/lib/email";
 
 // Évaluations client des missions terminées — voir prisma/schema.prisma
 // (Evaluation, 1 par mission) et app/client/page.tsx. Alimente les
@@ -67,5 +68,19 @@ export async function POST(req: NextRequest) {
   const evaluation = await prisma.evaluation.create({
     data: { missionId, note: noteNombre, commentaire: commentaire?.trim() || null },
   });
+
+  const compteIngenieur = await prisma.user.findUnique({
+    where: { profilId: mission.profilId },
+    include: { profil: true },
+  });
+  if (compteIngenieur) {
+    await envoyerEmailNouvelleEvaluation({
+      to: compteIngenieur.email,
+      nom: compteIngenieur.profil?.nom ?? "",
+      mission: mission.repere ?? mission.id,
+      note: noteNombre,
+    });
+  }
+
   return NextResponse.json(evaluation, { status: 201 });
 }
