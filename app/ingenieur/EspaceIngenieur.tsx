@@ -10,12 +10,15 @@ import LogoAtlas from "@/components/LogoAtlas";
 import BoutonDeconnexion from "@/components/BoutonDeconnexion";
 import {
   type StatutCra,
+  type JourCra,
   LABEL_STATUT_CRA,
   COULEUR_STATUT_CRA,
   craEstEditableParIngenieur,
   moisCourant,
   libelleMois,
+  totauxDepuisDetail,
 } from "@/lib/feuilles-de-temps";
+import CalendrierCra from "@/components/CalendrierCra";
 
 type InfoCV = {
   id: string;
@@ -1040,13 +1043,14 @@ function ChangementMotDePasse() {
   );
 }
 
-type MissionCra = { id: string; repere: string | null; statut: string; client: { nom: string } };
+type MissionCra = { id: string; repere: string | null; statut: string; client: { nom: string; pays: string | null } };
 type FeuilleCra = {
   id: string;
   mois: string;
   joursTravailles: number;
   heuresSupplementaires: number;
   commentaire: string | null;
+  detailJours: JourCra[] | null;
   statut: StatutCra;
   motifRejet: string | null;
   mission: { id: string; repere: string | null; client: { nom: string } };
@@ -1139,21 +1143,20 @@ function FormulaireCra({
 }) {
   const [mois, setMois] = useState(moisCourant());
   const existante = feuilles.find((f) => f.mois === mois);
-  const [jours, setJours] = useState("");
-  const [heuresSup, setHeuresSup] = useState("");
+  const [detail, setDetail] = useState<JourCra[]>([]);
   const [commentaire, setCommentaire] = useState("");
   const [envoi, setEnvoi] = useState(false);
   const [erreur, setErreur] = useState("");
 
   useEffect(() => {
-    setJours(existante ? String(existante.joursTravailles) : "");
-    setHeuresSup(existante ? String(existante.heuresSupplementaires) : "");
+    setDetail(existante?.detailJours ?? []);
     setCommentaire(existante?.commentaire ?? "");
     setErreur("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mois, existante?.id]);
 
   const editable = !existante || craEstEditableParIngenieur(existante.statut);
+  const { joursTravailles, heuresSupplementaires } = totauxDepuisDetail(detail);
 
   async function enregistrer(soumettre: boolean) {
     setErreur("");
@@ -1164,8 +1167,7 @@ function FormulaireCra({
       body: JSON.stringify({
         missionId: mission.id,
         mois,
-        joursTravailles: Number(jours),
-        heuresSupplementaires: Number(heuresSup) || 0,
+        detailJours: detail,
         commentaire,
         soumettre,
       }),
@@ -1181,40 +1183,30 @@ function FormulaireCra({
 
   return (
     <div style={{ border: "1px solid #e4e7ee", borderRadius: 8, padding: 16 }}>
-      <p style={{ fontWeight: 600, fontSize: 14, margin: "0 0 4px" }}>
-        {mission.repere ?? mission.client.nom} — {mission.client.nom}
-      </p>
-      <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap", marginTop: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+        <p style={{ fontWeight: 600, fontSize: 14, margin: "0 0 4px" }}>
+          {mission.repere ?? mission.client.nom} — {mission.client.nom}
+        </p>
         <div>
-          <p style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>Mois</p>
-          <input type="month" value={mois} onChange={(e) => setMois(e.target.value)} style={{ padding: 6 }} />
-        </div>
-        <div>
-          <p style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>Jours travaillés</p>
           <input
-            type="number"
-            min={0}
-            max={31}
-            step={0.5}
-            value={jours}
-            onChange={(e) => setJours(e.target.value)}
-            disabled={!editable}
-            style={{ padding: 6, width: 90 }}
-          />
-        </div>
-        <div>
-          <p style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>Heures sup.</p>
-          <input
-            type="number"
-            min={0}
-            step={0.5}
-            value={heuresSup}
-            onChange={(e) => setHeuresSup(e.target.value)}
-            disabled={!editable}
-            style={{ padding: 6, width: 90 }}
+            type="month"
+            value={mois}
+            onChange={(e) => setMois(e.target.value)}
+            style={{ padding: 6, border: `1px solid ${bordure}`, borderRadius: 6 }}
           />
         </div>
       </div>
+
+      <div style={{ marginTop: 12 }}>
+        <CalendrierCra
+          mois={mois}
+          paysClient={mission.client.pays}
+          detail={detail}
+          editable={editable}
+          onChange={setDetail}
+        />
+      </div>
+
       <div style={{ marginTop: 12 }}>
         <p style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>Commentaire (facultatif)</p>
         <textarea
@@ -1238,12 +1230,16 @@ function FormulaireCra({
 
       {editable && (
         <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-          <button onClick={() => enregistrer(false)} disabled={envoi || !jours} style={{ padding: "6px 14px", fontSize: 13 }}>
+          <button
+            onClick={() => enregistrer(false)}
+            disabled={envoi || joursTravailles === 0}
+            style={{ padding: "6px 14px", fontSize: 13 }}
+          >
             {envoi ? "..." : "Enregistrer le brouillon"}
           </button>
           <button
             onClick={() => enregistrer(true)}
-            disabled={envoi || !jours}
+            disabled={envoi || joursTravailles === 0}
             style={{ padding: "6px 14px", fontSize: 13, background: bleu, color: "#fff", border: "none", borderRadius: 6 }}
           >
             {envoi ? "..." : "Soumettre pour validation"}
