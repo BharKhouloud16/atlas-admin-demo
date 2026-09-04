@@ -136,9 +136,9 @@ export default function ConnexionPage() {
         </form>
 
         <p style={{ fontSize: 13, marginTop: 20, marginBottom: 0, color: grisTexte }}>
-          Ingénieur ou client, pas encore de compte ?{" "}
+          Vous n&apos;avez pas encore de compte ?{" "}
           <Link href={role ? `/inscription?role=${role}` : "/inscription"} style={{ color: bleu }}>
-            S&apos;inscrire
+            Créer un compte
           </Link>
         </p>
       </div>
