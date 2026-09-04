@@ -16,17 +16,30 @@ export async function GET() {
     // juste en dessous.
     prisma.profil.findMany({
       orderBy: { createdAt: "desc" },
-      include: { compte: { select: { desactive: true } } },
+      include: {
+        compte: { select: { desactive: true } },
+        // Pour le badge de confiance calculé (voir lib/scoring.ts,
+        // calculerBadgeConfiance) — affiché dans le panneau de détail de
+        // chaque profil sur /admin/profils.
+        missions: { select: { statut: true, evaluation: { select: { note: true } } } },
+      },
     }),
     prisma.hypotheses.upsert({ where: { id: "singleton" }, update: {}, create: {} }),
   ]);
 
   const visibles = profils.filter((p) => !p.compte?.desactive);
 
-  const enrichis = visibles.map(({ compte, ...p }) => ({
-    ...p,
-    tjmCout: calculerTjmCout(p.type, p.montantSaisi, hyp),
-  }));
+  const enrichis = visibles.map(({ compte, missions, ...p }) => {
+    const evaluations = missions.map((m) => m.evaluation?.note).filter((n): n is number => n != null);
+    const evaluationMoyenne = evaluations.length > 0 ? evaluations.reduce((s, n) => s + n, 0) / evaluations.length : null;
+    return {
+      ...p,
+      tjmCout: calculerTjmCout(p.type, p.montantSaisi, hyp),
+      missionsTerminees: missions.filter((m) => m.statut === "Terminée").length,
+      evaluationMoyenne,
+      nombreEvaluations: evaluations.length,
+    };
+  });
 
   return NextResponse.json({ profils: enrichis, nombreDesactives: profils.length - visibles.length });
 }
