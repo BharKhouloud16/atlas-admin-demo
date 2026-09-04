@@ -182,6 +182,16 @@ model Profil {
   // lien}, ...].
   realisations               Json?
 
+  // Courte vidéo de présentation (60-90s conseillé), façon "CV vidéo" —
+  // tendance recrutement 2026, humanise le profil avant l'appel client.
+  // Même mécanisme de stockage privé que le CV (voir lib/storage.ts,
+  // app/api/ingenieur/video/route.ts) : jamais d'URL publique, servi via
+  // une route authentifiée (Ingénieur propriétaire, Admin, ou Client ayant
+  // une mission avec ce profil — voir app/api/ingenieur/video/fichier).
+  videoUrl                   String?
+  videoNomFichier             String?
+  videoImporteLe              DateTime?
+
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
   missions            Mission[]
