@@ -18,9 +18,13 @@ function genererTokenVerification() {
 export async function POST(req: NextRequest) {
   const body = await req.json();
   const { email, password, role, nom, consentementRgpd } = body;
+  const prenom: string | undefined = body.prenom;
 
   if (!email || !password || !role || !nom) {
     return NextResponse.json({ error: "Email, mot de passe, rôle et nom sont requis" }, { status: 400 });
+  }
+  if (role === "INGENIEUR" && !prenom) {
+    return NextResponse.json({ error: "Le prénom est requis" }, { status: 400 });
   }
   if (role !== "INGENIEUR" && role !== "CLIENT") {
     return NextResponse.json({ error: "Inscription possible uniquement pour Ingénieur ou Client" }, { status: 400 });
@@ -51,7 +55,7 @@ export async function POST(req: NextRequest) {
 
   if (role === "INGENIEUR") {
     // Crée une fiche Profil vide (sans tarif) que l'Admin complètera à la validation
-    const profil = await prisma.profil.create({ data: { nom } });
+    const profil = await prisma.profil.create({ data: { nom, prenom } });
     const user = await prisma.user.create({
       data: {
         email,
@@ -66,8 +70,9 @@ export async function POST(req: NextRequest) {
         consentementRgpdLe: new Date(),
       },
     });
-    await envoyerEmailInscriptionEnAttente({ to: email, nom, role: "INGENIEUR" });
-    await envoyerEmailVerificationAdresse({ to: email, nom, token: tokenVerification });
+    const nomComplet = prenom ? `${prenom} ${nom}` : nom;
+    await envoyerEmailInscriptionEnAttente({ to: email, nom: nomComplet, role: "INGENIEUR" });
+    await envoyerEmailVerificationAdresse({ to: email, nom: nomComplet, token: tokenVerification });
     return NextResponse.json(
       {
         ok: true,
