@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { calculerTjmCout } from "@/lib/calculs";
+import { journaliser } from "@/lib/audit";
 
 export async function GET() {
   const session = await getSession();
@@ -58,6 +59,15 @@ export async function POST(req: NextRequest) {
   const profil = await prisma.profil.create({
     data: { nom: body.nom, type: body.type, montantSaisi: body.montantSaisi },
   });
+
+  await journaliser({
+    acteurEmail: session.email,
+    acteurRole: "ADMIN",
+    action: "creation_profil",
+    cible: profil.id,
+    detail: `Profil "${body.nom}" créé — type ${body.type}, montant saisi ${body.montantSaisi}.`,
+  });
+
   return NextResponse.json(profil, { status: 201 });
 }
 
