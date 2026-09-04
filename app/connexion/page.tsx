@@ -32,6 +32,11 @@ export default function ConnexionPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [info, setInfo] = useState("");
+  // 2FA (Admin uniquement, voir app/api/auth/2fa) : une fois le mot de passe
+  // validé, l'API répond requiresTotp:true si le compte a le 2FA actif —
+  // on affiche alors un second champ pour le code, sans perdre email/password.
+  const [totpRequis, setTotpRequis] = useState(false);
+  const [code2fa, setCode2fa] = useState("");
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -52,13 +57,18 @@ export default function ConnexionPage() {
     const res = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify(totpRequis ? { email, password, code: code2fa } : { email, password }),
     });
     const data = await res.json();
     setLoading(false);
 
     if (!res.ok) {
-      setError(data.error ?? "Identifiants invalides.");
+      if (data.requiresTotp) {
+        setTotpRequis(true);
+        setError(totpRequis ? data.error ?? "Code invalide." : "");
+      } else {
+        setError(data.error ?? "Identifiants invalides.");
+      }
       return;
     }
     router.push(data.redirect ?? "/admin");
@@ -119,6 +129,7 @@ export default function ConnexionPage() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
+            disabled={totpRequis}
             style={{ width: "100%" }}
           />
           <input
@@ -127,11 +138,29 @@ export default function ConnexionPage() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
+            disabled={totpRequis}
             style={{ width: "100%" }}
           />
+          {totpRequis && (
+            <div>
+              <p style={{ fontSize: 13, color: grisTexte, margin: "0 0 8px" }}>
+                Code de vérification à 6 chiffres (application d&apos;authentification), ou un code de secours.
+              </p>
+              <input
+                type="text"
+                inputMode="numeric"
+                placeholder="Code de vérification"
+                value={code2fa}
+                onChange={(e) => setCode2fa(e.target.value)}
+                autoFocus
+                required
+                style={{ width: "100%" }}
+              />
+            </div>
+          )}
           {error && <p style={{ color: "crimson", fontSize: 13, margin: 0 }}>{error}</p>}
           <button type="submit" disabled={loading} style={{ width: "100%", marginTop: 4 }}>
-            {loading ? "Connexion..." : "Se connecter"}
+            {loading ? "Connexion..." : totpRequis ? "Vérifier le code" : "Se connecter"}
           </button>
         </form>
 
