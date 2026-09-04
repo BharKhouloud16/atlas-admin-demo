@@ -30,6 +30,12 @@ const securityHeaders = [
 ];
 
 const nextConfig = {
+  // Nécessaire pour que Next.js charge instrumentation.ts (voir ce fichier —
+  // initialise Sentry côté serveur/edge, uniquement si SENTRY_DSN est
+  // défini). Sans clé DSN, ce flag n'a aucun effet visible.
+  experimental: {
+    instrumentationHook: true,
+  },
   async headers() {
     return [
       {
