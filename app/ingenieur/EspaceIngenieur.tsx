@@ -19,6 +19,8 @@ import {
   totauxDepuisDetail,
 } from "@/lib/feuilles-de-temps";
 import CalendrierCra from "@/components/CalendrierCra";
+import { calculerBadgeConfiance } from "@/lib/scoring";
+import type { Realisation } from "@/app/api/ingenieur/realisations/route";
 
 type InfoCV = {
   id: string;
@@ -36,6 +38,7 @@ type Mission = {
   createdAt: string;
   updatedAt: string;
   client: { nom: string; pays: string | null };
+  evaluation: { note: number } | null;
 };
 
 type ProfilData = {
@@ -62,8 +65,10 @@ type ProfilData = {
   questionnaireValide: boolean;
   competences: string[];
   entretiensRealises: number;
+  realisations: Realisation[] | null;
   evaluationMoyenne: number | null;
   nombreEvaluations: number;
+  missionsTerminees: number;
   createdAt: string;
   infosCv: InfoCV[];
   missions: Mission[];
@@ -113,11 +118,12 @@ export default function EspaceIngenieur() {
       </header>
       <main style={{ maxWidth: 1000, margin: "40px auto", padding: "0 24px", display: "flex", gap: 32 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
             <h1 style={{ fontSize: 22, margin: 0, color: bleuFonce }}>
               {data.prenom ? `${data.prenom} ${data.nom}` : data.nom}
             </h1>
             <StatutBadge data={data} missionActive={missionActive} />
+            <BadgeConfianceIngenieur data={data} />
           </div>
           <p style={{ fontSize: 13, color: "#888", marginBottom: 24 }}>Espace ingénieur</p>
 
@@ -221,6 +227,36 @@ function StatutBadge({ data, missionActive }: { data: ProfilData; missionActive:
   );
 }
 
+// Badge de confiance calculé à partir des notes clients + missions menées à
+// terme (voir lib/scoring.ts, calculerBadgeConfiance) — visible aussi côté
+// Admin (/admin/profils). Volontairement calculé, jamais déclaré : motive
+// l'ingénieur sans lui laisser la main dessus, comme un "Top Rated" Upwork.
+function BadgeConfianceIngenieur({ data }: { data: ProfilData }) {
+  const badge = calculerBadgeConfiance({
+    evaluationMoyenne: data.evaluationMoyenne,
+    nombreEvaluations: data.nombreEvaluations,
+    missionsTerminees: data.missionsTerminees,
+  });
+  if (!badge) return null;
+  return (
+    <span
+      title={badge.explication}
+      style={{
+        fontSize: 12,
+        fontWeight: 600,
+        padding: "3px 10px",
+        borderRadius: 999,
+        color: badge.couleur,
+        background: badge.couleur + "1a",
+        border: `1px solid ${badge.couleur}`,
+      }}
+    >
+      {badge.niveau === "confirme" ? "★ " : ""}
+      {badge.label}
+    </span>
+  );
+}
+
 // Statistiques personnelles simples, façon "tableau de bord" — toujours
 // visibles en haut de l'espace, quel que soit l'onglet sélectionné.
 // Chiffres tirés des missions réellement enregistrées côté Atlas (pas des
@@ -278,9 +314,22 @@ function OngletProfil({ data, recharger }: { data: ProfilData; recharger: () => 
         <Disponibilite data={data} recharger={recharger} />
       </div>
 
+      <div>
+        <p style={{ fontSize: 12, textTransform: "uppercase", color: "#888", marginBottom: 8 }}>
+          Réalisations
+        </p>
+        <RealisationsSection data={data} recharger={recharger} />
+      </div>
+
       {categories.map((cat) => (
         <div key={cat}>
           <p style={{ fontSize: 12, textTransform: "uppercase", color: "#888", marginBottom: 8 }}>{cat}</p>
+          {cat === "experience" && (
+            <p style={{ fontSize: 11, color: "#888", margin: "0 0 8px" }}>
+              Expérience déclarée, extraite de votre CV — vos missions réalisées avec Atlas (vérifiées, notées par
+              le client) sont listées séparément dans l&apos;onglet « Historique de mission avec Atlas ».
+            </p>
+          )}
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {data.infosCv
               .filter((i) => i.categorie === cat)
@@ -290,6 +339,113 @@ function OngletProfil({ data, recharger }: { data: ProfilData; recharger: () => 
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+const MAX_REALISATIONS = 10;
+
+// Portfolio de réalisations concrètes, façon Malt : distinct de
+// l'expérience déclarative du CV ci-dessus, met en avant jusqu'à 10
+// réalisations (titre, description, lien optionnel) visibles par l'Admin
+// dans /admin/profils (panneau de détail) pour convaincre un client. Le
+// tableau entier est réédité et sauvegardé en un clic plutôt qu'un CRUD par
+// élément (voir PUT /api/ingenieur/realisations).
+function RealisationsSection({ data, recharger }: { data: ProfilData; recharger: () => void }) {
+  const [realisations, setRealisations] = useState<Realisation[]>(data.realisations ?? []);
+  const [envoi, setEnvoi] = useState(false);
+  const [erreur, setErreur] = useState("");
+  const [modifie, setModifie] = useState(false);
+
+  function ajouter() {
+    if (realisations.length >= MAX_REALISATIONS) return;
+    setRealisations((prev) => [...prev, { id: crypto.randomUUID(), titre: "", description: "", lien: null }]);
+    setModifie(true);
+  }
+
+  function majItem(id: string, patch: Partial<Realisation>) {
+    setRealisations((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+    setModifie(true);
+  }
+
+  function supprimer(id: string) {
+    setRealisations((prev) => prev.filter((r) => r.id !== id));
+    setModifie(true);
+  }
+
+  async function enregistrer() {
+    setErreur("");
+    const nettoyees = realisations.filter((r) => r.titre.trim());
+    setEnvoi(true);
+    const res = await fetch("/api/ingenieur/realisations", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ realisations: nettoyees }),
+    });
+    setEnvoi(false);
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      setErreur(d.error ?? "Erreur, réessayez.");
+      return;
+    }
+    setModifie(false);
+    recharger();
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>
+        Jusqu&apos;à {MAX_REALISATIONS} réalisations concrètes (audit mené, migration pilotée, outil mis en place...)
+        pour aider l&apos;Admin à vous proposer aux clients — visible uniquement en interne, pas sur un profil public.
+      </p>
+      {realisations.map((r) => (
+        <div key={r.id} style={{ border: `1px solid ${bordure}`, borderRadius: 8, padding: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+          <input
+            placeholder="Titre (ex. Audit de sécurité API pour un client bancaire)"
+            value={r.titre}
+            onChange={(e) => majItem(r.id, { titre: e.target.value })}
+            maxLength={100}
+            style={{ padding: 6, fontSize: 13, border: `1px solid ${bordure}`, borderRadius: 6 }}
+          />
+          <textarea
+            placeholder="Description courte (contexte, résultat, technos utilisées)"
+            value={r.description}
+            onChange={(e) => majItem(r.id, { description: e.target.value })}
+            maxLength={600}
+            rows={2}
+            style={{ padding: 6, fontSize: 13, fontFamily: "inherit", border: `1px solid ${bordure}`, borderRadius: 6 }}
+          />
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <input
+              placeholder="Lien (facultatif, https://...)"
+              value={r.lien ?? ""}
+              onChange={(e) => majItem(r.id, { lien: e.target.value || null })}
+              maxLength={300}
+              style={{ flex: 1, padding: 6, fontSize: 13, border: `1px solid ${bordure}`, borderRadius: 6 }}
+            />
+            <button onClick={() => supprimer(r.id)} style={{ fontSize: 12, padding: "5px 10px" }}>
+              Supprimer
+            </button>
+          </div>
+        </div>
+      ))}
+      {erreur && <p style={{ color: "crimson", fontSize: 13, margin: 0 }}>{erreur}</p>}
+      <div style={{ display: "flex", gap: 8 }}>
+        {realisations.length < MAX_REALISATIONS && (
+          <button onClick={ajouter} style={{ fontSize: 12, padding: "6px 12px" }}>
+            + Ajouter une réalisation
+          </button>
+        )}
+        {modifie && (
+          <button
+            onClick={enregistrer}
+            disabled={envoi}
+            style={{ fontSize: 12, padding: "6px 12px", background: bleu, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
+          >
+            {envoi ? "Enregistrement..." : "Enregistrer les réalisations"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -761,6 +917,7 @@ function OngletHistorique({ missions, typeContrat }: { missions: Mission[]; type
             <th style={{ padding: "6px 8px" }}>Début</th>
             <th style={{ padding: "6px 8px" }}>Fin (ou prévisionnelle)</th>
             <th style={{ padding: "6px 8px" }}>Jours</th>
+            <th style={{ padding: "6px 8px" }}>Évaluation client</th>
           </tr>
         </thead>
         <tbody>
@@ -770,12 +927,32 @@ function OngletHistorique({ missions, typeContrat }: { missions: Mission[]; type
               <td style={{ padding: "6px 8px" }}>{m.repere ?? "—"}</td>
               <td style={{ padding: "6px 8px" }}>{m.client.pays ?? "—"}</td>
               <td style={{ padding: "6px 8px" }}>{typeContrat ? LABEL_TYPE_CONTRAT[typeContrat] ?? typeContrat : "—"}</td>
-              <td style={{ padding: "6px 8px" }}>{m.statut}</td>
+              <td style={{ padding: "6px 8px" }}>
+                {m.statut}
+                {m.statut === "Terminée" && (
+                  <span
+                    title="Mission menée à terme avec Atlas Quality Partners, historique vérifié — à distinguer de l'expérience déclarée depuis le CV"
+                    style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: "#16a34a" }}
+                  >
+                    ✓ vérifiée Atlas
+                  </span>
+                )}
+              </td>
               <td style={{ padding: "6px 8px" }}>{new Date(m.createdAt).toLocaleDateString("fr-FR")}</td>
               <td style={{ padding: "6px 8px" }}>
                 {m.statut === "En cours" ? "En cours" : new Date(m.updatedAt).toLocaleDateString("fr-FR")}
               </td>
               <td style={{ padding: "6px 8px" }}>{m.nbJours}</td>
+              <td style={{ padding: "6px 8px" }}>
+                {m.evaluation ? (
+                  <span title={`${m.evaluation.note}/5`} style={{ color: "#d97706", letterSpacing: 1 }}>
+                    {"★".repeat(m.evaluation.note)}
+                    <span style={{ color: "#ddd" }}>{"★".repeat(5 - m.evaluation.note)}</span>
+                  </span>
+                ) : (
+                  <span style={{ color: "#aaa" }}>—</span>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
