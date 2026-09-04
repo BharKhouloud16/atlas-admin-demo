@@ -241,7 +241,28 @@ model Profil {
   updatedAt           DateTime     @updatedAt
   missions            Mission[]
   infosCv             InfoCV[]
+  versionsCv          VersionCv[]
   compte              User?
+}
+
+// Historique des versions du CV — "gap technique" demandé le 4 sept. À
+// chaque nouvel import (voir POST /api/ingenieur/cv), la version PRÉCÉDENTE
+// (cvUrl/cvNomFichier/cvImporteLe encore en place à ce moment-là) est
+// archivée ici avant d'être écrasée sur Profil, plutôt que perdue. Le
+// fichier Blob de chaque ancienne version reste stocké (jamais supprimé) :
+// consultable par l'Admin sur /admin/profils, ou par l'ingénieur lui-même,
+// voir GET /api/ingenieur/cv/historique et
+// GET /api/ingenieur/cv/fichier?versionId=...
+model VersionCv {
+  id            String   @id @default(cuid())
+  profil        Profil   @relation(fields: [profilId], references: [id], onDelete: Cascade)
+  profilId      String
+  cvUrl         String
+  cvNomFichier  String?
+  importeLe     DateTime // date d'import d'ORIGINE de cette version (pas la date d'archivage)
+  createdAt     DateTime @default(now())
+
+  @@index([profilId])
 }
 
 // Une information extraite (ou saisie) du CV d'un ingénieur, validée
