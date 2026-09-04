@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
+import { secretsVerification } from "@/lib/session-secret";
 
 // Pages/routes publiques, jamais protégées
 const PUBLIC_PATHS = [
@@ -29,7 +30,19 @@ const CLIENT_PREFIXES = ["/client", "/api/client/"];
 // sans passer par CLIENT_PREFIXES (qui déclenche le blocage ADMIN ci-dessous).
 const SHARED_PREFIXES = ["/api/feuilles-de-temps", "/api/evaluations"];
 
-const secret = new TextEncoder().encode(process.env.SESSION_SECRET);
+// Vérifie le token avec le secret courant, puis l'ancien si une rotation de
+// SESSION_SECRET est en cours (voir lib/session-secret.ts) — jose lève une
+// exception dès le premier échec, donc on essaie chaque secret à la main.
+async function verifierToken(token: string) {
+  for (const s of secretsVerification) {
+    try {
+      return await jwtVerify(token, s);
+    } catch {
+      // essaie le secret suivant
+    }
+  }
+  throw new Error("Token invalide pour tous les secrets connus");
+}
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
@@ -48,7 +61,7 @@ export async function middleware(req: NextRequest) {
   if (!token) return redirectToLogin(req);
 
   try {
-    const { payload } = await jwtVerify(token, secret);
+    const { payload } = await verifierToken(token);
     const role = payload.role as string;
 
     if (role === "CLIENT") {
