@@ -1,17 +1,18 @@
-// Envoi d'emails transactionnels — inscription en attente / compte validé.
+// Envoi d'emails transactionnels — inscription en attente / compte validé /
+// CRA rejeté / nouvelle évaluation reçue.
 //
-// ⚠️ Aucun fournisseur d'email n'est branché pour l'instant (pas de clé API
-// Resend / SendGrid / SMTP fournie pour ce projet). En attendant, chaque
-// appel se contente de logger le contenu de l'email dans les journaux
-// Vercel, pour qu'on puisse vérifier le contenu/déclenchement sans bloquer
-// le reste de la démo.
+// Envoi réel via Resend dès que RESEND_API_KEY est présente dans les
+// variables d'environnement Vercel — sinon (comme pour toute démo sans
+// fournisseur configuré) chaque appel se contente de logger le contenu de
+// l'email dans les journaux Vercel, pour qu'on puisse vérifier le
+// contenu/déclenchement sans bloquer le reste de la démo. Best-effort dans
+// les deux cas : un échec d'envoi ne doit jamais faire échouer l'action
+// métier associée (validation de compte, rejet de CRA...).
 //
-// Pour activer l'envoi réel plus tard (ex. avec Resend) :
-//   1. npm i resend
-//   2. Ajouter RESEND_API_KEY dans les variables d'environnement Vercel
-//   3. Remplacer le corps de `envoyerEmail` ci-dessous par un appel réel :
-//        const resend = new Resend(process.env.RESEND_API_KEY);
-//        await resend.emails.send({ from: "Atlas Quality Partners <contact@atlas-qa.com>", to, subject, html });
+// Pour activer l'envoi réel : ajouter RESEND_API_KEY dans les variables
+// d'environnement Vercel (Project Settings -> Environment Variables), et
+// éventuellement EMAIL_FROM si l'adresse par défaut ci-dessous n'est pas
+// vérifiée sur le domaine Resend utilisé.
 
 type EmailParams = {
   to: string;
@@ -19,9 +20,23 @@ type EmailParams = {
   html: string;
 };
 
+const EMAIL_FROM = process.env.EMAIL_FROM || "Atlas Quality Partners <contact@atlas-qa.com>";
+
 async function envoyerEmail({ to, subject, html }: EmailParams) {
-  // TODO: brancher un vrai fournisseur d'email (voir commentaire en haut du fichier).
-  console.log(`[email:placeholder] À: ${to} — Sujet: ${subject}\n${html}`);
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    console.log(`[email:placeholder] À: ${to} — Sujet: ${subject}\n${html}`);
+    return;
+  }
+  try {
+    // Import dynamique : évite de charger la dépendance côté build quand
+    // aucune clé n'est configurée (démo par défaut).
+    const { Resend } = await import("resend");
+    const resend = new Resend(apiKey);
+    await resend.emails.send({ from: EMAIL_FROM, to, subject, html });
+  } catch (e) {
+    console.error(`[email:erreur] Échec d'envoi à ${to} (${subject})`, e);
+  }
 }
 
 export async function envoyerEmailInscriptionEnAttente(params: {
@@ -120,6 +135,50 @@ export async function envoyerEmailNouvelleDemandeContact(params: {
     <li><strong>Message :</strong> ${message ?? "-"}</li>
     </ul>
     <p>A traiter depuis /admin/demandes.</p>
+    `,
+  });
+}
+
+// Notifie l'ingénieur quand l'Admin rejette sa feuille de temps (voir
+// app/api/feuilles-de-temps/route.ts, action "rejeter") — jusqu'ici il
+// fallait revenir se connecter pour s'en apercevoir.
+export async function envoyerEmailCraRejete(params: {
+  to: string;
+  nom: string;
+  mois: string;
+  motif: string;
+}) {
+  const { to, nom, mois, motif } = params;
+  await envoyerEmail({
+    to,
+    subject: `Atlas Quality Partners — Votre feuille de temps de ${mois} a été rejetée`,
+    html: `
+      <p>Bonjour ${nom},</p>
+      <p>Votre feuille de temps de <strong>${mois}</strong> a été rejetée par l'administrateur.</p>
+      <p><strong>Motif :</strong> ${motif}</p>
+      <p>Merci de la corriger et de la soumettre à nouveau depuis votre espace ingénieur.</p>
+      <p>À bientôt,<br/>L'équipe Atlas Quality Partners</p>
+    `,
+  });
+}
+
+// Notifie l'ingénieur dès qu'un client dépose une évaluation sur une de ses
+// missions terminées (voir app/api/evaluations/route.ts, POST).
+export async function envoyerEmailNouvelleEvaluation(params: {
+  to: string;
+  nom: string;
+  mission: string;
+  note: number;
+}) {
+  const { to, nom, mission, note } = params;
+  await envoyerEmail({
+    to,
+    subject: "Atlas Quality Partners — Vous avez reçu une nouvelle évaluation",
+    html: `
+      <p>Bonjour ${nom},</p>
+      <p>Vous avez reçu une nouvelle évaluation client sur la mission <strong>${mission}</strong> : ${note}/5.</p>
+      <p>Retrouvez le détail dans votre espace ingénieur, onglet Historique de mission avec Atlas.</p>
+      <p>À bientôt,<br/>L'équipe Atlas Quality Partners</p>
     `,
   });
 }
