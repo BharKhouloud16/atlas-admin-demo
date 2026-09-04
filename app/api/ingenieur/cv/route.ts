@@ -70,7 +70,28 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: e.message ?? "Échec de l'upload" }, { status: 500 });
   }
 
+  // Historique des versions (voir prisma/schema.prisma, VersionCv) : avant
+  // d'écraser le CV actuel, on archive celui qui est encore en place (s'il
+  // y en a un — un premier import n'a rien à archiver). Le fichier Blob
+  // n'est jamais supprimé, seule la référence en base change.
+  const profilAvant = await prisma.profil.findUnique({
+    where: { id: session.profilId },
+    select: { cvUrl: true, cvNomFichier: true, cvImporteLe: true },
+  });
+
   await prisma.$transaction([
+    ...(profilAvant?.cvUrl
+      ? [
+          prisma.versionCv.create({
+            data: {
+              profilId: session.profilId,
+              cvUrl: profilAvant.cvUrl,
+              cvNomFichier: profilAvant.cvNomFichier,
+              importeLe: profilAvant.cvImporteLe ?? new Date(),
+            },
+          }),
+        ]
+      : []),
     prisma.infoCV.deleteMany({ where: { profilId: session.profilId } }),
     prisma.profil.update({
       where: { id: session.profilId },
