@@ -7,7 +7,7 @@ type CompteEnAttente = {
   email: string;
   role: "INGENIEUR" | "CLIENT";
   createdAt: string;
-  profil: { id: string; nom: string } | null;
+  profil: { id: string; nom: string; prenom: string | null } | null;
   client: {
     id: string;
     nom: string;
@@ -54,7 +54,12 @@ export default function ComptesEnAttentePage() {
           <li key={c.id} style={{ border: "1px solid " + (enAlerte ? "#f3c56b" : "#eee"), background: enAlerte ? "#fffaf0" : undefined, borderRadius: 8, padding: 16 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
               <p style={{ margin: 0, fontWeight: 600 }}>
-                {c.role === "CLIENT" ? c.client?.nom : c.profil?.nom} — {c.email} ({c.role})
+                {c.role === "CLIENT"
+                  ? c.client?.nom
+                  : c.profil?.prenom
+                  ? `${c.profil.prenom} ${c.profil.nom}`
+                  : c.profil?.nom}{" "}
+                — {c.email} ({c.role})
               </p>
               {enAlerte && (
                 <span style={{ fontSize: 11, fontWeight: 600, color: "#b45309", whiteSpace: "nowrap" }}>
