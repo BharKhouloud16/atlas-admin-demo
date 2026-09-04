@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { bleu, bleuFonce, grisTexte, bordure } from "@/lib/theme";
+import { PAYS } from "@/lib/localisation";
 
 type Client = {
   id: string;
@@ -92,11 +93,18 @@ export default function ClientsPage() {
             onChange={(e) => setChamps({ ...champs, nom: e.target.value })}
             required
           />
-          <input
-            placeholder="Pays"
+          <select
             value={champs.pays}
             onChange={(e) => setChamps({ ...champs, pays: e.target.value })}
-          />
+            title="Détermine les jours fériés grisés dans le calendrier d'emploi du temps des ingénieurs en mission chez ce client."
+          >
+            <option value="">Pays (pour les jours fériés du calendrier)</option>
+            {PAYS.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
           <input
             placeholder="Secteur d'activité"
             value={champs.secteur}
