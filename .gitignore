@@ -2,3 +2,9 @@ node_modules/
 .next/
 .env
 *.log
+
+# Playwright (voir playwright.config.ts, .github/workflows/ci.yml)
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
