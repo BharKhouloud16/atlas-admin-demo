@@ -66,6 +66,9 @@ type ProfilData = {
   competences: string[];
   entretiensRealises: number;
   realisations: Realisation[] | null;
+  videoUrl: string | null;
+  videoNomFichier: string | null;
+  videoImporteLe: string | null;
   evaluationMoyenne: number | null;
   nombreEvaluations: number;
   missionsTerminees: number;
@@ -321,6 +324,13 @@ function OngletProfil({ data, recharger }: { data: ProfilData; recharger: () => 
         <RealisationsSection data={data} recharger={recharger} />
       </div>
 
+      <div>
+        <p style={{ fontSize: 12, textTransform: "uppercase", color: "#888", marginBottom: 8 }}>
+          Vidéo de présentation
+        </p>
+        <VideoPresentationSection data={data} recharger={recharger} />
+      </div>
+
       {categories.map((cat) => (
         <div key={cat}>
           <p style={{ fontSize: 12, textTransform: "uppercase", color: "#888", marginBottom: 8 }}>{cat}</p>
@@ -446,6 +456,91 @@ function RealisationsSection({ data, recharger }: { data: ProfilData; recharger:
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+const TAILLE_MAX_VIDEO_OCTETS = 80 * 1024 * 1024;
+
+// Courte vidéo de présentation (60-90s conseillé), façon "CV vidéo" :
+// humanise le profil avant l'appel client, en complément du portfolio de
+// réalisations ci-dessus. Upload immédiat (comme le CV), remplace la vidéo
+// existante s'il y en a une. Visible par l'Admin (panneau de détail dans
+// /admin/profils) et par un Client ayant une mission avec ce profil (voir
+// /api/ingenieur/video/fichier).
+function VideoPresentationSection({ data, recharger }: { data: ProfilData; recharger: () => void }) {
+  const [envoi, setEnvoi] = useState(false);
+  const [erreur, setErreur] = useState("");
+
+  async function importer(e: React.ChangeEvent<HTMLInputElement>) {
+    const fichier = e.target.files?.[0];
+    e.target.value = "";
+    if (!fichier) return;
+    setErreur("");
+    if (fichier.size > TAILLE_MAX_VIDEO_OCTETS) {
+      setErreur("Fichier trop volumineux (80 Mo maximum).");
+      return;
+    }
+    setEnvoi(true);
+    const form = new FormData();
+    form.append("video", fichier);
+    const res = await fetch("/api/ingenieur/video", { method: "POST", body: form });
+    setEnvoi(false);
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      setErreur(d.error ?? "Échec de l'import.");
+      return;
+    }
+    recharger();
+  }
+
+  async function supprimer() {
+    setErreur("");
+    setEnvoi(true);
+    const res = await fetch("/api/ingenieur/video", { method: "DELETE" });
+    setEnvoi(false);
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      setErreur(d.error ?? "Erreur, réessayez.");
+      return;
+    }
+    recharger();
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>
+        Une courte vidéo (60 à 90 secondes, MP4/WebM/MOV, 80 Mo max) où vous vous présentez — visible uniquement par
+        l&apos;Admin et par les clients avec qui vous avez une mission en cours ou passée.
+      </p>
+      {data.videoUrl ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <video
+            src="/api/ingenieur/video/fichier"
+            controls
+            style={{ maxWidth: 360, borderRadius: 8, border: `1px solid ${bordure}` }}
+          />
+          <div style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 12, color: "#888" }}>
+            <span>
+              {data.videoNomFichier} — importée le{" "}
+              {data.videoImporteLe ? new Date(data.videoImporteLe).toLocaleDateString("fr-FR") : "—"}
+            </span>
+            <button onClick={supprimer} disabled={envoi} style={{ fontSize: 12, padding: "5px 10px" }}>
+              Supprimer
+            </button>
+          </div>
+        </div>
+      ) : (
+        <input
+          type="file"
+          accept="video/mp4,video/webm,video/quicktime"
+          onChange={importer}
+          disabled={envoi}
+          style={{ border: `1px solid ${bordure}`, borderRadius: 8, padding: 10, fontSize: 13 }}
+        />
+      )}
+      {envoi && <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Envoi en cours...</p>}
+      {erreur && <p style={{ color: "crimson", fontSize: 13, margin: 0 }}>{erreur}</p>}
     </div>
   );
 }
