@@ -49,7 +49,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     if (profil && profil.cvValide && !profil.questionnaireValide) redirect("/ingenieur/disponibilite");
   }
 
-  const liens = LIENS_NAV.filter((l) => l.roles.includes(session.role as "ADMIN" | "INGENIEUR"));
+  const liens = LIENS_NAV.filter((l) => (l.roles as readonly string[]).includes(session.role));
 
   return (
     <div style={{ minHeight: "100vh", background: fondClair }}>
