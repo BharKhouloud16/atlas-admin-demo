@@ -10,16 +10,25 @@ export async function GET() {
   }
 
   const [profils, hyp] = await Promise.all([
-    prisma.profil.findMany({ orderBy: { createdAt: "desc" } }),
+    // include compte.desactive : un ingénieur ayant désactivé temporairement
+    // son profil (voir /ingenieur -> "Mon compte") doit devenir invisible
+    // dans le matching admin, comme annoncé côté ingénieur — voir le filtre
+    // juste en dessous.
+    prisma.profil.findMany({
+      orderBy: { createdAt: "desc" },
+      include: { compte: { select: { desactive: true } } },
+    }),
     prisma.hypotheses.upsert({ where: { id: "singleton" }, update: {}, create: {} }),
   ]);
 
-  const enrichis = profils.map((p) => ({
+  const visibles = profils.filter((p) => !p.compte?.desactive);
+
+  const enrichis = visibles.map(({ compte, ...p }) => ({
     ...p,
     tjmCout: calculerTjmCout(p.type, p.montantSaisi, hyp),
   }));
 
-  return NextResponse.json(enrichis);
+  return NextResponse.json({ profils: enrichis, nombreDesactives: profils.length - visibles.length });
 }
 
 export async function POST(req: NextRequest) {
