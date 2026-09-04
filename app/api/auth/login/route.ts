@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { createSession } from "@/lib/auth";
 import { loginSchema, premierMessageZod } from "@/lib/validation";
 import { adresseIp, verifierLimiteIp, enregistrerEchecConnexion, reinitialiserEchecsConnexion } from "@/lib/rate-limit";
+import { verifierCode } from "@/lib/totp";
 
 export async function POST(req: NextRequest) {
   const ip = adresseIp(req);
@@ -58,6 +59,36 @@ export async function POST(req: NextRequest) {
       { error: "Votre compte est en attente de validation par l'administrateur." },
       { status: 403 }
     );
+  }
+
+  // 2FA (TOTP), réservé à l'Admin — voir lib/totp.ts et
+  // app/api/auth/2fa/*. Le code (ou un code de secours à usage unique) est
+  // demandé ici, dans le même appel : plutôt qu'une session intermédiaire,
+  // le front renvoie email+password+code ensemble une fois le code saisi
+  // (voir app/connexion/page.tsx), ce qui évite tout état de session
+  // partiellement authentifiée côté serveur.
+  if (user.role === "ADMIN" && user.totpActif && user.totpSecret) {
+    const code = typeof corps?.code === "string" ? corps.code : "";
+    if (!code) {
+      return NextResponse.json({ error: "Code de vérification requis.", requiresTotp: true }, { status: 401 });
+    }
+
+    let codeValide = verifierCode(code, user.totpSecret);
+    if (!codeValide && user.totpCodesSecours) {
+      const hashes: string[] = JSON.parse(user.totpCodesSecours);
+      for (let i = 0; i < hashes.length; i++) {
+        if (await bcrypt.compare(code.trim(), hashes[i])) {
+          codeValide = true;
+          hashes.splice(i, 1); // usage unique : retiré une fois consommé
+          await prisma.user.update({ where: { id: user.id }, data: { totpCodesSecours: JSON.stringify(hashes) } });
+          break;
+        }
+      }
+    }
+
+    if (!codeValide) {
+      return NextResponse.json({ error: "Code de vérification invalide.", requiresTotp: true }, { status: 401 });
+    }
   }
 
   await createSession({
