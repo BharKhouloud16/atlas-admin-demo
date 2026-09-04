@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { bleu, bleuFonce, grisTexte, bordure } from "@/lib/theme";
+import LogoAtlas from "@/components/LogoAtlas";
 
 const FORMES_JURIDIQUES = ["SARL", "SA", "SAS", "EURL", "Auto-entrepreneur", "Autre"];
 
@@ -91,40 +94,113 @@ export default function InscriptionPage() {
 
   if (done) {
     return (
-      <main style={{ maxWidth: 380, margin: "80px auto", padding: 24 }}>
-        <h1 style={{ fontSize: 20, marginBottom: 12 }}>Compte créé</h1>
-        <p>
-          Un email de confirmation vous a été envoyé : cliquez sur le lien qu&apos;il contient pour valider votre
-          adresse. Votre compte sera ensuite en attente de validation par l&apos;administrateur, qui vous
-          préviendra par email dès que votre accès sera activé.
-        </p>
-        {lienVerificationDemo && (
-          <p style={{ fontSize: 12, color: "#888", background: "#f6f7fa", padding: 10, borderRadius: 6, marginTop: 12 }}>
-            Démo — aucun fournisseur d&apos;email n&apos;est branché sur ce site de test : cliquez ici pour simuler
-            la réception de l&apos;email de confirmation :{" "}
-            <a href={lienVerificationDemo} style={{ color: "#2557d6" }}>
-              confirmer mon adresse email
-            </a>
+      <main
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 24,
+          background: "linear-gradient(180deg,#f4f7fe 0%,#ffffff 100%)",
+        }}
+      >
+        <div style={{ marginBottom: 28 }}>
+          <LogoAtlas />
+        </div>
+        <div
+          style={{
+            width: "100%",
+            maxWidth: 420,
+            background: "#fff",
+            border: `1px solid ${bordure}`,
+            borderRadius: 12,
+            padding: 32,
+            boxShadow: "0 2px 12px rgba(18,34,74,0.06)",
+          }}
+        >
+          <h1 style={{ fontSize: 20, marginBottom: 12, color: bleuFonce }}>Compte créé</h1>
+          <p style={{ color: grisTexte, fontSize: 14, lineHeight: 1.6 }}>
+            Un email de confirmation vous a été envoyé : cliquez sur le lien qu&apos;il contient pour valider votre
+            adresse. Votre compte sera ensuite en attente de validation par l&apos;administrateur, qui vous
+            préviendra par email dès que votre accès sera activé.
           </p>
-        )}
-        <button onClick={() => router.push("/connexion")} style={{ marginTop: 16 }}>Retour à la connexion</button>
+          {lienVerificationDemo && (
+            <p style={{ fontSize: 12, color: "#888", background: "#f6f7fa", padding: 10, borderRadius: 8, marginTop: 12 }}>
+              Démo — aucun fournisseur d&apos;email n&apos;est branché sur ce site de test : cliquez ici pour simuler
+              la réception de l&apos;email de confirmation :{" "}
+              <a href={lienVerificationDemo} style={{ color: bleu }}>
+                confirmer mon adresse email
+              </a>
+            </p>
+          )}
+          <button onClick={() => router.push("/connexion")} style={{ marginTop: 16, width: "100%" }}>
+            Retour à la connexion
+          </button>
+        </div>
       </main>
     );
   }
 
   return (
-    <main style={{ maxWidth: 380, margin: "60px auto", padding: 24 }}>
-      <h1 style={{ fontSize: 20, marginBottom: 4 }}>Créer un compte</h1>
-      <p style={{ fontSize: 14, color: "#4b5567", marginTop: 0, marginBottom: 24 }}>
+    <main
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        padding: "48px 24px",
+        background: "linear-gradient(180deg,#f4f7fe 0%,#ffffff 100%)",
+      }}
+    >
+      <div style={{ marginBottom: 24 }}>
+        <LogoAtlas />
+      </div>
+      <div
+        style={{
+          width: "100%",
+          maxWidth: 420,
+          background: "#fff",
+          border: `1px solid ${bordure}`,
+          borderRadius: 12,
+          padding: 32,
+          boxShadow: "0 2px 12px rgba(18,34,74,0.06)",
+        }}
+      >
+      <p style={{ fontSize: 13, marginBottom: 12 }}>
+        <Link href="/" style={{ color: bleu, textDecoration: "none" }}>
+          ← Retour à l&apos;accueil
+        </Link>
+      </p>
+      <h1 style={{ fontSize: 20, marginBottom: 4, color: bleuFonce }}>Créer un compte</h1>
+      <p style={{ fontSize: 14, color: grisTexte, marginTop: 0, marginBottom: 24 }}>
         {role === "CLIENT" ? "Espace Partenaire" : "Espace Ingénieur"}
       </p>
 
       {!roleImpose && (
         <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-          <button type="button" onClick={() => setRole("CLIENT")} style={{ fontWeight: role === "CLIENT" ? 700 : 400 }}>
+          <button
+            type="button"
+            onClick={() => setRole("CLIENT")}
+            style={{
+              flex: 1,
+              background: role === "CLIENT" ? bleu : "#fff",
+              color: role === "CLIENT" ? "#fff" : bleuFonce,
+              border: `1px solid ${role === "CLIENT" ? bleu : bordure}`,
+            }}
+          >
             Je suis client
           </button>
-          <button type="button" onClick={() => setRole("INGENIEUR")} style={{ fontWeight: role === "INGENIEUR" ? 700 : 400 }}>
+          <button
+            type="button"
+            onClick={() => setRole("INGENIEUR")}
+            style={{
+              flex: 1,
+              background: role === "INGENIEUR" ? bleu : "#fff",
+              color: role === "INGENIEUR" ? "#fff" : bleuFonce,
+              border: `1px solid ${role === "INGENIEUR" ? bleu : bordure}`,
+            }}
+          >
             Je suis ingénieur
           </button>
         </div>
@@ -189,7 +265,9 @@ export default function InscriptionPage() {
         </label>
 
         {error && <p style={{ color: "crimson", fontSize: 13 }}>{error}</p>}
-        <button type="submit" disabled={loading}>{loading ? "Création..." : "Créer mon compte"}</button>
+        <button type="submit" disabled={loading} style={{ width: "100%", marginTop: 4 }}>
+          {loading ? "Création..." : "Créer mon compte"}
+        </button>
       </form>
 
       <p style={{ fontSize: 12, color: "#888", marginTop: 16 }}>
@@ -197,6 +275,7 @@ export default function InscriptionPage() {
         {role === "INGENIEUR" &&
           " Vous pourrez ensuite importer votre CV : le type de contrat et le tarif seront déterminés à partir de votre profil."}
       </p>
+      </div>
     </main>
   );
 }
