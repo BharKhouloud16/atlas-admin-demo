@@ -1,4 +1,25 @@
+import zlib from "zlib";
 import { test, expect, APIRequestContext } from "@playwright/test";
+
+// pdf-lib compresse les flux de contenu (FlateDecode) : chercher le code
+// devise directement dans les octets bruts du PDF ne fonctionne pas — il
+// faut décompresser chaque flux "stream...endstream" pour retrouver le
+// texte réellement dessiné (opérateurs Tj/TJ). Pas de nouvelle dépendance :
+// zlib est un module Node natif.
+function extraireTexteBrutPdf(pdfBytes: Buffer): string {
+  const contenu = pdfBytes.toString("latin1");
+  const morceaux: string[] = [];
+  const regex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(contenu))) {
+    try {
+      morceaux.push(zlib.inflateSync(Buffer.from(m[1], "latin1")).toString("latin1"));
+    } catch {
+      // pas un flux FlateDecode (ex. police déjà binaire) — ignoré
+    }
+  }
+  return morceaux.join("\n");
+}
 
 // Couvre P1-01 (audit du 06/09) : la facture doit refléter la devise réelle
 // de la mission (Mission.deviseVente) plutôt que d'être toujours libellée
@@ -83,16 +104,16 @@ async function factureDeMissionTest(request: APIRequestContext, mois: string, tj
 test.describe("Facturation — devise réelle de la mission (P1-01)", () => {
   test("mission EUR -> facture en EUR", async ({ request }) => {
     const pdf = await factureDeMissionTest(request, "2026-01", 600, "EUR");
-    expect(pdf.toString("latin1")).toContain("EUR");
+    expect(extraireTexteBrutPdf(pdf)).toContain("EUR");
   });
 
   test("mission USD -> facture en USD (pas de conversion)", async ({ request }) => {
     const pdf = await factureDeMissionTest(request, "2026-02", 650, "USD");
-    expect(pdf.toString("latin1")).toContain("USD");
+    expect(extraireTexteBrutPdf(pdf)).toContain("USD");
   });
 
   test("mission GBP -> facture en GBP (pas de conversion)", async ({ request }) => {
     const pdf = await factureDeMissionTest(request, "2026-03", 550, "GBP");
-    expect(pdf.toString("latin1")).toContain("GBP");
+    expect(extraireTexteBrutPdf(pdf)).toContain("GBP");
   });
 });
