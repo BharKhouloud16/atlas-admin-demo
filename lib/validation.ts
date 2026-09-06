@@ -101,3 +101,18 @@ export const corrigerCompetenceSchema = z.object({
   secteur: z.string().trim().max(200).nullable().optional(),
   detail: z.string().trim().max(300).nullable().optional(),
 });
+
+// ATLAS DYNAMIC SKILL GRAPH — ajout d'une nouvelle preuve (SkillEvidence) à
+// une ProfilCompetence existante, TOUJOURS additif (voir POST .../
+// competences/[competenceId]/preuves) : jamais de suppression/écrasement
+// d'une preuve précédente. `niveauObserve` est le niveau (1-5) vu par CETTE
+// preuve précise, distinct du niveau courant (voir SkillEvidence.niveau) —
+// optionnel, jamais déduit automatiquement. `statutPropose` permet à
+// l'Admin de proposer une évolution de statut, qui reste soumise à
+// fusionnerCompetence (jamais de régression, voir lib/talent/skill-graph.ts).
+export const ajouterPreuveSchema = z.object({
+  source: z.enum(["CV", "PROFIL", "CERTIFICATION", "MISSION", "EVALUATION", "ASSESSMENT", "ADMIN"]),
+  detail: z.string().trim().max(300).nullable().optional(),
+  niveauObserve: z.number().int().min(1).max(5).nullable().optional(),
+  statutPropose: z.enum(["VERIFIE", "DECLARE", "INFERE", "INCONNU"]).optional(),
+});
