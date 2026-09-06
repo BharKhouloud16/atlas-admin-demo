@@ -25,9 +25,16 @@ type DemandeAdmin = {
   client: { nom: string };
   competencesExtraites: string[];
   senioriteSouhaitee: string | null;
+  anneesExperienceMin: number | null;
+  secteurActivite: string | null;
+  localisation: string | null;
+  mobilite: string | null;
+  disponibiliteSouhaitee: string | null;
   budgetTjmMax: number | null;
   budgetDevise: string;
   analyseProvider: string | null;
+  criteresModifiesParEmail: string | null;
+  criteresModifiesLe: string | null;
 };
 
 const LABEL_STATUT_ENTREE: Record<string, string> = {
@@ -36,12 +43,12 @@ const LABEL_STATUT_ENTREE: Record<string, string> = {
   REJETEE: "Rejetée",
 };
 
-// Détail d'une DemandeTalent côté Admin : déclenche le Matching Engine
-// (lib/talent/matching.ts) et valide/rejette chaque suggestion — jamais
-// automatique (human-in-the-loop, voir POST .../shortlist). Le détail de la
-// demande elle-même est relu depuis GET /api/talent/demandes (liste déjà
-// existante, filtrée côté client) pour ne pas dupliquer une route pour un
-// simple affichage.
+// Détail d'une DemandeTalent côté Admin : vérifier/modifier les critères de
+// matching (voir PATCH /api/talent/demandes/[id]) PUIS déclencher le
+// Matching Engine (lib/talent/matching.ts), qui relit ces mêmes champs en
+// base — modifier les critères ici change directement son résultat. Le
+// détail de la demande est relu depuis GET /api/talent/demandes (liste déjà
+// existante, filtrée côté client) pour ne pas dupliquer une route de lecture.
 export default function TalentAdminDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -103,11 +110,10 @@ export default function TalentAdminDetailPage() {
       <p style={{ color: grisTexte, fontSize: 13 }}>Client : {demande.client.nom}</p>
       <p style={{ fontSize: 14 }}>{demande.description}</p>
       <p style={{ fontSize: 12, color: "#888" }}>
-        Compétences extraites : {demande.competencesExtraites.join(", ") || "aucune"}
-        {demande.senioriteSouhaitee ? ` · Séniorité : ${demande.senioriteSouhaitee}` : ""}
-        {demande.budgetTjmMax ? ` · Budget max : ${demande.budgetTjmMax} ${demande.budgetDevise}/jour` : ""}
-        {demande.analyseProvider ? ` · Analyse : ${demande.analyseProvider}` : " · pas encore analysée"}
+        {demande.analyseProvider ? `Analyse initiale : ${demande.analyseProvider}` : "Pas encore analysée automatiquement"}
       </p>
+
+      <CriteresMatching demande={demande} onEnregistre={setDemande} />
 
       <div style={{ margin: "16px 0" }}>
         <button
@@ -178,6 +184,129 @@ export default function TalentAdminDetailPage() {
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+const champStyle: React.CSSProperties = { padding: 8, border: `1px solid ${bordure}`, borderRadius: 6, fontSize: 13, width: "100%" };
+const labelStyle: React.CSSProperties = { fontSize: 11, textTransform: "uppercase", color: "#888", display: "block", marginBottom: 4 };
+
+// Zone "Critères de matching" — c'est CE que lit le Matching Engine (voir
+// POST /api/talent/demandes/[id]/matching), jamais la description brute
+// directement. L'Admin vérifie ici ce que l'AI Request Analyzer a proposé
+// et corrige avant de lancer le matching (human-in-the-loop, même principe
+// que la validation de shortlist plus bas).
+function CriteresMatching({ demande, onEnregistre }: { demande: DemandeAdmin; onEnregistre: (d: DemandeAdmin) => void }) {
+  const [competences, setCompetences] = useState(demande.competencesExtraites.join(", "));
+  const [seniorite, setSeniorite] = useState(demande.senioriteSouhaitee ?? "");
+  const [anneesExperience, setAnneesExperience] = useState(demande.anneesExperienceMin?.toString() ?? "");
+  const [secteur, setSecteur] = useState(demande.secteurActivite ?? "");
+  const [localisation, setLocalisation] = useState(demande.localisation ?? "");
+  const [mobilite, setMobilite] = useState(demande.mobilite ?? "");
+  const [disponibilite, setDisponibilite] = useState(demande.disponibiliteSouhaitee ?? "");
+  const [budgetTjmMax, setBudgetTjmMax] = useState(demande.budgetTjmMax?.toString() ?? "");
+  const [budgetDevise, setBudgetDevise] = useState(demande.budgetDevise);
+  const [enregistrement, setEnregistrement] = useState(false);
+  const [erreur, setErreur] = useState<string | null>(null);
+
+  async function enregistrer() {
+    setErreur(null);
+    setEnregistrement(true);
+    const reponse = await fetch(`/api/talent/demandes/${demande.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        competencesExtraites: competences.split(",").map((c) => c.trim()).filter(Boolean),
+        senioriteSouhaitee: seniorite || null,
+        anneesExperienceMin: anneesExperience ? Number(anneesExperience) : null,
+        secteurActivite: secteur || null,
+        localisation: localisation || null,
+        mobilite: mobilite || null,
+        disponibiliteSouhaitee: disponibilite || null,
+        budgetTjmMax: budgetTjmMax ? Number(budgetTjmMax) : null,
+        budgetDevise,
+      }),
+    });
+    setEnregistrement(false);
+    if (!reponse.ok) {
+      const data = await reponse.json().catch(() => ({}));
+      setErreur(data.error ?? "Une erreur est survenue.");
+      return;
+    }
+    const misAJour = await reponse.json();
+    onEnregistre(misAJour);
+  }
+
+  return (
+    <div style={{ border: `1px solid ${bordure}`, borderRadius: 8, padding: 16, margin: "16px 0" }}>
+      <h2 style={{ margin: "0 0 4px", fontSize: 15 }}>Critères de matching</h2>
+      <p style={{ margin: "0 0 12px", fontSize: 12, color: "#888" }}>
+        Vérifiez et corrigez ces critères avant de lancer le matching — c&apos;est ce qui est réellement comparé aux profils.
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div style={{ gridColumn: "1 / -1" }}>
+          <label style={labelStyle}>Compétences / technologies recherchées (séparées par des virgules)</label>
+          <input value={competences} onChange={(e) => setCompetences(e.target.value)} style={champStyle} />
+        </div>
+        <div>
+          <label style={labelStyle}>Séniorité</label>
+          <select value={seniorite} onChange={(e) => setSeniorite(e.target.value)} style={champStyle}>
+            <option value="">—</option>
+            <option value="Junior">Junior</option>
+            <option value="Confirmé">Confirmé</option>
+            <option value="Senior">Senior</option>
+            <option value="Expert">Expert</option>
+          </select>
+        </div>
+        <div>
+          <label style={labelStyle}>Années d&apos;expérience minimum</label>
+          <input type="number" min={0} value={anneesExperience} onChange={(e) => setAnneesExperience(e.target.value)} style={champStyle} />
+        </div>
+        <div>
+          <label style={labelStyle}>Secteur / contexte</label>
+          <input value={secteur} onChange={(e) => setSecteur(e.target.value)} style={champStyle} />
+        </div>
+        <div>
+          <label style={labelStyle}>Localisation</label>
+          <input value={localisation} onChange={(e) => setLocalisation(e.target.value)} style={champStyle} />
+        </div>
+        <div>
+          <label style={labelStyle}>Mobilité</label>
+          <select value={mobilite} onChange={(e) => setMobilite(e.target.value)} style={champStyle}>
+            <option value="">—</option>
+            <option value="Remote">Remote</option>
+            <option value="Hybride">Hybride</option>
+            <option value="Sur site">Sur site</option>
+          </select>
+        </div>
+        <div>
+          <label style={labelStyle}>Disponibilité souhaitée</label>
+          <input value={disponibilite} onChange={(e) => setDisponibilite(e.target.value)} style={champStyle} placeholder="Ex. Immédiate" />
+        </div>
+        <div>
+          <label style={labelStyle}>Budget TJM max</label>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input type="number" min={0} value={budgetTjmMax} onChange={(e) => setBudgetTjmMax(e.target.value)} style={champStyle} />
+            <input value={budgetDevise} onChange={(e) => setBudgetDevise(e.target.value.toUpperCase())} maxLength={3} style={{ ...champStyle, width: 60 }} />
+          </div>
+        </div>
+      </div>
+      {erreur && <p style={{ color: "#c0392b", fontSize: 13, margin: "12px 0 0" }}>{erreur}</p>}
+      <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12 }}>
+        <button
+          onClick={enregistrer}
+          disabled={enregistrement}
+          style={{ fontSize: 13, padding: "8px 16px", background: bleu, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
+        >
+          {enregistrement ? "Enregistrement…" : "Enregistrer les critères"}
+        </button>
+        {demande.criteresModifiesLe && demande.criteresModifiesParEmail && (
+          <span style={{ fontSize: 11, color: "#888" }}>
+            Dernière modification par {demande.criteresModifiesParEmail} le{" "}
+            {new Date(demande.criteresModifiesLe).toLocaleString("fr-FR")}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
