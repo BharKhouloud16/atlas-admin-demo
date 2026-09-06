@@ -292,6 +292,15 @@ model Mission {
   nbJours       Int
   margeCible    Float      @default(0.30)
   tjmVente      Float
+  // Code devise (ISO 4217) du TJM de vente ci-dessus — ajouté le 06/09
+  // suite à l'audit (P1-01) : jusque-là tjmVente n'avait aucune devise
+  // réelle et la facture affichait systématiquement "EUR" quel que soit
+  // le contexte de la mission. Défaut "EUR" : toutes les missions déjà
+  // créées avant cette migration restent en EUR sans changement de
+  // comportement (voir migration 20260906000000_mission_devise). Jamais
+  // de conversion automatique ici — ce champ qualifie le montant déjà
+  // saisi, il ne le convertit pas.
+  deviseVente   String     @default("EUR")
   statut        String     @default("En cours") // En cours / Terminée / Annulée
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
