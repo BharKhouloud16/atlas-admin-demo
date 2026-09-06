@@ -10,6 +10,8 @@ import {
   type EntreeSkillGraph,
   type ProfilCompetenceExistante,
 } from "@/lib/talent/skill-graph";
+import { calculerConfianceCompetences } from "@/lib/talent/evidence-confidence";
+import type { StatutPreuveCompetence, NiveauConfiance, SourcePreuveCompetence } from "@/lib/talent/skill-graph";
 
 // ATLAS SKILL GRAPH V1 — réservé à l'Admin, comme /admin/profils et le
 // Matching Engine (voir app/api/talent/demandes/[id]/matching/route.ts) :
@@ -42,7 +44,12 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
     orderBy: { competence: "asc" },
   });
 
-  return NextResponse.json({ profilId: params.id, competences });
+  // ATLAS TALENT TRUST — Evidence Confidence (voir lib/talent/evidence-
+  // confidence.ts) : calcul pur en mémoire à partir des compétences déjà
+  // récupérées ci-dessus (aucune requête supplémentaire, pas de N+1) —
+  // n'écrase jamais `statut`/`confiance` déjà stockés, ajoute seulement un
+  // champ `confianceDetaillee` explicable pour chaque compétence.
+  return NextResponse.json({ profilId: params.id, competences: avecConfianceDetaillee(competences) });
 }
 
 export async function POST(_req: Request, { params }: { params: { id: string } }) {
@@ -154,5 +161,22 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
     orderBy: { competence: "asc" },
   });
 
-  return NextResponse.json({ profilId: params.id, competences, creees, misesAJour });
+  return NextResponse.json({ profilId: params.id, competences: avecConfianceDetaillee(competences), creees, misesAJour });
+}
+
+// Attache `confianceDetaillee` (voir lib/talent/evidence-confidence.ts) à
+// chaque ligne déjà chargée avec ses preuves — purement en mémoire, jamais
+// une requête par compétence.
+function avecConfianceDetaillee<
+  T extends {
+    competence: string;
+    statut: StatutPreuveCompetence;
+    niveau: number | null;
+    confiance: NiveauConfiance;
+    contexte: string | null;
+    preuves: { source: SourcePreuveCompetence; detail: string | null; createdAt: Date }[];
+  }
+>(competences: T[]): (T & { confianceDetaillee: ReturnType<typeof calculerConfianceCompetences>[number] })[] {
+  const confiances = calculerConfianceCompetences(competences);
+  return competences.map((c, i) => ({ ...c, confianceDetaillee: confiances[i] }));
 }
