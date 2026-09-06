@@ -14,6 +14,7 @@ const LIENS_NAV = [
   { href: "/admin/ingenieurs", label: "Ingénieurs", roles: ["ADMIN"] },
   { href: "/admin/profils", label: "Profils", roles: ["ADMIN"] },
   { href: "/admin/feuilles-de-temps", label: "Feuilles de temps", roles: ["ADMIN"] },
+  { href: "/admin/talent", label: "Atlas Talent", roles: ["ADMIN"] },
   { href: "/admin/demandes", label: "Demandes de contact", roles: ["ADMIN"] },
   { href: "/admin/comptes-en-attente", label: "Comptes en attente", roles: ["ADMIN"] },
   { href: "/admin/journal", label: "Journal d'activité", roles: ["ADMIN"] },
