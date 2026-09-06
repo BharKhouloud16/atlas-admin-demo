@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
-import { classerProfils, type ProfilPourMatching } from "@/lib/talent/matching";
+import { classerProfils, type ProfilPourMatching, type CompetenceGraphPourMatching } from "@/lib/talent/matching";
 
 // MATCHING — réservé à l'Admin (même principe que /admin/profils, jamais le
 // Client ni l'Ingénieur : le classement expose seniorite/tjmEstime interne).
@@ -36,10 +36,45 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
     },
   });
 
+  // ATLAS SKILL GRAPH V1 -> Matching Engine V2 (intégration) : une seule
+  // requête groupée pour TOUS les profils évalués (pas de N+1 par profil/par
+  // compétence) — voir lib/talent/matching.ts, competencesPourScoring() : un
+  // profil sans ligne ici (Skill Graph jamais calculé) retombe simplement et
+  // silencieusement sur Profil.competences, comportement historique inchangé.
+  // Admin-only comme le reste de cette route — aucun nouvel accès exposé,
+  // aucune donnée d'un autre profil/tenant mélangée (regroupement par
+  // profilId strict ci-dessous).
+  const lignesSkillGraph = await prisma.profilCompetence.findMany({
+    where: { profilId: { in: profils.map((p) => p.id) } },
+    include: { preuves: { orderBy: { createdAt: "asc" }, select: { source: true } } },
+  });
+  const graphParProfil = new Map<string, CompetenceGraphPourMatching[]>();
+  for (const ligne of lignesSkillGraph) {
+    const liste = graphParProfil.get(ligne.profilId) ?? [];
+    liste.push({
+      competence: ligne.competence,
+      statut: ligne.statut,
+      niveau: ligne.niveau,
+      confiance: ligne.confiance,
+      anneesExperience: ligne.anneesExperience,
+      contexte: ligne.contexte,
+      // Preuve la plus récente comme provenance principale affichée dans
+      // l'explication du match — donnée réelle (SkillEvidence.source),
+      // jamais déduite ni inventée ; null si aucune preuve enregistrée.
+      provenancePrincipale: ligne.preuves.length > 0 ? ligne.preuves[ligne.preuves.length - 1].source : null,
+    });
+    graphParProfil.set(ligne.profilId, liste);
+  }
+
   // Les critères de la DemandeTalent (voir PATCH /api/talent/demandes/[id])
   // sont la source de vérité du matching — c'est l'Admin qui les a vérifiés/
   // corrigés avant de lancer ce calcul (voir /admin/talent/[id]).
-  const classement = classerProfils(profils as ProfilPourMatching[], {
+  const profilsAvecSkillGraph: ProfilPourMatching[] = profils.map((p) => ({
+    ...p,
+    competencesGraph: graphParProfil.get(p.id) ?? [],
+  }));
+
+  const classement = classerProfils(profilsAvecSkillGraph, {
     competencesRecherchees: demande.competencesExtraites,
     senioriteSouhaitee: demande.senioriteSouhaitee,
     budgetTjmMax: demande.budgetTjmMax,
