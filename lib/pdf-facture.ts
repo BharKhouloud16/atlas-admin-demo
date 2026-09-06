@@ -34,7 +34,16 @@ export type DonneesFactureExport = {
 };
 
 function formaterMontant(montant: number, devise: string): string {
-  return `${montant.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${devise}`;
+  // Bug de production trouvé le 06/09 (couvert par
+  // tests/api/facturation-devise.spec.ts) : à partir de 1000, l'Intl fr-FR
+  // de Node insère un espace fine insécable (U+202F) comme séparateur de
+  // milliers ("3 000,00"), un caractère que l'encodage WinAnsi de pdf-lib
+  // (Helvetica de base) ne sait pas représenter — la génération de facture
+  // plantait avec "WinAnsi cannot encode ' ' (0x202f)" pour toute mission
+  // dont le total dépassait 999, quelle que soit la devise. On normalise
+  // vers une espace ordinaire, encodable, avant de dessiner le texte.
+  const formate = montant.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `${formate.replace(/ | /g, " ")} ${devise}`;
 }
 
 export async function genererFacturePdf(d: DonneesFactureExport): Promise<Uint8Array> {

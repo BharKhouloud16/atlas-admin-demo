@@ -8,7 +8,15 @@ import { prisma } from "@/lib/prisma";
 // pour ralentir un bruteforce ciblé même quand l'IP change.
 
 const FENETRE_MS = 15 * 60 * 1000; // 15 minutes
-const MAX_TENTATIVES_PAR_IP = 20; // par fenêtre de 15 min, tous emails confondus
+// Configurable via RATE_LIMIT_LOGIN_MAX_IP (défaut 20) — ajouté le 06/09 :
+// dans la CI, toutes les requêtes du serveur `next start` local partagent la
+// même IP ("inconnue", voir adresseIp ci-dessous, aucun en-tête
+// x-forwarded-for/x-real-ip en local), donc la même clé de compteur pour
+// TOUTE la suite de tests (API + E2E) — largement plus de 20 connexions au
+// total. .github/workflows/ci.yml relève ce seuil pour l'environnement de
+// test uniquement ; en production (Vercel, IP réelle par visiteur), le
+// défaut de 20 reste inchangé.
+const MAX_TENTATIVES_PAR_IP = Number(process.env.RATE_LIMIT_LOGIN_MAX_IP) || 20; // par fenêtre de 15 min, tous emails confondus
 
 export function adresseIp(req: NextRequest): string {
   const xff = req.headers.get("x-forwarded-for");
