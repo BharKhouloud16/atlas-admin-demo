@@ -17,6 +17,25 @@
 // comprendre POURQUOI un profil sort en tête avant de le valider en
 // shortlist (voir ShortlistEntree.motifs, StatutShortlist).
 
+import { versCompetencesPourMatching, type StatutPreuveCompetence, type NiveauConfiance } from "./skill-graph";
+
+// ATLAS SKILL GRAPH V1 -> Matching Engine V2 (intégration) : vue minimale
+// d'une ProfilCompetence + sa preuve principale, construite par l'appelant
+// (voir app/api/talent/demandes/[id]/matching/route.ts) à partir d'une seule
+// requête groupée — ce module reste indépendant de Prisma. `statut`/
+// `confiance` viennent tels quels de lib/talent/skill-graph.ts (jamais
+// redéfinis ici) ; `provenancePrincipale` est la source de la preuve la plus
+// récente (ex: "CV", "PROFIL", "ADMIN"), donnée réelle, jamais inventée.
+export type CompetenceGraphPourMatching = {
+  competence: string;
+  statut: StatutPreuveCompetence;
+  niveau: number | null;
+  confiance: NiveauConfiance;
+  anneesExperience: number | null;
+  contexte: string | null;
+  provenancePrincipale: string | null;
+};
+
 export type ProfilPourMatching = {
   id: string;
   competences: string[];
@@ -26,6 +45,13 @@ export type ProfilPourMatching = {
   tjmEstime: number | null;
   anneesExperience?: number | null; // Profil.anneesExperience (lib/analyse-profil.ts)
   paysResidence?: string | null; // Profil.paysResidence (lib/localisation.ts) — proxy de localisation, pas une ville
+  // Optionnel et rétrocompatible : quand absent ou vide (profil pour lequel
+  // le Skill Graph n'a jamais été calculé, voir POST
+  // /api/profils/[id]/competences), le critère "compétences" retombe
+  // silencieusement sur `competences` ci-dessus — comportement V1/V2
+  // strictement inchangé. Quand présent, source de vérité pour ce critère
+  // (voir competencesPourScoring ci-dessous).
+  competencesGraph?: CompetenceGraphPourMatching[];
 };
 
 export type CriteresDemande = {
@@ -125,7 +151,27 @@ function contientImmediat(texte: string | null | undefined): boolean {
 // --- Facteurs déjà présents en V1 (compétences, séniorité, disponibilité,
 // budget), enrichis avec statut/valeurs mais logique de points conservée. ---
 
-function scoreCompetences(recherchees: string[], possedees: string[]): FacteurScore {
+// Explique chaque compétence retenue avec les données RÉELLES du Skill
+// Graph quand elles existent (niveau/contexte/statut/provenance) — jamais
+// une phrase fabriquée : si `details` est absent/vide (pas de Skill Graph
+// calculé pour ce profil, voir competencesPourScoring), on retombe sur le
+// comportement historique (simple liste de noms), sans aucun changement
+// pour les profils sans Skill Graph.
+function detailCompetences(communes: string[], details: Map<string, CompetenceGraphPourMatching> | undefined): string {
+  if (!details || details.size === 0) return communes.join(", ");
+  return communes
+    .map((c) => {
+      const info = details.get(c);
+      if (!info) return c; // ne devrait pas arriver : `communes` dérive de ce même graphe
+      const niveau = info.niveau != null ? `niveau ${info.niveau}` : "niveau non déterminé";
+      const contexte = info.contexte ? `, ${info.contexte}` : "";
+      const provenance = info.provenancePrincipale ? `, preuve : ${info.provenancePrincipale}` : "";
+      return `${c} (${niveau}${contexte}, statut ${info.statut}${provenance})`;
+    })
+    .join(" ; ");
+}
+
+function scoreCompetences(recherchees: string[], possedees: string[], details?: Map<string, CompetenceGraphPourMatching>): FacteurScore {
   const base = { label: "Compétences", poidsPct: POIDS.competences * 100, valeurDemandee: recherchees.join(", ") || "non précisées" };
   if (recherchees.length === 0) {
     return { ...base, points: 60, statut: "INSUFFISANT", valeurObservee: possedees.join(", ") || "aucune", detail: "Aucune compétence spécifiée dans la demande" };
@@ -135,9 +181,28 @@ function scoreCompetences(recherchees: string[], possedees: string[]): FacteurSc
   const statut: StatutFacteur = communes.length === recherchees.length ? "MATCH" : "PARTIEL";
   const detail =
     communes.length > 0
-      ? `${communes.length}/${recherchees.length} compétence(s) recherchée(s) : ${communes.join(", ")}`
+      ? `${communes.length}/${recherchees.length} compétence(s) recherchée(s) : ${detailCompetences(communes, details)}`
       : "Aucune compétence recherchée trouvée sur ce profil";
   return { ...base, points, statut, valeurObservee: possedees.join(", ") || "aucune", detail };
+}
+
+// Dérive l'ensemble des compétences à utiliser pour le scoring du critère
+// "compétences", et le détail par compétence pour l'explication.
+// RÈGLE DE COMPATIBILITÉ : si `competencesGraph` est absent ou vide (Skill
+// Graph jamais calculé pour ce profil), repli STRICT et silencieux sur
+// `profil.competences` — comportement V1/V2 historique inchangé au bit près.
+// Quand présent, seules les compétences VERIFIE/DECLARE comptent comme
+// "possédées" (réutilise versCompetencesPourMatching de
+// lib/talent/skill-graph.ts telle quelle, jamais dupliquée ni réécrite ici) :
+// une compétence INFERE (IA) ou INCONNUE n'est donc jamais traitée comme un
+// fait établi pour le score, même si elle apparaît dans le Skill Graph.
+function competencesPourScoring(profil: ProfilPourMatching): { noms: string[]; details: Map<string, CompetenceGraphPourMatching> } {
+  if (!profil.competencesGraph || profil.competencesGraph.length === 0) {
+    return { noms: profil.competences, details: new Map() };
+  }
+  const noms = versCompetencesPourMatching(profil.competencesGraph);
+  const details = new Map(profil.competencesGraph.map((c) => [c.competence, c]));
+  return { noms, details };
 }
 
 function scoreSeniorite(souhaitee: string | null, reelle: string | null): FacteurScore {
@@ -294,7 +359,8 @@ function statutGlobal(score: number, bloquants: string[], partFacteursConnus: nu
 }
 
 export function scorerProfil(profil: ProfilPourMatching, criteres: CriteresDemande): ResultatMatching {
-  const competences = scoreCompetences(criteres.competencesRecherchees, profil.competences);
+  const { noms: competencesEffectives, details: detailsSkillGraph } = competencesPourScoring(profil);
+  const competences = scoreCompetences(criteres.competencesRecherchees, competencesEffectives, detailsSkillGraph);
   const seniorite = scoreSeniorite(criteres.senioriteSouhaitee, profil.seniorite);
   const experience = scoreExperience(criteres.anneesExperienceMin, profil.anneesExperience);
   const secteur = scoreSecteur(criteres.secteurActivite);
