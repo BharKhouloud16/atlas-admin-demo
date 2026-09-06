@@ -47,9 +47,16 @@ export async function GET(req: NextRequest) {
     joursTravailles: feuille.joursTravailles,
     heuresSupplementaires: feuille.heuresSupplementaires,
     tjmVente: feuille.mission.tjmVente,
+    // Devise réelle de la mission (Mission.deviseVente, ajouté suite à
+    // l'audit du 06/09, P1-01) — jusqu'ici genererFacturePdf recevait
+    // toujours son défaut "EUR" quelle que soit la mission. Aucune
+    // conversion : on transmet tel quel le montant et son code devise.
+    deviseTjm: feuille.mission.deviseVente,
   });
 
-  return new NextResponse(pdfBytes, {
+  // new Uint8Array(...) : voir le commentaire équivalent dans
+  // app/api/ingenieur/cv/export-pdf/route.ts.
+  return new NextResponse(new Uint8Array(pdfBytes), {
     headers: {
       "Content-Type": "application/pdf",
       "X-Content-Type-Options": "nosniff",
