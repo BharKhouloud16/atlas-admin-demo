@@ -571,6 +571,16 @@ model SkillEvidence {
   profilCompetenceId String
   source             SourcePreuveCompetence
   detail             String?                // court, factuel (ex: extrait InfoCV), jamais généré/fabriqué
+  // ATLAS DYNAMIC SKILL GRAPH (batch 06/09/2026) — niveau (1-5) OBSERVÉ par
+  // CETTE preuve précise, distinct de ProfilCompetence.niveau (le niveau
+  // COURANT, toujours fixé par un Admin humain, voir PATCH
+  // .../competences/[competenceId]). Permet de reconstituer l'historique
+  // d'évolution d'un niveau dans le temps (voir niveauxHistoriques() dans
+  // lib/talent/skill-graph.ts) SANS écraser quoi que ce soit : chaque preuve
+  // reste un événement immuable. Null quand la preuve ne renseigne aucun
+  // niveau (cas de la grande majorité des preuves DECLARE/INFERE
+  // automatiques, qui n'inventent jamais un niveau).
+  niveau             Int?
   createdAt          DateTime               @default(now())
 
   @@index([profilCompetenceId])
