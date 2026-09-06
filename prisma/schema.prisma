@@ -144,6 +144,7 @@ model Client {
   missions            Mission[]
   documents           Document[]
   compte              User?     // le compte de connexion du client, une fois inscrit
+  demandesTalent      DemandeTalent[] // ATLAS TALENT (fondations, 06/09) — voir DemandeTalent
 }
 
 // Fiche interne d'un profil d'ingénieur. Créée automatiquement, vide de
@@ -243,6 +244,7 @@ model Profil {
   infosCv             InfoCV[]
   versionsCv          VersionCv[]
   compte              User?
+  shortlistEntrees    ShortlistEntree[] // ATLAS TALENT (fondations, 06/09) — voir ShortlistEntree
 }
 
 // Historique des versions du CV — "gap technique" demandé le 4 sept. À
@@ -397,4 +399,79 @@ model Hypotheses {
   fraisFreelance     Float  @default(0.08)
   overhead           Float  @default(0.15)
   margeDefaut        Float  @default(0.30)
+}
+
+// ============================================================================
+// ATLAS TALENT V1 — fondations (06/09/2026)
+// CLIENT -> DEMANDE -> ANALYSE INTELLIGENTE -> PROFIL/COMPÉTENCES -> MATCHING
+// -> SHORTLIST. Réutilise Client, Profil et lib/competences.ts existants —
+// aucune nouvelle entité "compétence" créée. L'IA (AI Request Analyzer,
+// Matching Engine) est un fournisseur de SUGGESTIONS : elle ne décide jamais
+// seule — voir StatutShortlist et lib/ai/provider.ts (abstraction
+// provider-neutre, fonctionne aussi sans aucun provider IA configuré).
+// ============================================================================
+
+enum StatutDemandeTalent {
+  SOUMISE           // créée par le Client, en attente d'analyse
+  ANALYSEE          // l'AI Request Analyzer a extrait des critères (ré-éditables)
+  EN_MATCHING       // le Matching Engine a été exécuté au moins une fois
+  SHORTLIST_ENVOYEE // shortlist validée par un Admin et transmise au client
+  CLOTUREE
+}
+
+// Une demande de talent exprimée par un Client — distincte de
+// DemandeContact (formulaire public, sans compte) : ici le Client est déjà
+// authentifié (voir middleware.ts, CLIENT_PREFIXES) et la demande est liée à
+// son Client (isolation stricte, jamais visible d'un autre Client).
+model DemandeTalent {
+  id                   String              @id @default(cuid())
+  client               Client              @relation(fields: [clientId], references: [id])
+  clientId             String
+  titre                String?
+  description          String              // besoin en texte libre — entrée de l'AI Request Analyzer
+  statut               StatutDemandeTalent @default(SOUMISE)
+
+  // Sortie de l'AI Request Analyzer (lib/talent/analyseur.ts) : toujours
+  // ré-éditable par l'Admin, jamais figée par l'IA seule (human-in-the-loop).
+  competencesExtraites String[]            @default([])
+  senioriteSouhaitee   String?             // "Junior" | "Confirmé" | "Senior" | "Expert"
+  budgetTjmMax         Float?
+  budgetDevise         String              @default("EUR")
+  dateDebutSouhaitee   DateTime?
+  analyseProvider      String?             // "local" (défaut sans clé IA) | "anthropic" | "openai" | "gemini" ...
+  analyseConfiance     Float?              // 0-1, voir lib/ai/provider.ts
+  analyseeLe           DateTime?
+
+  shortlist            ShortlistEntree[]
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  @@index([clientId])
+}
+
+enum StatutShortlist {
+  SUGGEREE // proposée par le Matching Engine, pas encore revue par un humain
+  VALIDEE  // validée par un Admin — peut être transmise au client
+  REJETEE  // écartée par un Admin
+}
+
+// Un profil proposé pour une DemandeTalent, avec le résultat du Matching
+// Engine (score/evidence/confidence) et une validation humaine explicite
+// avant tout envoi au client : l'IA ne fait jamais atterrir un profil chez
+// un client sans passage par SUGGEREE -> VALIDEE côté Admin.
+model ShortlistEntree {
+  id             String          @id @default(cuid())
+  demande        DemandeTalent   @relation(fields: [demandeId], references: [id], onDelete: Cascade)
+  demandeId      String
+  profil         Profil          @relation(fields: [profilId], references: [id])
+  profilId       String
+  score          Float           // 0-100, voir lib/talent/matching.ts
+  confiance      Float           // 0-1
+  motifs         Json            // evidence : [{critere, poids, detail}, ...] — jamais une boîte noire
+  statut         StatutShortlist @default(SUGGEREE)
+  valideParEmail String?         // email de l'Admin ayant validé/rejeté (traçabilité)
+  valideLe       DateTime?
+  createdAt      DateTime        @default(now())
+
+  @@unique([demandeId, profilId])
 }
