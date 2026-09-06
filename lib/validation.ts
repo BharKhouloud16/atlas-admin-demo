@@ -68,3 +68,20 @@ export const demandeTalentSchema = z.object({
   budgetDevise: z.string().trim().toUpperCase().length(3).optional(),
   dateDebutSouhaitee: z.string().datetime().optional(),
 });
+
+// "Critères de matching" d'une DemandeTalent — révision par l'Admin avant
+// de lancer le Matching Engine (voir PATCH /api/talent/demandes/[id]).
+// Réservé à l'Admin (jamais au Client, voir la route) ; tous les champs
+// sont optionnels pour permettre une mise à jour partielle, mais chaque
+// valeur fournie reste strictement bornée comme toute entrée utilisateur.
+export const criteresTalentSchema = z.object({
+  competencesExtraites: z.array(z.string().trim().min(1).max(80)).max(30).optional(),
+  senioriteSouhaitee: z.string().trim().max(50).nullable().optional(),
+  anneesExperienceMin: z.number().int().min(0).max(60).nullable().optional(),
+  secteurActivite: z.string().trim().max(200).nullable().optional(),
+  localisation: z.string().trim().max(200).nullable().optional(),
+  mobilite: z.string().trim().max(100).nullable().optional(),
+  disponibiliteSouhaitee: z.string().trim().max(100).nullable().optional(),
+  budgetTjmMax: z.number().positive().max(100000).nullable().optional(),
+  budgetDevise: z.string().trim().toUpperCase().length(3).optional(),
+});
