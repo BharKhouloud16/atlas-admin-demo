@@ -1,6 +1,7 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
-import { bordure, fondClair, grisTexte } from "@/lib/theme";
+import { bleu, bordure, fondClair, grisTexte } from "@/lib/theme";
 import LogoAtlas from "@/components/LogoAtlas";
 import BoutonDeconnexion from "@/components/BoutonDeconnexion";
 
@@ -29,7 +30,15 @@ export default async function ClientLayout({ children }: { children: React.React
             Espace Partenaire
           </span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+          <nav style={{ display: "flex", gap: 16 }}>
+            <Link href="/client" style={{ fontSize: 13, color: grisTexte, textDecoration: "none" }}>
+              Missions
+            </Link>
+            <Link href="/client/talent" style={{ fontSize: 13, color: bleu, textDecoration: "none", fontWeight: 600 }}>
+              Talent
+            </Link>
+          </nav>
           <span style={{ fontSize: 13, color: grisTexte }}>{session.email}</span>
           <BoutonDeconnexion />
         </div>
