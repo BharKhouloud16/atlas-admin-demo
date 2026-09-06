@@ -29,6 +29,12 @@ const CLIENT_PREFIXES = ["/client", "/api/client/"];
 // et explicitement ajoutés aux listes autorisées de INGENIEUR et CLIENT
 // sans passer par CLIENT_PREFIXES (qui déclenche le blocage ADMIN ci-dessous).
 const SHARED_PREFIXES = ["/api/feuilles-de-temps", "/api/evaluations"];
+// ATLAS TALENT V1 (fondations, 06/09) — réservé à CLIENT (sa propre
+// DemandeTalent) et ADMIN (matching/shortlist) ; jamais l'INGENIEUR. Chaque
+// route vérifie aussi elle-même le rôle exact (voir
+// app/api/talent/demandes/*) — cette liste ne fait que laisser passer le
+// middleware, la défense en profondeur reste dans la route.
+const TALENT_PREFIXES = ["/api/talent"];
 
 // Vérifie le token avec le secret courant, puis l'ancien si une rotation de
 // SESSION_SECRET est en cours (voir lib/session-secret.ts) — jose lève une
@@ -53,7 +59,7 @@ export async function middleware(req: NextRequest) {
      pathname.startsWith("/api/clients") || pathname.startsWith("/api/profils") ||
      pathname.startsWith("/api/missions") || pathname.startsWith("/api/generate-contract") ||
      pathname.startsWith("/api/comptes") || pathname.startsWith("/api/client") || pathname.startsWith("/api/ingenieur") ||
-     SHARED_PREFIXES.some((p) => pathname.startsWith(p)));
+     SHARED_PREFIXES.some((p) => pathname.startsWith(p)) || TALENT_PREFIXES.some((p) => pathname.startsWith(p)));
 
   if (!isProtected) return NextResponse.next();
 
@@ -68,7 +74,9 @@ export async function middleware(req: NextRequest) {
       const allowed =
         pathname === "/admin"
           ? false
-          : CLIENT_PREFIXES.some((p) => pathname.startsWith(p)) || SHARED_PREFIXES.some((p) => pathname.startsWith(p));
+          : CLIENT_PREFIXES.some((p) => pathname.startsWith(p)) ||
+            SHARED_PREFIXES.some((p) => pathname.startsWith(p)) ||
+            TALENT_PREFIXES.some((p) => pathname.startsWith(p));
       if (!allowed) return redirectToLogin(req, "/client");
     }
 
@@ -77,6 +85,9 @@ export async function middleware(req: NextRequest) {
         pathname === "/admin" ||
         INGENIEUR_PREFIXES.some((p) => pathname.startsWith(p)) ||
         SHARED_PREFIXES.some((p) => pathname.startsWith(p));
+      // ATLAS TALENT n'est volontairement pas dans SHARED_PREFIXES ni ici :
+      // un Ingénieur n'a jamais accès à /api/talent (ni côté Client, ni
+      // matching/shortlist réservé Admin).
       if (!allowed) return redirectToLogin(req, "/admin/missions");
 
       // Compte temporairement désactivé par l'ingénieur lui-même (voir
@@ -127,5 +138,6 @@ export const config = {
     "/api/ingenieur/:path*",
     "/api/feuilles-de-temps/:path*",
     "/api/evaluations/:path*",
+    "/api/talent/:path*",
   ],
 };
