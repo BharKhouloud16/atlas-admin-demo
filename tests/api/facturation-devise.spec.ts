@@ -20,7 +20,9 @@ async function connecter(request: APIRequestContext, email: string, password = "
 async function idProfilIngenieurDemo(request: APIRequestContext): Promise<string> {
   const reponse = await request.get("/api/profils");
   expect(reponse.ok()).toBeTruthy();
-  const profils = await reponse.json();
+  // GET /api/profils renvoie { profils, nombreDesactives }, pas un tableau
+  // brut (voir app/api/profils/route.ts).
+  const { profils } = await reponse.json();
   // Deux profils existent dans le seed ("Ingénieur Démo" et "Nouvel
   // Ingénieur (test)", en attente) — on prend explicitement le premier par
   // son nom plutôt que le premier de la liste (triée par date de création
