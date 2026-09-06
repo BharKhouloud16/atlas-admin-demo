@@ -39,6 +39,10 @@ export type PreuvePourConfiance = {
   source: SourcePreuveCompetence;
   detail: string | null;
   createdAt: Date;
+  // ATLAS DYNAMIC SKILL GRAPH — niveau (1-5) observé par CETTE preuve
+  // précise (voir SkillEvidence.niveau) ; optionnel et null pour la grande
+  // majorité des preuves automatiques, qui n'en portent jamais.
+  niveau?: number | null;
 };
 
 export type ProfilCompetencePourConfiance = {
@@ -96,7 +100,17 @@ function joursDepuis(date: Date, maintenant: Date): number {
   return Math.floor((maintenant.getTime() - date.getTime()) / MS_PAR_JOUR);
 }
 
+// Seuil simple et documenté (pas une politique complexe) : deux niveaux
+// observés qui s'écartent de plus d'UN point (ex: niveau 4 puis niveau 2)
+// sont traités comme une divergence à signaler — jamais comme une preuve
+// que quelqu'un "ment", seulement une information à vérifier (NEEDS REVIEW).
+const ECART_NIVEAU_DIVERGENT = 1;
+
 // Cohérence observable (voir limite documentée en tête de fichier) :
+// - au moins deux preuves portent un niveau observé qui diverge de plus de
+//   ECART_NIVEAU_DIVERGENT points -> INCOHERENTE (évolution réelle possible,
+//   mais aussi potentiellement une divergence à faire trancher par un Admin
+//   — les DEUX preuves restent conservées, aucune n'est supprimée)
 // - aucune preuve du tout alors qu'un statut autre qu'INCONNU est affirmé
 //   -> INCOHERENTE (affirmation sans preuve tracée, terme neutre, jamais
 //      "mensonge" — peut simplement venir d'une donnée historique ou d'une
@@ -105,6 +119,12 @@ function joursDepuis(date: Date, maintenant: Date): number {
 // - une seule source, ou aucune preuve avec statut INCONNU -> NON_VERIFIABLE
 //   (rien à comparer, ce n'est pas une anomalie)
 function evaluerCoherence(competence: ProfilCompetencePourConfiance): CoherencePreuve {
+  const niveauxObserves = competence.preuves.map((p) => p.niveau).filter((n): n is number => n != null);
+  if (niveauxObserves.length >= 2) {
+    const ecart = Math.max(...niveauxObserves) - Math.min(...niveauxObserves);
+    if (ecart > ECART_NIVEAU_DIVERGENT) return "INCOHERENTE";
+  }
+
   const sourcesDistinctes = new Set(competence.preuves.map((p) => p.source));
   if (competence.preuves.length === 0) {
     return competence.statut === "INCONNU" ? "NON_VERIFIABLE" : "INCOHERENTE";
@@ -175,6 +195,15 @@ function construireExplication(
   nombrePreuves: number
 ): string {
   if (coherence === "INCOHERENTE") {
+    // Deux sous-cas réels, jamais confondus : divergence de niveaux observés
+    // (des preuves EXISTENT, voir ci-dessous) vs absence totale de preuve.
+    // Vocabulaire neutre dans les deux cas — jamais "ment"/"mensonge".
+    const niveauxObserves = competence.preuves.map((p) => p.niveau).filter((n): n is number => n != null);
+    if (niveauxObserves.length >= 2) {
+      const min = Math.min(...niveauxObserves);
+      const max = Math.max(...niveauxObserves);
+      return `Confiance ${confiance} : niveaux observés divergents entre preuves (${min} à ${max}) — à vérifier, évolution réelle possible.`;
+    }
     return `Confiance ${confiance} : statut ${competence.statut} enregistré mais aucune preuve associée retrouvée — à vérifier.`;
   }
   if (competence.statut === "INCONNU") {

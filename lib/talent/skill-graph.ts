@@ -34,7 +34,11 @@ export type StatutPreuveCompetence = "VERIFIE" | "DECLARE" | "INFERE" | "INCONNU
 export type NiveauConfiance = "HAUTE" | "MOYENNE" | "BASSE";
 export type SourcePreuveCompetence = "CV" | "PROFIL" | "CERTIFICATION" | "MISSION" | "EVALUATION" | "ASSESSMENT" | "ADMIN";
 
-export type PreuveEntree = { source: SourcePreuveCompetence; detail: string | null };
+// `niveau` (1-5) est optionnel et vaut null pour toute preuve automatique
+// (DECLARE/INFERE) — voir la règle absolue en tête de fichier : seule une
+// preuve saisie par un Admin humain (via PATCH .../competences/[id] ou POST
+// .../competences/[id]/preuves) peut porter un niveau observé.
+export type PreuveEntree = { source: SourcePreuveCompetence; detail: string | null; niveau?: number | null };
 
 // Une entrée candidate pour ProfilCompetence, avant fusion avec l'état
 // existant en base (voir fusionnerCompetence) — jamais persistée directement
@@ -158,4 +162,21 @@ export function fusionnerCompetence(
 // Matching Engine pour cette étape.
 export function versCompetencesPourMatching(competencesGraph: { competence: string; statut: StatutPreuveCompetence }[]): string[] {
   return competencesGraph.filter((c) => c.statut === "VERIFIE" || c.statut === "DECLARE").map((c) => c.competence);
+}
+
+// ATLAS DYNAMIC SKILL GRAPH — reconstitue l'évolution d'un niveau dans le
+// temps à partir des preuves qui en portent un (voir SkillEvidence.niveau,
+// prisma/schema.prisma) : CURRENT LEVEL reste ProfilCompetence.niveau
+// (toujours fixé par un Admin) ; HISTORICAL LEVELS est cette liste
+// chronologique, purement dérivée, jamais persistée séparément — aucune
+// preuve n'est jamais modifiée ou supprimée pour la produire. Une preuve
+// sans niveau (la grande majorité) est simplement ignorée ici, jamais
+// remplacée par une valeur inventée.
+export type NiveauHistorique = { niveau: number; source: SourcePreuveCompetence; date: string };
+
+export function niveauxHistoriques(preuves: { niveau: number | null; source: SourcePreuveCompetence; createdAt: Date }[]): NiveauHistorique[] {
+  return preuves
+    .filter((p): p is { niveau: number; source: SourcePreuveCompetence; createdAt: Date } => p.niveau != null)
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+    .map((p) => ({ niveau: p.niveau, source: p.source, date: p.createdAt.toISOString() }));
 }
