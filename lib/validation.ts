@@ -85,3 +85,19 @@ export const criteresTalentSchema = z.object({
   budgetTjmMax: z.number().positive().max(100000).nullable().optional(),
   budgetDevise: z.string().trim().toUpperCase().length(3).optional(),
 });
+
+// ATLAS SKILL GRAPH V1 — correction explicite d'une ProfilCompetence par un
+// Admin (voir PATCH /api/profils/[id]/competences/[competenceId]). C'est la
+// SEULE voie légitime pour fixer un niveau (1-5) ou passer une compétence en
+// statut VERIFIE : jamais l'IA, jamais un recalcul automatique (voir
+// lib/talent/skill-graph.ts). "detail" documente la preuve humaine (ex:
+// "confirmé en entretien technique") — jamais fabriqué si l'Admin ne
+// renseigne rien.
+export const corrigerCompetenceSchema = z.object({
+  statut: z.enum(["VERIFIE", "DECLARE", "INFERE", "INCONNU"]),
+  niveau: z.number().int().min(1).max(5).nullable().optional(),
+  anneesExperience: z.number().int().min(0).max(60).nullable().optional(),
+  contexte: z.string().trim().max(200).nullable().optional(),
+  secteur: z.string().trim().max(200).nullable().optional(),
+  detail: z.string().trim().max(300).nullable().optional(),
+});
