@@ -24,13 +24,30 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
   // un client (même règle que /admin/profils).
   const profils = await prisma.profil.findMany({
     where: { cvValide: true },
-    select: { id: true, competences: true, seniorite: true, disponibilite: true, cvValide: true, tjmEstime: true },
+    select: {
+      id: true,
+      competences: true,
+      seniorite: true,
+      disponibilite: true,
+      cvValide: true,
+      tjmEstime: true,
+      anneesExperience: true,
+      paysResidence: true,
+    },
   });
 
+  // Les critères de la DemandeTalent (voir PATCH /api/talent/demandes/[id])
+  // sont la source de vérité du matching — c'est l'Admin qui les a vérifiés/
+  // corrigés avant de lancer ce calcul (voir /admin/talent/[id]).
   const classement = classerProfils(profils as ProfilPourMatching[], {
     competencesRecherchees: demande.competencesExtraites,
     senioriteSouhaitee: demande.senioriteSouhaitee,
     budgetTjmMax: demande.budgetTjmMax,
+    anneesExperienceMin: demande.anneesExperienceMin,
+    secteurActivite: demande.secteurActivite,
+    localisation: demande.localisation,
+    mobilite: demande.mobilite,
+    disponibiliteSouhaitee: demande.disponibiliteSouhaitee,
   });
 
   // Ne retient que le top 10 en shortlist candidate — le Matching Engine
