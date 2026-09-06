@@ -38,6 +38,12 @@ jobs:
       DATABASE_URL: postgresql://atlas:atlas@localhost:5432/atlas_ci
       SESSION_SECRET: ci-secret-uniquement-pour-les-tests-jamais-en-production
       SEED_TOKEN: ci-secret-uniquement-pour-les-tests
+      # Toutes les requêtes de test partagent la même IP locale ("inconnue",
+      # voir lib/rate-limit.ts) : sans ce relèvement, la suite API+E2E
+      # complète (bien plus de 20 connexions au total) déclenche le
+      # rate-limiting anti-bruteforce prévu pour de vrais visiteurs distincts
+      # en production, où ce seuil reste à 20 (défaut de lib/rate-limit.ts).
+      RATE_LIMIT_LOGIN_MAX_IP: "500"
 
     steps:
       - uses: actions/checkout@v4
