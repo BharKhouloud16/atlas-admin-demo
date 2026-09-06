@@ -137,11 +137,19 @@ test.describe("Candidate Intelligence V1 (lib/talent/candidate-intelligence)", (
     expect(r.evaluations.moyenne).toBe(4.5);
   });
 
-  test("11. compétences avec preuve faible : signalées séparément (confiance BASSE/INCONNUE ou cohérence non COHERENTE)", () => {
+  test("11. compétences avec preuve faible : signalées séparément (confiance BASSE/INCONNUE ou cohérence INCOHERENTE)", () => {
     const profil = profilVide();
     profil.competencesGraph = [{ competence: "Rust", statut: "DECLARE", niveau: null, confiance: "MOYENNE", contexte: null, preuves: [] }];
     const r = construireCandidateIntelligence(profil, MAINTENANT);
     expect(r.competences.preuvesFaibles.map((c) => c.competence)).toContain("Rust");
+  });
+
+  test("11bis. une compétence VERIFIE avec une seule preuve ADMIN n'est PAS une preuve faible (NON_VERIFIABLE ≠ faible)", () => {
+    const profil = profilVide();
+    profil.competencesGraph = [{ competence: "Java", statut: "VERIFIE", niveau: 4, confiance: "HAUTE", contexte: null, preuves: [preuve("ADMIN", 10, 4)] }];
+    const r = construireCandidateIntelligence(profil, MAINTENANT);
+    expect(r.competences.preuvesFaibles.map((c) => c.competence)).not.toContain("Java");
+    expect(r.competences.verifiees.map((c) => c.competence)).toContain("Java");
   });
 
   test("12. compétences récentes vs historiques : distinguées selon la fraîcheur de la preuve la plus récente", () => {
