@@ -433,14 +433,31 @@ model DemandeTalent {
 
   // Sortie de l'AI Request Analyzer (lib/talent/analyseur.ts) : toujours
   // ré-éditable par l'Admin, jamais figée par l'IA seule (human-in-the-loop).
-  competencesExtraites String[]            @default([])
+  // Champs "critères de matching" — voir PATCH /api/talent/demandes/[id] et
+  // la zone "Critères de matching" de /admin/talent/[id]. Ce sont ces
+  // valeurs (pas la description brute) que lit le Matching Engine (voir
+  // POST .../matching) : les modifier avant de lancer le matching change
+  // directement son résultat, sans code supplémentaire côté matching.
+  competencesExtraites String[]            @default([]) // compétences ET technologies recherchées (un seul champ, pas de doublon)
   senioriteSouhaitee   String?             // "Junior" | "Confirmé" | "Senior" | "Expert"
+  anneesExperienceMin  Int?                // années d'expérience minimum souhaitées, si précisé
+  secteurActivite      String?            // secteur / contexte métier de la mission
+  localisation         String?            // ville/zone de la mission
+  mobilite             String?             // "Remote" | "Hybride" | "Sur site" | texte libre
+  disponibiliteSouhaitee String?           // ex. "Immédiate", "Sous 1 mois"
   budgetTjmMax         Float?
   budgetDevise         String              @default("EUR")
   dateDebutSouhaitee   DateTime?
   analyseProvider      String?             // "local" (défaut sans clé IA) | "anthropic" | "openai" | "gemini" ...
   analyseConfiance     Float?              // 0-1, voir lib/ai/provider.ts
   analyseeLe           DateTime?
+
+  // Traçabilité de la dernière modification manuelle des critères par un
+  // Admin (voir PATCH .../route.ts) — le détail avant/après va dans
+  // JournalActivite (lib/audit.ts), ces deux champs ne gardent que le
+  // "qui/quand" le plus récent directement sur la demande.
+  criteresModifiesParEmail String?
+  criteresModifiesLe       DateTime?
 
   shortlist            ShortlistEntree[]
   createdAt            DateTime            @default(now())
