@@ -245,6 +245,7 @@ model Profil {
   versionsCv          VersionCv[]
   compte              User?
   shortlistEntrees    ShortlistEntree[] // ATLAS TALENT (fondations, 06/09) — voir ShortlistEntree
+  competencesGraph    ProfilCompetence[] // ATLAS SKILL GRAPH V1 (06/09) — voir ProfilCompetence
 }
 
 // Historique des versions du CV — "gap technique" demandé le 4 sept. À
@@ -491,4 +492,86 @@ model ShortlistEntree {
   createdAt      DateTime        @default(now())
 
   @@unique([demandeId, profilId])
+}
+
+// ATLAS SKILL GRAPH V1 (fondations, 06/09) — représentation structurée
+// d'une compétence de Profil, au-delà du simple Profil.competences: string[]
+// déclaratif. Objectif : pouvoir un jour répondre "pourquoi je crois que ce
+// profil sait faire Playwright ?" plutôt qu'un simple booléen. Volontairement
+// SANS Neo4j/moteur de graphe externe pour cette V1 — un modèle Prisma/
+// PostgreSQL classique suffit (un "graphe" à 2 sauts Profil -> Competence ->
+// Preuve n'a pas besoin d'un moteur dédié). Ne remplace PAS
+// Profil.competences (toujours utilisé par lib/talent/matching.ts
+// inchangé) : vient en complément, avec provenance et confiance.
+//
+// IMPORTANT — ne jamais fabriquer de preuve : une ligne n'est créée ici que
+// lorsqu'une source réelle existe (Profil.competences coché par l'ingénieur,
+// ou InfoCV validée, ou correction explicite d'un Admin) — voir
+// lib/talent/skill-graph.ts, aucune génération de données fictives.
+enum StatutPreuveCompetence {
+  VERIFIE  // confirmé explicitement par un humain (Admin) — le seul niveau qui doit inspirer confiance forte
+  DECLARE  // déclaré par l'ingénieur lui-même (ex: case cochée dans son profil), non vérifié
+  INFERE   // déduit par l'IA (AiProvider) à partir d'un texte libre (CV/InfoCV) — jamais présenté comme vérifié
+  INCONNU  // statut/niveau non déterminable avec les données actuelles
+}
+
+enum NiveauConfiance {
+  HAUTE
+  MOYENNE
+  BASSE
+}
+
+// Source d'une preuve de compétence — liste volontairement large (au-delà de
+// ce que la V1 sait réellement peupler automatiquement, voir
+// lib/talent/skill-graph.ts) pour ne pas avoir à migrer le schéma dès qu'un
+// prochain incrément branche les missions/évaluations/certifications.
+enum SourcePreuveCompetence {
+  CV
+  PROFIL
+  CERTIFICATION
+  MISSION
+  EVALUATION
+  ASSESSMENT
+  ADMIN
+}
+
+// Une compétence structurée pour un Profil donné : niveau/expérience/
+// contexte quand connus, jamais fabriqués (null = non déterminable, voir
+// statut=INCONNU côté niveau). `competence` reste une chaîne (comme
+// Profil.competences) plutôt qu'une table de référence séparée : la liste
+// fermée existe déjà en code (lib/competences.ts, TOUTES_COMPETENCES), pas
+// besoin d'un catalogue supplémentaire en base pour cette V1.
+model ProfilCompetence {
+  id               String                 @id @default(cuid())
+  profil           Profil                 @relation(fields: [profilId], references: [id], onDelete: Cascade)
+  profilId         String
+  competence       String
+  niveau           Int?                   // 1-5, null si non déterminable (voir statut) — jamais inventé par l'IA
+  anneesExperience Int?
+  contexte         String?                // ex: "QA Automation" — texte court, quand la source le précise
+  secteur          String?                // ex: "Banque" — idem
+  statut           StatutPreuveCompetence @default(INCONNU)
+  confiance        NiveauConfiance        @default(BASSE)
+  preuves          SkillEvidence[]
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  @@unique([profilId, competence])
+  @@index([profilId])
+}
+
+// Preuve individuelle appuyant une ProfilCompetence — une compétence peut
+// accumuler plusieurs preuves dans le temps (ex: déclarée ET retrouvée dans
+// le CV) sans jamais se substituer l'une à l'autre : voir
+// lib/talent/skill-graph.ts qui ne fait jamais régresser un statut VERIFIE
+// vers DECLARE/INFERE lors d'une reconstruction.
+model SkillEvidence {
+  id                 String                 @id @default(cuid())
+  profilCompetence   ProfilCompetence       @relation(fields: [profilCompetenceId], references: [id], onDelete: Cascade)
+  profilCompetenceId String
+  source             SourcePreuveCompetence
+  detail             String?                // court, factuel (ex: extrait InfoCV), jamais généré/fabriqué
+  createdAt          DateTime               @default(now())
+
+  @@index([profilCompetenceId])
 }
