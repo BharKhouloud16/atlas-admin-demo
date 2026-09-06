@@ -73,4 +73,28 @@ test.describe("ATLAS TALENT — critères de matching (révision Admin)", () => 
     expect(relue.competencesExtraites).toEqual(["Kubernetes", "Terraform"]);
     expect(relue.senioriteSouhaitee).toBe("Expert");
   });
+
+  test("le Matching Engine V2 (score/motifs/TJM interne) n'est jamais exposé au Client", async ({ request }) => {
+    await connecter(request, "client-demo@example.com");
+    const creation = await request.post("/api/talent/demandes", {
+      data: { description: "Recherche un développeur Kubernetes." },
+    });
+    expect(creation.status()).toBe(201);
+    const demande = await creation.json();
+
+    // Le Client ne peut ni déclencher ni relire le matching (réservé Admin —
+    // voir app/api/talent/demandes/[id]/matching/route.ts).
+    const postMatching = await request.post(`/api/talent/demandes/${demande.id}/matching`);
+    expect(postMatching.status()).toBe(403);
+    const getMatching = await request.get(`/api/talent/demandes/${demande.id}/matching`);
+    expect(getMatching.status()).toBe(403);
+
+    // La liste des demandes vue par le Client ne contient jamais les scores,
+    // motifs ou TJM interne calculés par le Matching Engine.
+    const liste = await request.get("/api/talent/demandes");
+    const texte = await liste.text();
+    expect(texte).not.toContain("shortlist");
+    expect(texte).not.toContain("motifs");
+    expect(texte).not.toContain("tjmEstime");
+  });
 });
