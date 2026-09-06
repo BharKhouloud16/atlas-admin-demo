@@ -1,5 +1,5 @@
 import { SignJWT, jwtVerify } from "jose";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { secretCourant, secretsVerification } from "@/lib/session-secret";
 
 const COOKIE_NAME = "atlas_session";
@@ -20,9 +20,22 @@ export async function createSession(user: SessionUser) {
     .setExpirationTime(SESSION_DURATION)
     .sign(secretCourant);
 
+  // "secure" doit refléter le protocole réel, pas seulement NODE_ENV : `next
+  // start` (utilisé en CI et par Playwright, voir playwright.config.ts) tourne
+  // toujours en NODE_ENV=production même en http://localhost, donc
+  // `secure: NODE_ENV === "production"` posait un cookie Secure sur une
+  // connexion http — Chrome (les tests e2e Playwright, un vrai navigateur)
+  // refuse alors de le stocker/renvoyer, contrairement à APIRequestContext
+  // (tests/api) qui n'applique pas cette règle : d'où les 5 échecs
+  // tests/e2e/connexion.spec.ts (connexion "réussie" mais jamais de session,
+  // donc redirection immédiate vers /connexion par le middleware) alors que
+  // les mêmes comptes fonctionnaient dans tests/api. Vercel (déploiement réel)
+  // termine toujours le TLS et pose l'en-tête x-forwarded-proto: https, donc
+  // le comportement en production ne change pas.
+  const proto = headers().get("x-forwarded-proto");
   cookies().set(COOKIE_NAME, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: proto === "https",
     sameSite: "lax",
     path: "/",
     maxAge: 60 * 60 * 8, // 8h, aligné sur SESSION_DURATION
