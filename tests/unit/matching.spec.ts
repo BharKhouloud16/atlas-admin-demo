@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { scorerProfil, classerProfils, type ProfilPourMatching } from "@/lib/talent/matching";
+import { scorerProfil, classerProfils, type ProfilPourMatching, type CompetenceGraphPourMatching } from "@/lib/talent/matching";
 
 // Tests unitaires purs (pas de DB, pas de serveur) du Matching Engine —
 // ATLAS TALENT V1 fondations. Vérifie que le score reste explicable
@@ -253,5 +253,105 @@ test.describe("Matching Engine V2 — 8 facteurs", () => {
     const classement = classerProfils([partiel, parfait], criteresComplets);
     expect(classement[0].profilId).toBe(parfait.id);
     expect(classement[0].score).toBeGreaterThan(classement[1].score);
+  });
+});
+
+// ATLAS SKILL GRAPH V1 -> Matching Engine V2 (intégration, 06/09/2026) —
+// tests purs (pas de DB) de lib/talent/matching.ts avec `competencesGraph`.
+// Ne couvre QUE l'intégration : la construction du Skill Graph lui-même
+// reste testée dans tests/unit/skill-graph.spec.ts et
+// tests/api/skill-graph.spec.ts, non modifiés ici.
+test.describe("Matching Engine V2 — intégration Skill Graph V1", () => {
+  const criteresJava = { competencesRecherchees: ["Java"], senioriteSouhaitee: null, budgetTjmMax: null };
+
+  function profil(id: string, competencesGraph?: CompetenceGraphPourMatching[]): ProfilPourMatching {
+    return { id, competences: [], seniorite: null, disponibilite: null, cvValide: true, tjmEstime: null, competencesGraph };
+  }
+
+  function preuveJava(
+    statut: CompetenceGraphPourMatching["statut"],
+    provenancePrincipale: string | null = "CV"
+  ): CompetenceGraphPourMatching {
+    return {
+      competence: "Java",
+      statut,
+      confiance: statut === "VERIFIE" ? "HAUTE" : "MOYENNE",
+      niveau: statut === "VERIFIE" ? 4 : null,
+      anneesExperience: null,
+      contexte: null,
+      provenancePrincipale,
+    };
+  }
+
+  // Test 1 : une compétence VERIFIE (correction Admin) est utilisée par le
+  // Matching, et l'explication cite son statut réel — jamais une phrase
+  // fabriquée.
+  test("1. compétence Skill Graph VERIFIE : utilisée par le Matching (MATCH), explication réelle", () => {
+    const r = scorerProfil(profil("p1", [preuveJava("VERIFIE", "ADMIN")]), criteresJava);
+    expect(r.facteurs.competences.statut).toBe("MATCH");
+    expect(r.facteurs.competences.detail).toContain("VERIFIE");
+  });
+
+  // Test 2 + Test 6 : une compétence DECLARE est utilisée, son statut et sa
+  // provenance réelle (preuve) restent visibles dans l'explication — jamais
+  // présentée comme VERIFIE.
+  test("2/6. compétence DECLARE : utilisée, statut et provenance réelle conservés (jamais confondue avec VERIFIE)", () => {
+    const r = scorerProfil(profil("p2", [preuveJava("DECLARE", "PROFIL")]), criteresJava);
+    expect(r.facteurs.competences.statut).toBe("MATCH");
+    expect(r.facteurs.competences.detail).toContain("DECLARE");
+    expect(r.facteurs.competences.detail).not.toContain("VERIFIE");
+    expect(r.facteurs.competences.detail).toContain("preuve : PROFIL");
+  });
+
+  // Test 3 : une compétence INFERE (simple suggestion IA) n'est jamais
+  // traitée comme un fait établi pour le score — distincte de VERIFIE/DECLARE.
+  test("3. compétence INFERE : jamais comptée comme acquise (distincte de VERIFIE/DECLARE)", () => {
+    const r = scorerProfil(profil("p3", [preuveJava("INFERE")]), criteresJava);
+    expect(r.facteurs.competences.statut).not.toBe("MATCH");
+    expect(r.facteurs.competences.valeurObservee).toBe("aucune");
+  });
+
+  // Test 4 : une entrée INCONNU (statut/niveau non déterminable) ne devient
+  // jamais une compétence certaine.
+  test("4. compétence INCONNU : ne devient jamais une compétence certaine", () => {
+    const r = scorerProfil(profil("p4", [preuveJava("INCONNU")]), criteresJava);
+    expect(r.facteurs.competences.statut).not.toBe("MATCH");
+    expect(r.facteurs.competences.valeurObservee).toBe("aucune");
+  });
+
+  // Test 5 + Test 8 : un profil SANS Skill Graph (champ absent, pas même un
+  // tableau vide) retombe exactement sur le comportement Matching V2 actuel
+  // — aucune régression, aucun crash.
+  test("5/8. profil sans Skill Graph (champ absent) : comportement Matching V2 historique inchangé", () => {
+    const ancienStyle: ProfilPourMatching = { id: "p5", competences: ["Java"], seniorite: null, disponibilite: null, cvValide: true, tjmEstime: null };
+    const r = scorerProfil(ancienStyle, criteresJava);
+    expect(r.facteurs.competences.statut).toBe("MATCH");
+    expect(r.facteurs.competences.detail).toBe("1/1 compétence(s) recherchée(s) : Java");
+  });
+
+  // Test 7 : deux profils strictement identiques (mêmes données Skill Graph)
+  // obtiennent exactement le même score — déterminisme préservé.
+  test("7. deux profils identiques (Skill Graph inclus) obtiennent le même score", () => {
+    const graph = [preuveJava("VERIFIE", "ADMIN")];
+    const rA = scorerProfil(profil("p6a", graph), criteresJava);
+    const rB = scorerProfil(profil("p6b", graph), criteresJava);
+    expect(rA.score).toBe(rB.score);
+    expect(rA.statut).toBe(rB.statut);
+  });
+
+  // Test 9 + Test 10 : plusieurs candidats évalués ensemble, chacun avec son
+  // propre Skill Graph (ou aucun) — jamais de mélange entre profils, chacun
+  // ne voit que ses propres compétences.
+  test("9/10. plusieurs candidats : isolation stricte, aucune donnée Skill Graph d'un autre profil n'est utilisée", () => {
+    const profilA = profil("p7a", [preuveJava("VERIFIE", "ADMIN")]); // possède Java
+    const profilB = profil("p7b", [{ ...preuveJava("VERIFIE", "ADMIN"), competence: "Python" }]); // ne possède PAS Java
+    const profilC = profil("p7c"); // pas de Skill Graph du tout
+
+    const classement = classerProfils([profilA, profilB, profilC], criteresJava);
+    const parId = Object.fromEntries(classement.map((r) => [r.profilId, r]));
+
+    expect(parId["p7a"].facteurs.competences.statut).toBe("MATCH");
+    expect(parId["p7b"].facteurs.competences.statut).not.toBe("MATCH");
+    expect(parId["p7c"].facteurs.competences.statut).not.toBe("MATCH");
   });
 });
