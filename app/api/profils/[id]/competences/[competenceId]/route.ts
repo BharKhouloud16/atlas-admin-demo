@@ -52,11 +52,18 @@ export async function PATCH(
 
   // La correction elle-même devient une preuve ADMIN — jamais fabriquée :
   // seulement si l'Admin a effectivement agi via cette route.
+  // ATLAS DYNAMIC SKILL GRAPH — le niveau fixé par cette correction Admin est
+  // désormais aussi enregistré SUR la preuve elle-même (niveau observé par
+  // CETTE preuve), en plus du niveau courant sur ProfilCompetence, pour
+  // pouvoir reconstituer l'historique (voir niveauxHistoriques() dans
+  // lib/talent/skill-graph.ts). Jamais un niveau inventé : uniquement celui
+  // explicitement fourni par l'Admin dans cette requête.
   await prisma.skillEvidence.create({
     data: {
       profilCompetenceId: params.competenceId,
       source: "ADMIN",
       detail: donnees.detail ?? `Statut fixé à ${donnees.statut} par ${session.email}`,
+      niveau: donnees.niveau ?? null,
     },
   });
 
