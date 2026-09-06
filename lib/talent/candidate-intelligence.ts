@@ -181,11 +181,16 @@ function construireBlocCompetences(competencesGraph: CompetencePourIntelligence[
   const trie = [...enrichies].sort(trierParForce);
   const verifiees = trie.filter((c) => c.statut === "VERIFIE");
   const declarees = trie.filter((c) => c.statut === "DECLARE");
-  // Preuve faible : confiance détaillée BASSE/INCONNUE, ou cohérence non
-  // COHERENTE (NON_VERIFIABLE ou INCOHERENTE) — signal pour l'Admin, jamais
-  // une exclusion de la compétence elle-même.
+  // Preuve faible : confiance détaillée BASSE/INCONNUE, ou cohérence
+  // INCOHERENTE (affirmation sans preuve tracée, ou niveaux observés
+  // divergents — voir evidence-confidence.ts) — signal pour l'Admin, jamais
+  // une exclusion de la compétence elle-même. NON_VERIFIABLE (une seule
+  // source, rien à comparer) N'EST PAS une preuve faible : une compétence
+  // VERIFIE reposant sur une unique preuve ADMIN (le cas normal — une
+  // vérification humaine n'a besoin d'aucune corroboration supplémentaire)
+  // ne doit jamais être présentée comme insuffisamment étayée.
   const preuvesFaibles = trie.filter(
-    (c) => c.confianceDetaillee.confiance === "BASSE" || c.confianceDetaillee.confiance === "INCONNUE" || c.confianceDetaillee.coherence !== "COHERENTE"
+    (c) => c.confianceDetaillee.confiance === "BASSE" || c.confianceDetaillee.confiance === "INCONNUE" || c.confianceDetaillee.coherence === "INCOHERENTE"
   );
   const recentes = trie.filter((c) => c.recente);
   const historiques = trie.filter((c) => !c.recente && c.confianceDetaillee.nombrePreuves > 0);
