@@ -5,6 +5,7 @@ import {
   construireCompetencesInferees,
   fusionnerCompetence,
   versCompetencesPourMatching,
+  niveauxHistoriques,
 } from "@/lib/talent/skill-graph";
 
 // ATLAS SKILL GRAPH V1 — tests unitaires purs (pas de DB, pas de serveur) sur
@@ -83,5 +84,35 @@ test.describe("Skill Graph V1 (lib/talent/skill-graph)", () => {
     ];
     const pourMatching = versCompetencesPourMatching(graph);
     expect(pourMatching.sort()).toEqual(["Docker", "Playwright"]);
+  });
+});
+
+// ATLAS DYNAMIC SKILL GRAPH — niveauxHistoriques() : dérive l'historique des
+// niveaux observés purement à partir des preuves déjà là, sans jamais
+// modifier/supprimer une preuve ni en inventer une.
+test.describe("ATLAS DYNAMIC SKILL GRAPH — niveauxHistoriques (lib/talent/skill-graph)", () => {
+  test("14. aucune preuve avec niveau : historique vide, jamais une valeur fabriquée", () => {
+    const historique = niveauxHistoriques([
+      { niveau: null, source: "PROFIL", createdAt: new Date("2026-01-01") },
+      { niveau: null, source: "CV", createdAt: new Date("2026-02-01") },
+    ]);
+    expect(historique).toEqual([]);
+  });
+
+  test("15. plusieurs preuves avec niveau : ordre chronologique strict, rien n'est écrasé", () => {
+    const historique = niveauxHistoriques([
+      { niveau: 4, source: "ADMIN", createdAt: new Date("2026-06-01") },
+      { niveau: 2, source: "ADMIN", createdAt: new Date("2026-01-01") },
+      { niveau: null, source: "CV", createdAt: new Date("2026-03-01") }, // ignorée, jamais remplacée
+      { niveau: 3, source: "ADMIN", createdAt: new Date("2026-04-01") },
+    ]);
+    expect(historique.map((h) => h.niveau)).toEqual([2, 3, 4]);
+    expect(historique).toHaveLength(3);
+  });
+
+  test("16. CURRENT LEVEL (ProfilCompetence.niveau) reste distinct de HISTORICAL LEVELS : cette fonction ne lit/modifie jamais ProfilCompetence", () => {
+    // Vérifie simplement que la fonction ne prend en entrée QUE des preuves —
+    // aucune dépendance possible à un niveau "courant" externe.
+    expect(niveauxHistoriques.length).toBe(1);
   });
 });

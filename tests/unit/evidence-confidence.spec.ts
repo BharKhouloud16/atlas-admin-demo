@@ -17,8 +17,8 @@ function competence(
   return { competence: "Java", statut, niveau: statut === "VERIFIE" ? 4 : null, confiance: "MOYENNE", contexte: null, preuves };
 }
 
-function preuve(source: ProfilCompetencePourConfiance["preuves"][number]["source"], joursAvant: number) {
-  return { source, detail: null, createdAt: new Date(MAINTENANT.getTime() - joursAvant * 24 * 60 * 60 * 1000) };
+function preuve(source: ProfilCompetencePourConfiance["preuves"][number]["source"], joursAvant: number, niveau: number | null = null) {
+  return { source, detail: null, createdAt: new Date(MAINTENANT.getTime() - joursAvant * 24 * 60 * 60 * 1000), niveau };
 }
 
 test.describe("Evidence Confidence (lib/talent/evidence-confidence)", () => {
@@ -100,5 +100,49 @@ test.describe("Evidence Confidence (lib/talent/evidence-confidence)", () => {
     expect(lot).toHaveLength(2);
     expect(lot[0].confiance).toBe("HAUTE");
     expect(lot[1].confiance).toBe("MOYENNE");
+  });
+});
+
+// ATLAS DYNAMIC SKILL GRAPH — divergence de niveaux observés entre preuves :
+// signalée de façon neutre (INCOHERENTE, jamais "mensonge"), sans jamais
+// supprimer une des deux preuves ni trancher automatiquement laquelle est
+// correcte.
+test.describe("ATLAS DYNAMIC SKILL GRAPH — divergence de niveaux observés (evidence-confidence)", () => {
+  test("17. deux preuves avec niveaux très divergents (écart > 1) : cohérence INCOHERENTE, confiance ramenée à INCONNUE, vocabulaire neutre", () => {
+    const r = calculerConfianceCompetence(
+      competence("VERIFIE", [preuve("ADMIN", 400, 4), preuve("ADMIN", 30, 1)]),
+      MAINTENANT
+    );
+    expect(r.coherence).toBe("INCOHERENTE");
+    expect(r.confiance).toBe("INCONNUE");
+    expect(r.explication.toLowerCase()).not.toContain("ment");
+    expect(r.explication).toContain("divergents");
+  });
+
+  test("18. deux preuves avec niveaux proches (écart <= 1) : pas de divergence signalée par ce seul critère", () => {
+    const r = calculerConfianceCompetence(
+      competence("DECLARE", [preuve("PROFIL", 30, 3), preuve("CV", 20, 4)]),
+      MAINTENANT
+    );
+    // écart de 1 (pas > 1) : la divergence de niveau ne déclenche pas
+    // INCOHERENTE ; deux sources distinctes -> COHERENTE (convergence).
+    expect(r.coherence).toBe("COHERENTE");
+  });
+
+  test("19. explication de la divergence de niveaux construite à partir des données réelles (min/max réels, aucun texte fictif)", () => {
+    const r = calculerConfianceCompetence(
+      competence("VERIFIE", [preuve("ADMIN", 400, 5), preuve("ADMIN", 30, 2)]),
+      MAINTENANT
+    );
+    expect(r.explication).toContain("2");
+    expect(r.explication).toContain("5");
+  });
+
+  test("20. aucune des deux preuves divergentes n'est perdue : nombrePreuves reflète les deux, aucune suppression", () => {
+    const r = calculerConfianceCompetence(
+      competence("VERIFIE", [preuve("ADMIN", 400, 4), preuve("ADMIN", 30, 1)]),
+      MAINTENANT
+    );
+    expect(r.nombrePreuves).toBe(2);
   });
 });
