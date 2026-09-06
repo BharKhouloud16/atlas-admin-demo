@@ -46,6 +46,10 @@ export async function GET() {
   return NextResponse.json(enrichies);
 }
 
+// Devises acceptées pour deviseVente — mêmes codes que TAUX_REPLI dans
+// lib/taux-change.ts, pour rester cohérent avec le reste de la plateforme.
+const DEVISES_ACCEPTEES = ["EUR", "USD", "GBP", "CHF", "MAD", "TND", "DZD", "AED", "SAR", "QAR", "CAD"];
+
 export async function POST(req: NextRequest) {
   const session = await getSession();
   if (!session || session.role !== "ADMIN") {
@@ -60,6 +64,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // deviseVente optionnel — défaut EUR (même comportement qu'avant l'ajout
+  // du champ, voir prisma/schema.prisma) si absent ou non reconnu.
+  const deviseDemandee = typeof body.deviseVente === "string" ? body.deviseVente.trim().toUpperCase() : "";
+  const deviseVente = DEVISES_ACCEPTEES.includes(deviseDemandee) ? deviseDemandee : "EUR";
+
   const mission = await prisma.mission.create({
     data: {
       clientId: body.clientId,
@@ -68,6 +77,7 @@ export async function POST(req: NextRequest) {
       nbJours: body.nbJours,
       margeCible: body.margeCible ?? 0.3,
       tjmVente: body.tjmVente,
+      deviseVente,
     },
   });
   return NextResponse.json(mission, { status: 201 });
