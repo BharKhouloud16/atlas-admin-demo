@@ -85,18 +85,18 @@ test.describe("ATLAS DYNAMIC SKILL GRAPH — Evidence Lifecycle V1 — API", () 
 
   test("13. historique des niveaux (niveauxHistoriques) : distingue CURRENT LEVEL (niveau) et HISTORICAL LEVELS, ordre chronologique", async ({ request }) => {
     await connecter(request, "ingenieur-demo@example.com");
-    await declarerCompetence(request, ["Ansible"]);
+    await declarerCompetence(request, ["Jenkins"]);
 
     await connecter(request, "admin-demo@example.com");
     const profilId = await idProfilIngenieurDemo(request);
     const construction = await request.post(`/api/profils/${profilId}/competences`);
     const { competences } = await construction.json();
-    const ansible = competences.find((c: { competence: string; id: string }) => c.competence === "Ansible");
+    const jenkins = competences.find((c: { competence: string; id: string }) => c.competence === "Jenkins");
 
-    await request.post(`/api/profils/${profilId}/competences/${ansible.id}/preuves`, {
+    await request.post(`/api/profils/${profilId}/competences/${jenkins.id}/preuves`, {
       data: { source: "MISSION", niveauObserve: 2 },
     });
-    const derniere = await request.post(`/api/profils/${profilId}/competences/${ansible.id}/preuves`, {
+    const derniere = await request.post(`/api/profils/${profilId}/competences/${jenkins.id}/preuves`, {
       data: { source: "MISSION", niveauObserve: 4 },
     });
     const apres = await derniere.json();
@@ -112,20 +112,20 @@ test.describe("ATLAS DYNAMIC SKILL GRAPH — Evidence Lifecycle V1 — API", () 
 
   test("14. contexte/provenance préservés : chaque preuve garde sa source et son détail d'origine", async ({ request }) => {
     await connecter(request, "ingenieur-demo@example.com");
-    await declarerCompetence(request, ["GraphQL"]);
+    await declarerCompetence(request, ["SQL"]);
 
     await connecter(request, "admin-demo@example.com");
     const profilId = await idProfilIngenieurDemo(request);
     const construction = await request.post(`/api/profils/${profilId}/competences`);
     const { competences } = await construction.json();
-    const graphql = competences.find((c: { competence: string; id: string }) => c.competence === "GraphQL");
+    const sql = competences.find((c: { competence: string; id: string }) => c.competence === "SQL");
 
-    const ajout = await request.post(`/api/profils/${profilId}/competences/${graphql.id}/preuves`, {
-      data: { source: "CERTIFICATION", detail: "Certification GraphQL avancé, 2026" },
+    const ajout = await request.post(`/api/profils/${profilId}/competences/${sql.id}/preuves`, {
+      data: { source: "CERTIFICATION", detail: "Certification SQL avancé, 2026" },
     });
     const apres = await ajout.json();
     const nouvellePreuve = apres.preuves.find((p: { source: string }) => p.source === "CERTIFICATION");
-    expect(nouvellePreuve.detail).toBe("Certification GraphQL avancé, 2026");
+    expect(nouvellePreuve.detail).toBe("Certification SQL avancé, 2026");
   });
 
   test("15. RBAC : la route d'ajout de preuve est réservée à l'Admin (CLIENT et INGENIEUR refusés)", async ({ request }) => {
@@ -179,15 +179,15 @@ test.describe("ATLAS DYNAMIC SKILL GRAPH — Evidence Lifecycle V1 — API", () 
 
   test("18. validation : une source invalide est rejetée (400), aucune preuve fabriquée", async ({ request }) => {
     await connecter(request, "ingenieur-demo@example.com");
-    await declarerCompetence(request, ["Rust"]);
+    await declarerCompetence(request, ["Python"]);
 
     await connecter(request, "admin-demo@example.com");
     const profilId = await idProfilIngenieurDemo(request);
     const construction = await request.post(`/api/profils/${profilId}/competences`);
     const { competences } = await construction.json();
-    const rust = competences.find((c: { competence: string; id: string }) => c.competence === "Rust");
+    const python = competences.find((c: { competence: string; id: string }) => c.competence === "Python");
 
-    const invalide = await request.post(`/api/profils/${profilId}/competences/${rust.id}/preuves`, {
+    const invalide = await request.post(`/api/profils/${profilId}/competences/${python.id}/preuves`, {
       data: { source: "SOURCE_INEXISTANTE", detail: "test" },
     });
     expect(invalide.status()).toBe(400);
