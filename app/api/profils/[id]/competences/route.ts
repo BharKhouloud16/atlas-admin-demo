@@ -7,6 +7,7 @@ import {
   construireCompetencesDeclarees,
   construireCompetencesInferees,
   fusionnerCompetence,
+  niveauxHistoriques,
   type EntreeSkillGraph,
   type ProfilCompetenceExistante,
 } from "@/lib/talent/skill-graph";
@@ -164,9 +165,13 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
   return NextResponse.json({ profilId: params.id, competences: avecConfianceDetaillee(competences), creees, misesAJour });
 }
 
-// Attache `confianceDetaillee` (voir lib/talent/evidence-confidence.ts) à
-// chaque ligne déjà chargée avec ses preuves — purement en mémoire, jamais
-// une requête par compétence.
+// Attache `confianceDetaillee` (voir lib/talent/evidence-confidence.ts) et
+// `niveauxHistoriques` (voir lib/talent/skill-graph.ts — ATLAS DYNAMIC SKILL
+// GRAPH) à chaque ligne déjà chargée avec ses preuves — purement en
+// mémoire, jamais une requête par compétence. `niveau` (sur la compétence)
+// reste le CURRENT LEVEL, toujours fixé par un Admin ; `niveauxHistoriques`
+// est la liste dérivée, purement informative, des niveaux observés au fil
+// des preuves — jamais une source de vérité alternative.
 function avecConfianceDetaillee<
   T extends {
     competence: string;
@@ -174,9 +179,18 @@ function avecConfianceDetaillee<
     niveau: number | null;
     confiance: NiveauConfiance;
     contexte: string | null;
-    preuves: { source: SourcePreuveCompetence; detail: string | null; createdAt: Date }[];
+    preuves: { source: SourcePreuveCompetence; detail: string | null; createdAt: Date; niveau?: number | null }[];
   }
->(competences: T[]): (T & { confianceDetaillee: ReturnType<typeof calculerConfianceCompetences>[number] })[] {
+>(
+  competences: T[]
+): (T & {
+  confianceDetaillee: ReturnType<typeof calculerConfianceCompetences>[number];
+  niveauxHistoriques: ReturnType<typeof niveauxHistoriques>;
+})[] {
   const confiances = calculerConfianceCompetences(competences);
-  return competences.map((c, i) => ({ ...c, confianceDetaillee: confiances[i] }));
+  return competences.map((c, i) => ({
+    ...c,
+    confianceDetaillee: confiances[i],
+    niveauxHistoriques: niveauxHistoriques(c.preuves.map((p) => ({ niveau: p.niveau ?? null, source: p.source, createdAt: p.createdAt }))),
+  }));
 }
