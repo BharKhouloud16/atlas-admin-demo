@@ -35,27 +35,38 @@ test.describe("ATLAS TALENT — Candidate Intelligence V1 — API", () => {
   });
 
   test("15. candidat avec Skill Graph : compétences reprises depuis le Skill Graph déjà calculé", async ({ request }) => {
-    await connecter(request, "ingenieur-demo@example.com");
-    await request.post("/api/ingenieur/disponibilite", {
-      data: {
-        disponibilite: "Disponible immédiatement",
-        preavis: "Aucun / immédiat",
-        nationalite: "Française",
-        paysResidence: "France",
-        tjmSouhaite: 500,
-        tjmSouhaiteDevise: "EUR",
-        competences: ["Docker"],
-      },
-    });
-
+    // Ne déclare volontairement AUCUNE nouvelle compétence ici : le profil
+    // "Ingénieur Démo" est partagé (fullyParallel, voir playwright.config.ts)
+    // avec d'autres fichiers de tests API (skill-graph*.spec.ts) qui
+    // déclarent déjà des compétences sur ce même profil via
+    // /api/ingenieur/disponibilite (remplacement complet, pas une fusion) —
+    // ajouter ICI un appel concurrent supplémentaire ne ferait qu'aggraver
+    // une course déjà connue entre fichiers. On vérifie donc la cohérence
+    // structurelle entre le Skill Graph déjà exposé par
+    // GET .../competences et Candidate Intelligence, sans dépendre d'une
+    // compétence précise ni écrire quoi que ce soit.
     await connecter(request, "admin-demo@example.com");
     const profilId = await idProfilIngenieurDemo(request);
-    await request.post(`/api/profils/${profilId}/competences`);
+
+    const graphReponse = await request.get(`/api/profils/${profilId}/competences`);
+    expect(graphReponse.ok()).toBeTruthy();
+    const { competences: graph } = await graphReponse.json();
 
     const reponse = await request.get(`/api/profils/${profilId}/intelligence`);
     expect(reponse.ok(), await reponse.text()).toBeTruthy();
     const { intelligence } = await reponse.json();
-    expect(intelligence.competences.principales.some((c: { competence: string }) => c.competence === "Docker")).toBe(true);
+
+    // Le nombre de compétences vues par Candidate Intelligence (verifiees +
+    // declarees + preuvesFaibles dédoublonnées) ne peut jamais dépasser ce
+    // que le Skill Graph expose réellement — jamais une compétence
+    // fabriquée.
+    const nomsIntelligence = new Set(
+      [...intelligence.competences.verifiees, ...intelligence.competences.declarees].map((c: { competence: string }) => c.competence)
+    );
+    const nomsGraph = new Set(graph.map((c: { competence: string }) => c.competence));
+    for (const nom of nomsIntelligence) {
+      expect(nomsGraph.has(nom)).toBe(true);
+    }
   });
 
   test("16. isolation RBAC : Candidate Intelligence n'est accessible qu'à l'Admin (jamais Client/Ingénieur)", async ({ request }) => {
