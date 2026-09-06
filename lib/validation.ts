@@ -53,3 +53,18 @@ export const motDePasseSchema = z
 export function premierMessageZod(erreur: z.ZodError): string {
   return erreur.issues[0]?.message ?? "Données invalides.";
 }
+
+// ATLAS TALENT V1 — création d'une DemandeTalent par un Client (voir
+// app/api/talent/demandes/route.ts). La description est le texte libre
+// donné à l'AI Request Analyzer (lib/talent/analyseur.ts) : bornée en
+// longueur comme toute entrée utilisateur, jamais interprétée côté serveur
+// autrement que comme du texte à analyser (aucune exécution de code, aucune
+// injection de prompt possible côté DB/SQL — Prisma paramètre toujours ses
+// requêtes).
+export const demandeTalentSchema = z.object({
+  titre: z.string().trim().max(200).optional(),
+  description: z.string().trim().min(10, "Merci de décrire votre besoin (10 caractères minimum).").max(4000),
+  budgetTjmMax: z.number().positive().max(100000).optional(),
+  budgetDevise: z.string().trim().toUpperCase().length(3).optional(),
+  dateDebutSouhaitee: z.string().datetime().optional(),
+});
