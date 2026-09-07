@@ -183,7 +183,7 @@ test.describe("Quality Signal Engine V1 — régression possible et incohérence
   test("20. deriverTousLesSignaux combine les trois familles sans en perdre ni en dupliquer arbitrairement", () => {
     const observations = [
       obs({ statut: "FAIL", dimension: "TEST", label: "Tests API" }),
-      obs({ statut: "PASS", label: "Build Next.js", horodatage: new Date("2026-09-01T00:00:00Z") }),
+      obs({ statut: "PASS", dimension: "DELIVERY", label: "Build Next.js", horodatage: new Date("2026-09-01T00:00:00Z") }),
       obs({ statut: "FAIL", label: "Build Next.js", dimension: "DELIVERY", horodatage: new Date("2026-09-06T00:00:00Z") }),
     ];
     const tous = deriverTousLesSignaux(observations);
