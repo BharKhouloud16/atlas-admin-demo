@@ -119,7 +119,7 @@ export const CONTROLES_CONNUS: readonly SecurityControl[] = [
     id: "secret-detection-security-evidence",
     label: "Détection de motif de secret avant construction d'une observation Security",
     domaine: "SECRETS",
-    description: "Toute entrée dont un champ ressemble à un secret (jeton GitHub, clé privée PEM, en-tête Bearer, affectation password:/token:/api_key:) est rejetée entièrement.",
+    description: "Toute entrée dont un champ ressemble à un secret (jeton GitHub, clé privée PEM, en-tête Bearer, ou une valeur affectée à un identifiant tel que mot de passe, jeton ou clé API) est rejetée entièrement.",
     fichier: "lib/security/evidence.ts",
   },
 ] as const;
