@@ -25,6 +25,32 @@
 //   explicite, injectable pour les tests — voir `fetchImpl`).
 // - Ne modifie ni ne lit lib/scoring.ts ni aucun module lib/talent/ —
 //   aucune régression possible sur B1-B11.
+//
+// SÉCURITÉ (Batch 12.8, renforcement — la source externe est une FRONTIÈRE
+// DE SÉCURITÉ, sa réponse est traitée comme NON FIABLE) :
+// - Aucun jeton GitHub, aujourd'hui volontairement absent : le dépôt lu est
+//   public, l'API "List workflow runs" y est accessible sans authentification.
+//   Ne PAS ajouter de jeton tant qu'aucun besoin réel (dépôt privé) ne
+//   l'exige — un jeton non nécessaire est une surface d'exposition inutile.
+//   Si un jeton devient un jour nécessaire, il devra rester strictement
+//   côté serveur (variable d'environnement non préfixée NEXT_PUBLIC_),
+//   jamais transmis au navigateur, jamais journalisé, jamais inclus dans un
+//   message d'erreur.
+// - Délai d'attente OBLIGATOIRE sur l'appel réseau (`DELAI_MAX_MS`) : une
+//   API externe qui ne répond jamais ne doit jamais faire attendre
+//   indéfiniment l'appelant (voir AbortController ci-dessous).
+// - VALIDATION STRICTE de chaque run reçu (`runEstExploitable`) : aucune
+//   confiance aveugle dans la forme du JSON externe — un champ manquant,
+//   d'un type inattendu, ou une date illisible fait REJETER ce run
+//   individuellement (jamais toute la réponse, jamais une valeur par défaut
+//   inventée pour le champ fautif).
+// - CLASSIFICATION DES DONNÉES : ce module ne lit et n'expose QUE des
+//   métadonnées de run CI publiques (nom de workflow, numéro de run,
+//   statut/conclusion, horodatage, URL, branche) — jamais un secret, un
+//   identifiant, une donnée personnelle ou une donnée Client. Si ce module
+//   est un jour pointé vers un dépôt privé contenant des informations
+//   Client, cette hypothèse devra être réexaminée explicitement — ne pas
+//   la présumer silencieusement vraie pour toujours.
 
 import type { EntreeObservation } from "../evidence";
 import type { QualityStatus } from "../domain";
@@ -52,6 +78,33 @@ type RunGithubActions = {
 type ReponseRunsGithubActions = {
   workflow_runs: RunGithubActions[];
 };
+
+// Délai d'attente maximal pour l'appel à l'API GitHub Actions — une source
+// externe qui ne répond jamais ne doit jamais faire attendre indéfiniment
+// l'appelant (route API Admin, Batch 12.7). Au-delà de ce délai, traité
+// exactement comme une panne réseau : tableau vide, jamais une exception
+// propagée ni une observation fabriquée.
+const DELAI_MAX_MS = 8000;
+
+// Valide qu'une entrée reçue de GitHub a bien la forme minimale attendue
+// AVANT de lui faire confiance — la réponse externe est une donnée NON
+// FIABLE (frontière de sécurité). Un champ manquant, d'un type inattendu,
+// ou un horodatage illisible fait rejeter CE RUN précis, jamais toute la
+// réponse (un run malformé parmi dix ne doit pas priver les neuf autres
+// d'observation) — et jamais une valeur par défaut inventée pour combler
+// le champ fautif.
+function runEstExploitable(valeur: unknown): valeur is RunGithubActions {
+  if (typeof valeur !== "object" || valeur === null) return false;
+  const r = valeur as Record<string, unknown>;
+  if (typeof r.run_number !== "number") return false;
+  if (typeof r.created_at !== "string" || Number.isNaN(Date.parse(r.created_at))) return false;
+  if (typeof r.html_url !== "string" || r.html_url.length === 0) return false;
+  if (r.name !== null && typeof r.name !== "string") return false;
+  if (r.status !== null && typeof r.status !== "string") return false;
+  if (r.conclusion !== null && typeof r.conclusion !== "string") return false;
+  if (r.head_branch !== null && typeof r.head_branch !== "string") return false;
+  return true;
+}
 
 // Traduit (status, conclusion) GitHub en QualityStatus — vocabulaire fermé,
 // jamais un mot inventé. Un run non terminé (status !== "completed") n'a
@@ -112,32 +165,50 @@ export async function recupererObservationsCiGithub(
   const perPage = Math.min(config.perPage ?? 20, 100);
   const url = `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/actions/runs?per_page=${perPage}`;
 
+  const controleurDelai = new AbortController();
+  const minuteur = setTimeout(() => controleurDelai.abort(), DELAI_MAX_MS);
+
   let reponse: Response;
   try {
     reponse = await fetchImpl(url, {
       headers: { Accept: "application/vnd.github+json" },
       cache: "no-store",
+      signal: controleurDelai.signal,
     });
   } catch {
-    // Réseau indisponible — aucune observation disponible, jamais une
-    // exception qui ferait planter l'appelant ni une donnée fabriquée.
+    // Réseau indisponible OU délai dépassé (abort) — aucune observation
+    // disponible, jamais une exception qui ferait planter l'appelant ni une
+    // donnée fabriquée.
     return [];
+  } finally {
+    clearTimeout(minuteur);
   }
 
   if (!reponse.ok) {
     return [];
   }
 
-  let donnees: ReponseRunsGithubActions;
+  let donnees: unknown;
   try {
-    donnees = (await reponse.json()) as ReponseRunsGithubActions;
+    donnees = await reponse.json();
   } catch {
+    // Réponse externe non fiable : un corps qui n'est pas du JSON valide
+    // n'est jamais interprété — tableau vide, jamais une supposition.
     return [];
   }
 
-  if (!Array.isArray(donnees.workflow_runs)) {
+  if (
+    typeof donnees !== "object" ||
+    donnees === null ||
+    !Array.isArray((donnees as ReponseRunsGithubActions).workflow_runs)
+  ) {
     return [];
   }
 
-  return donnees.workflow_runs.map(traduireRunEnObservation);
+  // Validation stricte AVANT traduction : chaque run est vérifié
+  // individuellement (runEstExploitable) — un run malformé est rejeté seul,
+  // jamais toute la réponse, jamais une valeur inventée pour le remplacer.
+  return (donnees as ReponseRunsGithubActions).workflow_runs
+    .filter(runEstExploitable)
+    .map(traduireRunEnObservation);
 }
