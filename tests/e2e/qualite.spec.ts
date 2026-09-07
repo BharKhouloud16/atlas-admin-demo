@@ -15,8 +15,16 @@ async function seConnecter(page: import("@playwright/test").Page, email: string,
 }
 
 test.describe("ATLAS OS Quality Foundation V1 — page Admin /admin/qualite", () => {
+  // NOTE (correctif post-échec CI #148) : seConnecter() ne fait que cliquer sur
+  // "Se connecter" — la redirection post-connexion (router.push côté client,
+  // voir app/connexion/page.tsx) est asynchrone. Un page.goto() enchaîné trop
+  // tôt peut interrompre cette navigation et retomber sur /connexion. On
+  // attend donc explicitement l'atterrissage post-connexion (même pattern que
+  // tests/e2e/connexion.spec.ts) avant tout goto() supplémentaire.
+
   test("1. un Admin accède à /admin/qualite et voit les sections Gates/Dimensions/Régressions", async ({ page }) => {
     await seConnecter(page, "admin-demo@example.com", MOT_DE_PASSE);
+    await expect(page).toHaveURL(/\/admin/);
     await page.goto("/admin/qualite");
     await expect(page.getByRole("heading", { name: /qualité atlas os/i })).toBeVisible();
     await expect(page.getByRole("heading", { name: /^gates/i })).toBeVisible();
@@ -26,6 +34,7 @@ test.describe("ATLAS OS Quality Foundation V1 — page Admin /admin/qualite", ()
 
   test("2. la page n'affiche jamais de score ni de pourcentage de synthèse", async ({ page }) => {
     await seConnecter(page, "admin-demo@example.com", MOT_DE_PASSE);
+    await expect(page).toHaveURL(/\/admin/);
     await page.goto("/admin/qualite");
     await expect(page.getByRole("heading", { name: /^gates/i })).toBeVisible();
     const texte = await page.locator("body").innerText();
@@ -36,14 +45,20 @@ test.describe("ATLAS OS Quality Foundation V1 — page Admin /admin/qualite", ()
 
   test("3. un Client ne peut pas accéder à /admin/qualite (redirigé)", async ({ page }) => {
     await seConnecter(page, "client-demo@example.com", MOT_DE_PASSE);
+    await expect(page).toHaveURL(/\/client/);
     await page.goto("/admin/qualite");
     await expect(page).toHaveURL(/\/client/);
   });
 
   test("4. un Ingénieur ne peut pas accéder à /admin/qualite (redirigé)", async ({ page }) => {
     await seConnecter(page, "ingenieur-demo@example.com", MOT_DE_PASSE);
+    // Le compte ingenieur-demo n'a pas de CV importé (voir prisma/seed.ts) :
+    // AdminLayout redirige donc systématiquement vers /ingenieur/cv, y compris
+    // pour /admin/missions (cible du middleware pour /admin/qualite refusé) —
+    // voir tests/e2e/connexion.spec.ts pour ce même comportement déjà établi.
+    await expect(page).toHaveURL(/\/ingenieur\/cv/);
     await page.goto("/admin/qualite");
-    await expect(page).toHaveURL(/\/admin\/missions/);
+    await expect(page).toHaveURL(/\/ingenieur\/cv/);
   });
 
   test("5. le lien de navigation \"Qualité ATLAS OS\" est visible pour l'Admin", async ({ page }) => {
