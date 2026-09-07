@@ -59,6 +59,11 @@ model User {
   emailVerificationToken   String?   @unique
   emailVerificationExpire  DateTime?
 
+// Reinitialisation de mot de passe oublie (B14). Colonnes nullables, jamais renseignees par defaut, a usage unique.
+resetPasswordToken String? @unique
+resetPasswordExpire DateTime?
+
+
   // Désactivation temporaire du compte par l'ingénieur lui-même (voir
   // /ingenieur -> "Mon compte"). Un compte désactivé peut toujours se
   // reconnecter (contrairement à actif=false) mais est redirigé vers
