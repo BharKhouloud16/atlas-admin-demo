@@ -141,6 +141,13 @@ export default function ConnexionPage() {
             disabled={totpRequis}
             style={{ width: "100%" }}
           />
+          {!totpRequis && (
+            <p style={{ fontSize: 13, margin: "-4px 0 0", textAlign: "right" }}>
+              <Link href="/mot-de-passe-oublie" style={{ color: bleu }}>
+                Mot de passe oublié ?
+              </Link>
+            </p>
+          )}
           {totpRequis && (
             <div>
               <p style={{ fontSize: 13, color: grisTexte, margin: "0 0 8px" }}>
