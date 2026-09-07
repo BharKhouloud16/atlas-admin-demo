@@ -86,6 +86,28 @@ export async function envoyerEmailVerificationAdresse(params: {
   });
 }
 
+// B14 — mot de passe oublié (voir app/api/auth/mot-de-passe-oublie/route.ts).
+// Même limitation démo que ci-dessus (aucun fournisseur d'email branché) :
+// le lien n'est pas réellement envoyé, seulement loggé/renvoyé à l'appelant.
+export async function envoyerEmailReinitialisationMotDePasse(params: {
+  to: string;
+  token: string;
+}) {
+  const { to, token } = params;
+  const lien = `https://atlas-admin-demo.vercel.app/reinitialiser-mot-de-passe?token=${token}`;
+  await envoyerEmail({
+    to,
+    subject: "Atlas Quality Partners — Réinitialisation de votre mot de passe",
+    html: `
+      <p>Bonjour,</p>
+      <p>Une demande de réinitialisation de mot de passe a été faite pour ce compte :</p>
+      <p><a href="${lien}">${lien}</a></p>
+      <p>Ce lien est valable 1 heure. Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.</p>
+      <p>À bientôt,<br/>L'équipe Atlas Quality Partners</p>
+    `,
+  });
+}
+
 export async function envoyerEmailCompteValide(params: {
   to: string;
   nom: string;

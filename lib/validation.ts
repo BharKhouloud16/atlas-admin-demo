@@ -47,6 +47,21 @@ export const motDePasseSchema = z
     path: ["confirmationNouveauMotDePasse"],
   });
 
+export const demanderReinitialisationSchema = z.object({
+  email: z.string().trim().toLowerCase().email("Adresse email invalide."),
+});
+
+export const reinitialiserMotDePasseSchema = z
+  .object({
+    token: z.string().min(1, "Lien de réinitialisation invalide."),
+    nouveauMotDePasse: z.string().min(8, "Le mot de passe doit contenir au moins 8 caractères."),
+    confirmationNouveauMotDePasse: z.string().min(1),
+  })
+  .refine((data) => data.nouveauMotDePasse === data.confirmationNouveauMotDePasse, {
+    message: "Les deux mots de passe ne correspondent pas.",
+    path: ["confirmationNouveauMotDePasse"],
+  });
+
 // Aide pour renvoyer le premier message d'erreur zod sous la même forme que
 // les erreurs existantes ({ error: string }), pour ne rien changer côté
 // front (les composants attendent déjà data.error).
