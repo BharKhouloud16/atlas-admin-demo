@@ -30,6 +30,26 @@ import { recupererObservationsCiGithub } from "@/lib/quality/sources/ci-github";
 //   (signaux/dimensions/gates/régressions) est un calcul pur en mémoire.
 // - Ne modifie ni ne lit lib/scoring.ts ni aucun module lib/talent/ —
 //   aucune régression possible sur B1-B11.
+//
+// SÉCURITÉ (Batch 12.8, renforcement — RBAC serveur réutilisé tel quel,
+// aucun nouveau système d'autorisation) :
+// - Seul GET est exporté : toute autre méthode (POST/PUT/DELETE/PATCH) sur
+//   /api/quality reçoit automatiquement un 405 Method Not Allowed par le
+//   routeur Next.js App Router (aucun handler additionnel n'est défini pour
+//   ces méthodes — comportement natif, jamais recodé à la main).
+// - Aucun paramètre de requête, aucun corps : rien à valider côté entrée
+//   utilisateur pour cette route (seule la source externe, déjà validée
+//   dans lib/quality/sources/ci-github.ts, est une entrée non fiable).
+// - Isolation locataire (tenant) : non applicable ici — cette route
+//   n'expose AUCUNE donnée Client/Ingénieur/Profil (contrairement à
+//   /api/profils/[id]/talent-trust etc.), uniquement des métadonnées de
+//   run CI du dépôt ATLAS lui-même (voir classification des données dans
+//   lib/quality/sources/ci-github.ts). Aucun paramètre d'identifiant en
+//   entrée -> aucune énumération d'ID possible.
+// - Gestion des erreurs : toute exception inattendue (ex. session illisible)
+//   est interceptée et retourne un 500 générique, jamais la stack trace ni
+//   le détail interne de l'erreur — même discipline que pour une panne de
+//   la source CI (jamais un plantage serveur visible côté client).
 
 const DEPOT_QUALITE_PAR_DEFAUT = { owner: "BharKhouloud16", repo: "atlas-admin-demo" };
 
@@ -39,22 +59,28 @@ export async function GET() {
     return NextResponse.json({ error: "Accès réservé à l'administrateur" }, { status: 403 });
   }
 
-  const owner = process.env.ATLAS_QUALITY_REPO_OWNER || DEPOT_QUALITE_PAR_DEFAUT.owner;
-  const repo = process.env.ATLAS_QUALITY_REPO_NAME || DEPOT_QUALITE_PAR_DEFAUT.repo;
+  try {
+    const owner = process.env.ATLAS_QUALITY_REPO_OWNER || DEPOT_QUALITE_PAR_DEFAUT.owner;
+    const repo = process.env.ATLAS_QUALITY_REPO_NAME || DEPOT_QUALITE_PAR_DEFAUT.repo;
 
-  const entreesCi = await recupererObservationsCiGithub({ owner, repo });
-  const { observations, rejetees } = construireObservations(entreesCi);
-  const signaux = deriverTousLesSignaux(observations);
-  const dimensions = construireTousLesDimensionSnapshots(observations, signaux);
-  const gates = evaluerGates(dimensions);
-  const regressions = extraireTousLesCasDeRegression(signaux);
+    const entreesCi = await recupererObservationsCiGithub({ owner, repo });
+    const { observations, rejetees } = construireObservations(entreesCi);
+    const signaux = deriverTousLesSignaux(observations);
+    const dimensions = construireTousLesDimensionSnapshots(observations, signaux);
+    const gates = evaluerGates(dimensions);
+    const regressions = extraireTousLesCasDeRegression(signaux);
 
-  return NextResponse.json({
-    source: { owner, repo, observationsRejetees: rejetees },
-    observations,
-    signaux,
-    dimensions,
-    gates,
-    regressions,
-  });
+    return NextResponse.json({
+      source: { owner, repo, observationsRejetees: rejetees },
+      observations,
+      signaux,
+      dimensions,
+      gates,
+      regressions,
+    });
+  } catch {
+    // Jamais de stack trace ni de détail interne exposé au client — voir
+    // note SÉCURITÉ ci-dessus.
+    return NextResponse.json({ error: "Erreur interne lors du calcul de l'état qualité." }, { status: 500 });
+  }
 }
