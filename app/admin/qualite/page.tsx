@@ -113,8 +113,8 @@ export default function QualitePage() {
       <h1>Qualité ATLAS OS</h1>
       <p style={{ color: grisTexte, fontSize: 13, marginBottom: 4 }}>
         Signal Engine V1 — dérivé uniquement des runs CI réellement observés sur GitHub Actions. Chaque ligne reste
-        indépendante et traçable jusqu&apos;à son observation d&apos;origine : il n&apos;existe volontairement aucun
-        score global ni verdict de synthèse sur cette page.
+        indépendante et traçable jusqu&apos;à son observation d&apos;origine : cette page n&apos;affiche
+        volontairement aucun indicateur unique de synthèse (ni pourcentage, ni verdict global).
       </p>
 
       {chargement && <p style={{ color: grisTexte }}>Chargement...</p>}
