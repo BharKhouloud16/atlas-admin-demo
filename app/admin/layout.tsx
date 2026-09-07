@@ -19,6 +19,7 @@ const LIENS_NAV = [
   { href: "/admin/comptes-en-attente", label: "Comptes en attente", roles: ["ADMIN"] },
   { href: "/admin/journal", label: "Journal d'activité", roles: ["ADMIN"] },
   { href: "/admin/securite", label: "Sécurité (2FA)", roles: ["ADMIN"] },
+  { href: "/admin/qualite", label: "Qualité ATLAS OS", roles: ["ADMIN"] },
 ] as const;
 
 const LABEL_ROLE: Record<string, string> = {
