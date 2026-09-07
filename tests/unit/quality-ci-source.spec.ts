@@ -123,4 +123,59 @@ test.describe("Quality CI Source V1 (lib/quality/sources/ci-github)", () => {
     const entrees = await recupererObservationsCiGithub({ owner: "o", repo: "r" }, fetchSimule);
     expect(entrees[0].label).toContain("workflow sans nom");
   });
+
+  // --- Batch 12.8 : renforcement sécurité (frontière externe non fiable) ---
+
+  test("15. délai d'attente obligatoire : un AbortSignal réel est transmis à fetch, jamais un appel sans limite de temps", async () => {
+    let signalRecu: AbortSignal | undefined;
+    const fetchSimule = (async (_url: unknown, options?: RequestInit) => {
+      signalRecu = options?.signal ?? undefined;
+      return reponseJson({ workflow_runs: [] });
+    }) as unknown as typeof fetch;
+    await recupererObservationsCiGithub({ owner: "o", repo: "r" }, fetchSimule);
+    expect(signalRecu).toBeInstanceOf(AbortSignal);
+  });
+
+  test("16. requête abandonnée (AbortError simulé) -> tableau vide, jamais un crash de l'appelant", async () => {
+    const fetchSimule = (async () => {
+      const erreur = new Error("The operation was aborted");
+      erreur.name = "AbortError";
+      throw erreur;
+    }) as unknown as typeof fetch;
+    const entrees = await recupererObservationsCiGithub({ owner: "o", repo: "r" }, fetchSimule);
+    expect(entrees).toEqual([]);
+  });
+
+  test("17. run malformé (run_number absent) au sein d'un mélange -> rejeté seul, les runs valides sont conservés", async () => {
+    const runValide = run({ run_number: 1, conclusion: "success" });
+    const runMalforme = { ...run({ run_number: 2, conclusion: "failure" }), run_number: "pas-un-nombre" };
+    const fetchSimule = (async () => reponseJson({ workflow_runs: [runValide, runMalforme] })) as unknown as typeof fetch;
+    const entrees = await recupererObservationsCiGithub({ owner: "o", repo: "r" }, fetchSimule);
+    expect(entrees.length).toBe(1);
+    expect(entrees[0].statut).toBe("PASS");
+  });
+
+  test("18. run avec horodatage illisible -> rejeté, jamais une Date invalide propagée", async () => {
+    const runDateIllisible = { ...run(), created_at: "pas-une-date" };
+    const fetchSimule = (async () => reponseJson({ workflow_runs: [runDateIllisible] })) as unknown as typeof fetch;
+    const entrees = await recupererObservationsCiGithub({ owner: "o", repo: "r" }, fetchSimule);
+    expect(entrees).toEqual([]);
+  });
+
+  test("19. run avec un champ de type inattendu (status en nombre) -> rejeté, aucune confiance aveugle dans le JSON externe", async () => {
+    const runTypeInattendu = { ...run(), status: 12345 };
+    const fetchSimule = (async () => reponseJson({ workflow_runs: [runTypeInattendu] })) as unknown as typeof fetch;
+    const entrees = await recupererObservationsCiGithub({ owner: "o", repo: "r" }, fetchSimule);
+    expect(entrees).toEqual([]);
+  });
+
+  test("20. aucune observation générée ne contient jamais de champ ressemblant à un secret", async () => {
+    const fetchSimule = (async () => reponseJson({ workflow_runs: [run()] })) as unknown as typeof fetch;
+    const entrees = await recupererObservationsCiGithub({ owner: "o", repo: "r" }, fetchSimule);
+    const serialise = JSON.stringify(entrees).toLowerCase();
+    expect(serialise).not.toContain("token");
+    expect(serialise).not.toContain("secret");
+    expect(serialise).not.toContain("password");
+    expect(serialise).not.toContain("api_key");
+  });
 });
