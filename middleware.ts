@@ -11,6 +11,13 @@ const PUBLIC_PATHS = [
   "/verifier-email",
   "/api/auth/verifier-email",
   "/api/auth/renvoyer-verification",
+  // B14 — mot de passe oublié : listées ici pour la même raison que
+  // verifier-email ci-dessus (documentation explicite de l'allowlist),
+  // bien qu'aucune ne matche déjà les préfixes protégés plus bas.
+  "/mot-de-passe-oublie",
+  "/reinitialiser-mot-de-passe",
+  "/api/auth/mot-de-passe-oublie",
+  "/api/auth/reinitialiser-mot-de-passe",
 ];
 
 // Préfixes protégés, groupés par rôle autorisé
