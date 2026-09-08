@@ -36,18 +36,18 @@ enum StatutDocument {
 // Un compte auto-inscrit (INGENIEUR ou CLIENT) démarre avec actif=false :
 // il ne peut pas se connecter tant qu'un ADMIN ne l'a pas validé.
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
+  id       String @id @default(cuid())
+  email    String @unique
   passwordHash String
-  role         Role
-  actif        Boolean  @default(true) // false pour tout compte auto-inscrit, en attente de validation
-  createdAt    DateTime @default(now())
+  role     Role
+  actif    Boolean @default(true) // false pour tout compte auto-inscrit, en attente de validation
+  createdAt DateTime @default(now())
 
   // Traçabilité pour la nouvelle rubrique Admin "Ingénieurs" (liste des
   // comptes validés, voir /admin/ingenieurs) : quand le compte a été validé
   // par un Admin, et sa toute première connexion réussie.
-  valideLe             DateTime?
-  premiereConnexionLe  DateTime?
+  valideLe DateTime?
+  premiereConnexionLe DateTime?
 
   // Vérification de l'adresse email à l'inscription (voir lib/email.ts,
   // app/api/auth/verifier-email/route.ts). Par défaut true pour ne jamais
@@ -55,19 +55,19 @@ model User {
   // avant l'ajout de cette fonctionnalité) : seule l'inscription publique
   // (/api/auth/signup) le met explicitement à false pour un nouveau compte
   // INGENIEUR/CLIENT, le temps que le lien envoyé par email soit cliqué.
-  emailVerifie            Boolean   @default(true)
-  emailVerificationToken  String?   @unique
+  emailVerifie Boolean @default(true)
+  emailVerificationToken String? @unique
   emailVerificationExpire DateTime?
 
   // Reinitialisation de mot de passe oublie (B14). Colonnes nullables, jamais renseignees par defaut, a usage unique.
-  resetPasswordToken  String?   @unique
+  resetPasswordToken String? @unique
   resetPasswordExpire DateTime?
 
   // Désactivation temporaire du compte par l'ingénieur lui-même (voir
   // /ingenieur -> "Mon compte"). Un compte désactivé peut toujours se
   // reconnecter (contrairement à actif=false) mais est redirigé vers
   // /ingenieur/compte-desactive tant qu'il ne s'est pas réactivé.
-  desactive   Boolean   @default(false)
+  desactive Boolean @default(false)
   desactiveLe DateTime?
 
   // Consentement RGPD au traitement des données (voir /confidentialite),
@@ -75,7 +75,7 @@ model User {
   // CLIENT (case à cocher, voir /inscription). Sert de preuve de
   // consentement (horodatage) — n'affecte pas les comptes ADMIN, créés
   // manuellement en base.
-  consentementRgpd   Boolean   @default(false)
+  consentementRgpd Boolean @default(false)
   consentementRgpdLe DateTime?
 
   profilId String? @unique // renseigné pour un compte INGENIEUR : relie à sa fiche Profil (tarifs)
@@ -88,15 +88,15 @@ model User {
   // app/api/auth/login/route.ts, lib/rate-limit.ts) : ralentit un bruteforce
   // ciblé sur un compte précis sans dépendre d'un service externe type
   // Redis. Remis à zéro dès qu'une connexion réussit.
-  echecsConnexion Int       @default(0)
+  echecsConnexion Int @default(0)
   verrouilleJusqua DateTime?
 
   // Authentification à deux facteurs (TOTP) — pour l'instant réservée au
   // rôle ADMIN (le compte le plus sensible, accès aux coûts/marges
   // internes). totpSecret reste vide tant que la configuration n'est pas
   // terminée (voir /admin -> "Sécurité", app/api/auth/2fa).
-  totpSecret       String?
-  totpActif        Boolean @default(false)
+  totpSecret String?
+  totpActif Boolean @default(false)
   totpCodesSecours String? // JSON string[] de codes à usage unique (hashés bcrypt)
 }
 
@@ -107,11 +107,11 @@ model User {
 // Fenêtre glissante simple en base plutôt qu'un service externe (Redis...),
 // suffisant pour le volume de cette démo — voir lib/rate-limit.ts.
 model TentativeIp {
-  id           String   @id @default(cuid())
-  cle          String   @unique // ex. "login:1.2.3.4"
-  compteur     Int      @default(0)
+  id String @id @default(cuid())
+  cle String @unique // ex. "login:1.2.3.4"
+  compteur Int @default(0)
   fenetreDebut DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  updatedAt DateTime @updatedAt
 }
 
 // Journal d'audit des actions administratives sensibles (validation de
@@ -119,13 +119,13 @@ model TentativeIp {
 // voir lib/audit.ts. Attendu par tout client ESN/staffing sérieux : qui a
 // fait quoi, et quand. Consultable dans /admin/journal.
 model JournalActivite {
-  id          String   @id @default(cuid())
+  id String @id @default(cuid())
   acteurEmail String
-  acteurRole  Role
-  action      String // ex. "validation_compte", "creation_profil", "rejet_cra"
-  cible       String? // id de l'entité concernée (userId, profilId, feuilleId...)
-  detail      String?
-  createdAt   DateTime @default(now())
+  acteurRole Role
+  action String // ex. "validation_compte", "creation_profil", "rejet_cra"
+  cible String? // id de l'entité concernée (userId, profilId, feuilleId...)
+  detail String?
+  createdAt DateTime @default(now())
 
   @@index([createdAt])
 }
@@ -164,23 +164,23 @@ enum SeveriteEvenementSecurite {
 }
 
 model EvenementSecurite {
-  id            String @id @default(cuid())
+  id String @id @default(cuid())
   correlationId String // regroupe les événements d'une même requête/tentative
 
   acteurEmail String?
-  acteurRole  Role?
-  acteurId    String?
+  acteurRole Role?
+  acteurId String?
 
-  action        String // vocabulaire fermé côté lib/security/events.ts, ex. "auth.login.echec"
+  action String // vocabulaire fermé côté lib/security/events.ts, ex. "auth.login.echec"
   ressourceType String?
-  ressourceId   String?
+  ressourceId String?
 
-  contexteIp    String?
+  contexteIp String?
   contexteRoute String?
 
   resultat ResultatEvenementSecurite
   severite SeveriteEvenementSecurite @default(INFO)
-  detail   String? // texte court, jamais de secret/stack trace (plafonné en code)
+  detail String? // texte court, jamais de secret/stack trace (plafonné en code)
 
   createdAt DateTime @default(now())
 
@@ -209,16 +209,16 @@ enum StatutPropositionSecurite {
 }
 
 model PropositionSecurite {
-  id              String                    @id @default(cuid())
-  origine         String // ex. "SIGNAL:acces_refuses_repetes" ou "MANUEL:admin-demo@example.com" — traçabilité de la source
-  titre           String
-  description     String
-  statut          StatutPropositionSecurite @default(PROPOSEE)
+  id String @id @default(cuid())
+  origine String // ex. "SIGNAL:acces_refuses_repetes" ou "MANUEL:admin-demo@example.com" — traçabilité de la source
+  titre String
+  description String
+  statut StatutPropositionSecurite @default(PROPOSEE)
   proposeParEmail String? // null si générée depuis un signal plutôt que saisie par un humain
-  proposeLe       DateTime                  @default(now())
-  decideParEmail  String?
-  decideLe        DateTime?
-  motifDecision   String?
+  proposeLe DateTime @default(now())
+  decideParEmail String?
+  decideLe DateTime?
+  motifDecision String?
 
   @@index([statut])
   @@index([proposeLe])
@@ -284,24 +284,24 @@ model RapportAgent {
 }
 
 model Client {
-  id                     String   @id @default(cuid())
-  nom                    String // raison sociale
-  pays                   String? // pays d'implantation du client (affiché dans l'historique de mission ingénieur, et sert à terme au calendrier de jours fériés des feuilles de temps)
-  secteur                String?
-  contactReferent        String? // nom de la personne de contact côté client
-  email                  String?
-  telephone              String?
-  identifiantEntreprise  String? // RC / RNE selon le pays
-  formeJuridique         String? // SARL, SA, EURL, Auto-entrepreneur, etc.
-  statutPreferere        TypeContrat?
-  dateDebutPrevue        DateTime?
-  notes                  String?
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @updatedAt
-  missions               Mission[]
-  documents              Document[]
-  compte                 User? // le compte de connexion du client, une fois inscrit
-  demandesTalent         DemandeTalent[] // ATLAS TALENT (fondations, 06/09) — voir DemandeTalent
+  id String @id @default(cuid())
+  nom String // raison sociale
+  pays String? // pays d'implantation du client (affiché dans l'historique de mission ingénieur, et sert à terme au calendrier de jours fériés des feuilles de temps)
+  secteur String?
+  contactReferent String? // nom de la personne de contact côté client
+  email String?
+  telephone String?
+  identifiantEntreprise String? // RC / RNE selon le pays
+  formeJuridique String? // SARL, SA, EURL, Auto-entrepreneur, etc.
+  statutPreferere TypeContrat?
+  dateDebutPrevue DateTime?
+  notes String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  missions Mission[]
+  documents Document[]
+  compte User? // le compte de connexion du client, une fois inscrit
+  demandesTalent DemandeTalent[] // ATLAS TALENT (fondations, 06/09) — voir DemandeTalent
 }
 
 // Fiche interne d'un profil d'ingénieur. Créée automatiquement, vide de
@@ -310,39 +310,39 @@ model Client {
 // déterminés après import + validation du CV (voir InfoCV), sur la base de
 // l'analyse du profil (séniorité, compétences) — voir lib/analyse-profil.ts.
 model Profil {
-  id     String       @id @default(cuid())
-  nom    String // nom de famille (avant la refonte, contenait le nom complet — voir prenom)
+  id String @id @default(cuid())
+  nom String // nom de famille (avant la refonte, contenait le nom complet — voir prenom)
   prenom String? // prénom, saisi séparément à l'inscription depuis la refonte du 4 sept.
-  type   TypeContrat?
+  type TypeContrat?
   montantSaisi Float? // laissé vide jusqu'à ce qu'un contrat soit négocié
 
-  cvUrl         String?
-  cvNomFichier  String?
-  cvImporteLe   DateTime?
-  cvValide      Boolean   @default(false)
+  cvUrl String?
+  cvNomFichier String?
+  cvImporteLe DateTime?
+  cvValide Boolean @default(false)
 
-  anneesExperience   Int?
-  seniorite          String?
-  pointsForts        String?
-  tjmEstime          Float?
+  anneesExperience Int?
+  seniorite String?
+  pointsForts String?
+  tjmEstime Float?
   typeContratSuggere TypeContrat?
 
-  disponibilite              String?
-  disponibilitePrevue        String?
-  changerMissionActuelle     Boolean?
-  missionApres               String?
-  preavis                    String?
-  preavisPrecision           String?
-  disponibiliteRenseigneeLe  DateTime?
-  questionnaireValide        Boolean   @default(false)
+  disponibilite String?
+  disponibilitePrevue String?
+  changerMissionActuelle Boolean?
+  missionApres String?
+  preavis String?
+  preavisPrecision String?
+  disponibiliteRenseigneeLe DateTime?
+  questionnaireValide Boolean @default(false)
 
-  nationalite              String?
-  nationalitePrecision     String?
-  paysResidence            String?
-  paysResidencePrecision   String?
-  regimeSuggere            String?
+  nationalite String?
+  nationalitePrecision String?
+  paysResidence String?
+  paysResidencePrecision String?
+  regimeSuggere String?
 
-  tjmSouhaite       Float?
+  tjmSouhaite Float?
   tjmSouhaiteDevise String?
 
   competences String[] @default([])
@@ -351,123 +351,123 @@ model Profil {
 
   realisations Json?
 
-  videoUrl         String?
-  videoNomFichier  String?
-  videoImporteLe   DateTime?
+  videoUrl String?
+  videoNomFichier String?
+  videoImporteLe DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  missions  Mission[]
-  infosCv   InfoCV[]
+  missions Mission[]
+  infosCv InfoCV[]
   versionsCv VersionCv[]
-  compte    User?
-  shortlistEntrees   ShortlistEntree[]
-  competencesGraph   ProfilCompetence[]
+  compte User?
+  shortlistEntrees ShortlistEntree[]
+  competencesGraph ProfilCompetence[]
 }
 
 model VersionCv {
-  id            String   @id @default(cuid())
-  profil        Profil   @relation(fields: [profilId], references: [id], onDelete: Cascade)
-  profilId      String
-  cvUrl         String
-  cvNomFichier  String?
-  importeLe     DateTime
-  createdAt     DateTime @default(now())
+  id String @id @default(cuid())
+  profil Profil @relation(fields: [profilId], references: [id], onDelete: Cascade)
+  profilId String
+  cvUrl String
+  cvNomFichier String?
+  importeLe DateTime
+  createdAt DateTime @default(now())
 
   @@index([profilId])
 }
 
 model InfoCV {
-  id        String   @id @default(cuid())
-  profil    Profil   @relation(fields: [profilId], references: [id], onDelete: Cascade)
-  profilId  String
+  id String @id @default(cuid())
+  profil Profil @relation(fields: [profilId], references: [id], onDelete: Cascade)
+  profilId String
   categorie String
-  libelle   String
-  valeur    String
-  ordre     Int      @default(0)
-  valide    Boolean  @default(false)
+  libelle String
+  valeur String
+  ordre Int @default(0)
+  valide Boolean @default(false)
   createdAt DateTime @default(now())
 }
 
 model Mission {
-  id               String   @id @default(cuid())
-  repere           String?
-  client           Client   @relation(fields: [clientId], references: [id])
-  clientId         String
-  profil           Profil   @relation(fields: [profilId], references: [id])
-  profilId         String
-  nbJours          Int
-  margeCible       Float    @default(0.30)
-  tjmVente         Float
-  deviseVente      String   @default("EUR")
-  statut           String   @default("En cours") // En cours / Terminée / Annulée
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-  documents        Document[]
-  feuillesDeTemps  FeuilleDeTemps[]
-  evaluation       Evaluation?
+  id String @id @default(cuid())
+  repere String?
+  client Client @relation(fields: [clientId], references: [id])
+  clientId String
+  profil Profil @relation(fields: [profilId], references: [id])
+  profilId String
+  nbJours Int
+  margeCible Float @default(0.30)
+  tjmVente Float
+  deviseVente String @default("EUR")
+  statut String @default("En cours") // En cours / Terminée / Annulée
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  documents Document[]
+  feuillesDeTemps FeuilleDeTemps[]
+  evaluation Evaluation?
 }
 
 model FeuilleDeTemps {
-  id                    String    @id @default(cuid())
-  mission               Mission   @relation(fields: [missionId], references: [id])
-  missionId             String
-  mois                  String // format "AAAA-MM"
-  joursTravailles       Float     @default(0)
-  heuresSupplementaires Float     @default(0)
-  commentaire           String?
-  detailJours           Json?
-  statut                String    @default("Brouillon")
-  motifRejet            String?
-  soumiseLe             DateTime?
-  valideeAdminLe        DateTime?
-  valideeClientLe       DateTime?
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
+  id String @id @default(cuid())
+  mission Mission @relation(fields: [missionId], references: [id])
+  missionId String
+  mois String // format "AAAA-MM"
+  joursTravailles Float @default(0)
+  heuresSupplementaires Float @default(0)
+  commentaire String?
+  detailJours Json?
+  statut String @default("Brouillon")
+  motifRejet String?
+  soumiseLe DateTime?
+  valideeAdminLe DateTime?
+  valideeClientLe DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([missionId, mois])
 }
 
 model Evaluation {
-  id          String   @id @default(cuid())
-  mission     Mission  @relation(fields: [missionId], references: [id])
-  missionId   String   @unique
-  note        Int
+  id String @id @default(cuid())
+  mission Mission @relation(fields: [missionId], references: [id])
+  missionId String @unique
+  note Int
   commentaire String?
-  createdAt   DateTime @default(now())
+  createdAt DateTime @default(now())
 }
 
 model Document {
-  id        String         @id @default(cuid())
-  titre     String
-  type      StatutDocument @default(AUTRE)
-  fileUrl   String
-  mission   Mission?       @relation(fields: [missionId], references: [id])
+  id String @id @default(cuid())
+  titre String
+  type StatutDocument @default(AUTRE)
+  fileUrl String
+  mission Mission? @relation(fields: [missionId], references: [id])
   missionId String?
-  client    Client         @relation(fields: [clientId], references: [id])
-  clientId  String
-  createdAt DateTime       @default(now())
+  client Client @relation(fields: [clientId], references: [id])
+  clientId String
+  createdAt DateTime @default(now())
 }
 
 model DemandeContact {
-  id              String   @id @default(cuid())
-  nom             String
-  email           String
-  entreprise      String?
-  telephone       String?
-  message         String?
+  id String @id @default(cuid())
+  nom String
+  email String
+  entreprise String?
+  telephone String?
+  message String?
   creneauSouhaite String?
-  traite          Boolean  @default(false)
-  createdAt       DateTime @default(now())
+  traite Boolean @default(false)
+  createdAt DateTime @default(now())
 }
 
 model Hypotheses {
-  id             String @id @default("singleton")
-  joursAn        Int    @default(218)
-  chargesSalarie Float  @default(0.42)
-  fraisFreelance Float  @default(0.08)
-  overhead       Float  @default(0.15)
-  margeDefaut    Float  @default(0.30)
+  id String @id @default("singleton")
+  joursAn Int @default(218)
+  chargesSalarie Float @default(0.42)
+  fraisFreelance Float @default(0.08)
+  overhead Float @default(0.15)
+  margeDefaut Float @default(0.30)
 }
 
 // ============================================================================
@@ -483,29 +483,29 @@ enum StatutDemandeTalent {
 }
 
 model DemandeTalent {
-  id       String @id @default(cuid())
-  client   Client @relation(fields: [clientId], references: [id])
+  id String @id @default(cuid())
+  client Client @relation(fields: [clientId], references: [id])
   clientId String
-  titre    String?
+  titre String?
   description String
-  statut   StatutDemandeTalent @default(SOUMISE)
+  statut StatutDemandeTalent @default(SOUMISE)
 
-  competencesExtraites      String[] @default([])
-  senioriteSouhaitee        String?
-  anneesExperienceMin       Int?
-  secteurActivite           String?
-  localisation              String?
-  mobilite                  String?
-  disponibiliteSouhaitee    String?
-  budgetTjmMax              Float?
-  budgetDevise              String   @default("EUR")
-  dateDebutSouhaitee        DateTime?
-  analyseProvider           String?
-  analyseConfiance          Float?
-  analyseeLe                DateTime?
+  competencesExtraites String[] @default([])
+  senioriteSouhaitee String?
+  anneesExperienceMin Int?
+  secteurActivite String?
+  localisation String?
+  mobilite String?
+  disponibiliteSouhaitee String?
+  budgetTjmMax Float?
+  budgetDevise String @default("EUR")
+  dateDebutSouhaitee DateTime?
+  analyseProvider String?
+  analyseConfiance Float?
+  analyseeLe DateTime?
 
   criteresModifiesParEmail String?
-  criteresModifiesLe       DateTime?
+  criteresModifiesLe DateTime?
 
   shortlist ShortlistEntree[]
   createdAt DateTime @default(now())
@@ -521,18 +521,18 @@ enum StatutShortlist {
 }
 
 model ShortlistEntree {
-  id         String          @id @default(cuid())
-  demande    DemandeTalent   @relation(fields: [demandeId], references: [id], onDelete: Cascade)
-  demandeId  String
-  profil     Profil          @relation(fields: [profilId], references: [id])
-  profilId   String
-  score      Float
-  confiance  Float
-  motifs     Json
-  statut     StatutShortlist @default(SUGGEREE)
+  id String @id @default(cuid())
+  demande DemandeTalent @relation(fields: [demandeId], references: [id], onDelete: Cascade)
+  demandeId String
+  profil Profil @relation(fields: [profilId], references: [id])
+  profilId String
+  score Float
+  confiance Float
+  motifs Json
+  statut StatutShortlist @default(SUGGEREE)
   valideParEmail String?
-  valideLe   DateTime?
-  createdAt  DateTime        @default(now())
+  valideLe DateTime?
+  createdAt DateTime @default(now())
 
   @@unique([demandeId, profilId])
 }
@@ -561,32 +561,32 @@ enum SourcePreuveCompetence {
 }
 
 model ProfilCompetence {
-  id                String                  @id @default(cuid())
-  profil            Profil                  @relation(fields: [profilId], references: [id], onDelete: Cascade)
-  profilId          String
-  competence        String
-  niveau            Int?
-  anneesExperience  Int?
-  contexte          String?
-  secteur           String?
-  statut            StatutPreuveCompetence  @default(INCONNU)
-  confiance         NiveauConfiance         @default(BASSE)
-  preuves           SkillEvidence[]
-  createdAt         DateTime                @default(now())
-  updatedAt         DateTime                @updatedAt
+  id String @id @default(cuid())
+  profil Profil @relation(fields: [profilId], references: [id], onDelete: Cascade)
+  profilId String
+  competence String
+  niveau Int?
+  anneesExperience Int?
+  contexte String?
+  secteur String?
+  statut StatutPreuveCompetence @default(INCONNU)
+  confiance NiveauConfiance @default(BASSE)
+  preuves SkillEvidence[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([profilId, competence])
   @@index([profilId])
 }
 
 model SkillEvidence {
-  id                  String                 @id @default(cuid())
-  profilCompetence    ProfilCompetence       @relation(fields: [profilCompetenceId], references: [id], onDelete: Cascade)
-  profilCompetenceId  String
-  source              SourcePreuveCompetence
-  detail              String?
-  niveau              Int?
-  createdAt           DateTime               @default(now())
+  id String @id @default(cuid())
+  profilCompetence ProfilCompetence @relation(fields: [profilCompetenceId], references: [id], onDelete: Cascade)
+  profilCompetenceId String
+  source SourcePreuveCompetence
+  detail String?
+  niveau Int?
+  createdAt DateTime @default(now())
 
   @@index([profilCompetenceId])
 }
