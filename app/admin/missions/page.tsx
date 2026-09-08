@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, FormEvent } from "react";
 import { bleuFonce, grisTexte, bordure } from "@/lib/theme";
 
 type Mission = {
@@ -15,6 +15,9 @@ type Mission = {
   client: { nom: string };
   profil?: { nom: string; prenom?: string | null };
 };
+
+type ClientOption = { id: string; nom: string };
+type ProfilOption = { id: string; nom: string; prenom?: string | null };
 
 const TEMPLATES = [
   { key: "contrat_prestation", label: "Contrat de prestation (client)" },
@@ -40,15 +43,83 @@ export default function MissionsPage() {
   const [role, setRole] = useState<string | null>(null);
   const [generating, setGenerating] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetch("/api/missions")
+  // Formulaire "Nouvelle mission" — l'API POST /api/missions existait déjà
+  // (voir app/api/missions/route.ts) mais aucun écran ne l'appelait : ce
+  // bloc corrige cette étape manquante du parcours Matching → Mission,
+  // sans toucher au reste de la page ni ajouter de logique côté serveur.
+  const [clients, setClients] = useState<ClientOption[]>([]);
+  const [profils, setProfils] = useState<ProfilOption[]>([]);
+  const [afficherFormulaire, setAfficherFormulaire] = useState(false);
+  const [clientId, setClientId] = useState("");
+  const [profilId, setProfilId] = useState("");
+  const [repere, setRepere] = useState("");
+  const [nbJours, setNbJours] = useState("");
+  const [tjmVente, setTjmVente] = useState("");
+  const [creation, setCreation] = useState(false);
+  const [erreurCreation, setErreurCreation] = useState<string | null>(null);
+
+  function rechargerMissions() {
+    return fetch("/api/missions")
       .then((r) => r.json())
       .then((data) => {
         setMissions(data);
-        // un ingénieur ne reçoit pas de champ tjmVente : sert à adapter l'affichage
-        setRole(data[0]?.tjmVente !== undefined ? "ADMIN" : "INGENIEUR");
+        return data;
       });
+  }
+
+  useEffect(() => {
+    rechargerMissions();
+
+    // Détection du rôle : déduire "ADMIN" de la présence de tjmVente dans
+    // /api/missions échoue à tort quand la liste est vide (aucune mission
+    // encore créée) — un Admin sans mission était alors traité comme un
+    // Ingénieur et perdait les colonnes financières et ce formulaire. Un
+    // appel direct à une route réservée à l'Admin (/api/clients, 200 vs 403)
+    // donne la réponse sans cette ambiguïté, sans rien changer côté serveur.
+    fetch("/api/clients").then((r) => {
+      if (r.ok) {
+        setRole("ADMIN");
+        r.json().then(setClients);
+        fetch("/api/profils").then((r2) => (r2.ok ? r2.json() : { profils: [] })).then((d) => setProfils(d.profils ?? [])).catch(() => {});
+      } else {
+        setRole("INGENIEUR");
+      }
+    }).catch(() => {});
   }, []);
+
+  async function creerMission(e: FormEvent) {
+    e.preventDefault();
+    setErreurCreation(null);
+    if (!clientId || !profilId || !nbJours || !tjmVente) {
+      setErreurCreation("Client, ingénieur, nombre de jours et TJM vente sont requis.");
+      return;
+    }
+    setCreation(true);
+    const res = await fetch("/api/missions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientId,
+        profilId,
+        repere: repere || undefined,
+        nbJours: Number(nbJours),
+        tjmVente: Number(tjmVente),
+      }),
+    });
+    setCreation(false);
+    if (!res.ok) {
+      const err = await res.json();
+      setErreurCreation(err.error ?? "Erreur lors de la création de la mission");
+      return;
+    }
+    setClientId("");
+    setProfilId("");
+    setRepere("");
+    setNbJours("");
+    setTjmVente("");
+    setAfficherFormulaire(false);
+    await rechargerMissions();
+  }
 
   async function generer(missionId: string, templateKey: string) {
     setGenerating(missionId + templateKey);
@@ -84,6 +155,69 @@ export default function MissionsPage() {
         génération des contrats et avenants se fait mission par mission via la colonne « Générer », une fois
         l'entretien de l'ingénieur validé.
       </p>
+
+      {isAdmin && (
+        <div style={{ marginBottom: 20 }}>
+          <button
+            onClick={() => setAfficherFormulaire((v) => !v)}
+            style={{ padding: "6px 14px", fontWeight: 600, border: `1px solid ${bordure}`, background: "#fff", cursor: "pointer" }}
+          >
+            {afficherFormulaire ? "Annuler" : "+ Nouvelle mission"}
+          </button>
+
+          {afficherFormulaire && (
+            <form
+              onSubmit={creerMission}
+              style={{
+                marginTop: 12,
+                padding: 16,
+                border: `1px solid ${bordure}`,
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 12,
+                alignItems: "flex-end",
+                maxWidth: 900,
+              }}
+            >
+              <label style={{ fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
+                Client
+                <select value={clientId} onChange={(e) => setClientId(e.target.value)} style={{ padding: 6, minWidth: 180 }}>
+                  <option value="">Choisir...</option>
+                  {clients.map((c) => (
+                    <option key={c.id} value={c.id}>{c.nom}</option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
+                Ingénieur
+                <select value={profilId} onChange={(e) => setProfilId(e.target.value)} style={{ padding: 6, minWidth: 180 }}>
+                  <option value="">Choisir...</option>
+                  {profils.map((p) => (
+                    <option key={p.id} value={p.id}>{nomIngenieur(p)}</option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
+                Repère (optionnel)
+                <input value={repere} onChange={(e) => setRepere(e.target.value)} style={{ padding: 6, width: 160 }} />
+              </label>
+              <label style={{ fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
+                Nombre de jours
+                <input type="number" min={1} value={nbJours} onChange={(e) => setNbJours(e.target.value)} style={{ padding: 6, width: 100 }} />
+              </label>
+              <label style={{ fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
+                TJM vente (€)
+                <input type="number" min={0} value={tjmVente} onChange={(e) => setTjmVente(e.target.value)} style={{ padding: 6, width: 100 }} />
+              </label>
+              <button type="submit" disabled={creation} style={{ padding: "8px 16px", fontWeight: 600 }}>
+                {creation ? "Création..." : "Créer la mission"}
+              </button>
+              {erreurCreation && <p style={{ fontSize: 12, color: "#b91c1c", width: "100%", margin: 0 }}>{erreurCreation}</p>}
+            </form>
+          )}
+        </div>
+      )}
+
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
