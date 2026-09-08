@@ -224,6 +224,55 @@ model PropositionSecurite {
   @@index([proposeLe])
 }
 
+// ============================================================================
+// COMPANY ATLAS — B18 (08/09/2026) : registre structuré de rapports
+// inter-agents, généralisant la discipline d'EvenementSecurite (ci-dessus)
+// sans réutiliser sa table — voir lib/gouvernance/rapports.ts pour la
+// justification (audit B18, étape 1) : /api/security/runtime calcule ses
+// signaux sur TOUS les EvenementSecurite sans filtre par action, donc y
+// écrire des rapports de gouvernance aurait faussé ces signaux déjà
+// validés (B16/B17). RapportAgent est donc une table séparée, avec la
+// même discipline : correlationId, vocabulaire fermé, textes plafonnés,
+// aucune donnée sensible, écriture toujours accompagnée d'un try/catch
+// côté appelant (voir enregistrerRapportAgent).
+enum AgentEmetteur {
+  PRINCIPAL
+  ATLAS_TALENT
+  ATLAS_OS_SERVICES
+  COMPANY_OS
+}
+
+enum StatutRapportAgent {
+  COMPLETE
+  PARTIEL
+  BLOQUE
+  REFUSE
+}
+
+model RapportAgent {
+  id String @id @default(cuid())
+  correlationId String
+
+  agentEmetteur AgentEmetteur
+  typeRapport String // vocabulaire documenté dans lib/gouvernance/rapports.ts (TYPES_RAPPORT)
+
+  objectif String
+  analyse String?
+  actions String?
+  risques String?
+  statut StatutRapportAgent
+  inconnu String?
+  contexte String?
+
+  severite SeveriteEvenementSecurite @default(INFO)
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([correlationId])
+  @@index([agentEmetteur])
+}
+
 model Client {
   id String @id @default(cuid())
   nom String // raison sociale
