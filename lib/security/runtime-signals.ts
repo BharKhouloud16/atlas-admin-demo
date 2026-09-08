@@ -12,17 +12,28 @@
 // jamais d'anomalie") : chaque catégorie de signal demandée par la
 // directive est représentée, mais UNIQUEMENT celles pour lesquelles ce lot
 // dispose réellement d'une source de donnée (EvenementSecurite) produisent
-// un vrai calcul. Les deux catégories sans source de donnée observable
-// dans ce lot ("changement inhabituel de permissions", "accès anormal à
-// des objets" — aucun événement de modification de permission ni de
-// journalisation par objet individuel n'existe encore) restent
-// explicitement UNKNOWN, jamais simulées.
+// un vrai calcul.
+//
+// MISE À JOUR B17 (08/09/2026) — "accès anormal à des objets" est passé de
+// UNKNOWN à un signal calculé : app/api/missions/[id]/marge-intelligence
+// journalise désormais un événement SUCCÈS (action "objet.consultation")
+// à chaque lecture, avec ressourceType/ressourceId. La source de donnée
+// existe donc réellement (directive B17, section 3 : "étendre les signaux
+// uniquement lorsque les données nécessaires existent réellement"). La
+// règle reste un simple seuil explicite sur un comptage brut — même
+// discipline que les signaux 1 à 4, aucune inférence, aucun apprentissage.
+// "changement inhabituel de permissions" reste UNKNOWN : aucun événement
+// de modification de permission/rôle n'est journalisé dans ce lot non plus
+// (RBAC toujours géré par User.role + middleware.ts, jamais modifié en
+// base via une action journalisable) — resterait simulé si calculé ici.
 
 export type EvenementSecuriteAllege = {
   action: string;
   resultat: "SUCCES" | "REFUSE" | "ERREUR";
   acteurEmail: string | null;
   contexteIp: string | null;
+  ressourceType: string | null;
+  ressourceId: string | null;
   createdAt: Date;
 };
 
@@ -142,7 +153,7 @@ export function signalErreursRepetees(evenements: EvenementSecuriteAllege[], mai
     titre: "Erreurs répétées",
     statut: "AUCUN_SIGNAL",
     fait: `${fenetre.length} erreurs en 15 minutes, aucune action au-dessus du seuil (${SEUIL_ERREURS_REPETEES}).`,
-    explication: "Erreurs observées mais sous le seuil de répétition.",
+    explication: "Pas de série d'erreurs répétées détectée.",
   };
 }
 
@@ -177,10 +188,57 @@ export function signalSequenceSuspecteConnexion(evenements: EvenementSecuriteAll
   };
 }
 
-// Catégories demandées par la directive B16 (section 4) pour lesquelles ce
-// lot NE DISPOSE PAS d'une source de donnée observable — voir en-tête de
-// fichier. Retournées explicitement en UNKNOWN plutôt que simulées ou
-// omises silencieusement (directive B16 : "UNKNOWN ≠ FAIL").
+// SIGNAL 5 — accès anormal à des objets (B17) : un même acteur consulte un
+// nombre inhabituellement élevé d'objets distincts (mission, client...) sur
+// la fenêtre courante. Repose sur les événements "objet.consultation"
+// (SUCCÈS) journalisés depuis B17 pour les lectures sensibles (voir
+// app/api/missions/[id]/marge-intelligence/route.ts) — un objet consulté
+// une seule fois ne compte qu'une fois (distinct par ressourceId), pour ne
+// pas confondre "beaucoup de clics" avec "beaucoup d'objets différents
+// consultés". Seuil fixe et documenté, même discipline que les signaux 1 à
+// 4 — aucun apprentissage, aucun profil de comportement "normal" construit.
+const SEUIL_OBJETS_DISTINCTS_CONSULTES = 20;
+export function signalAccesAnormalObjets(evenements: EvenementSecuriteAllege[], maintenant: Date): SignalRuntime {
+  const fenetre = dansLaFenetre(evenements, maintenant).filter(
+    (e) => e.action === "objet.consultation" && e.resultat === "SUCCES" && e.ressourceId
+  );
+  if (fenetre.length === 0) {
+    return {
+      regle: "acces_anormal_objets",
+      titre: "Accès anormal à des objets",
+      statut: "AUCUN_SIGNAL",
+      fait: "0 lecture d'objet sensible journalisée sur les 15 dernières minutes.",
+      explication: "Aucune lecture d'objet sensible observée sur la fenêtre courante.",
+    };
+  }
+  const parActeur = grouperPar(fenetre, (e) => e.acteurEmail ?? e.contexteIp ?? null);
+  let pire: { cle: string; count: number } | null = null;
+  for (const [cle, liste] of parActeur) {
+    const distincts = new Set(liste.map((e) => e.ressourceId));
+    if (!pire || distincts.size > pire.count) pire = { cle, count: distincts.size };
+  }
+  if (pire && pire.count >= SEUIL_OBJETS_DISTINCTS_CONSULTES) {
+    return {
+      regle: "acces_anormal_objets",
+      titre: "Accès anormal à des objets",
+      statut: "SIGNAL_DETECTE",
+      fait: `${pire.cle} : ${pire.count} objets distincts consultés en 15 minutes (seuil ${SEUIL_OBJETS_DISTINCTS_CONSULTES}).`,
+      explication: "Un même acteur a consulté un nombre d'objets distincts au-dessus du seuil fixe sur la fenêtre courante — comptage brut, aucune inférence sur l'intention.",
+    };
+  }
+  return {
+    regle: "acces_anormal_objets",
+    titre: "Accès anormal à des objets",
+    statut: "AUCUN_SIGNAL",
+    fait: `${fenetre.length} lectures d'objets sensibles en 15 minutes, aucun acteur au-dessus du seuil (${SEUIL_OBJETS_DISTINCTS_CONSULTES} objets distincts).`,
+    explication: "Volume de lecture d'objets sous le seuil.",
+  };
+}
+
+// Catégorie demandée par la directive B16 (section 4) pour laquelle ce lot
+// NE DISPOSE PAS d'une source de donnée observable — voir en-tête de
+// fichier. Retournée explicitement en UNKNOWN plutôt que simulée ou omise
+// silencieusement (directive B16 : "UNKNOWN ≠ FAIL").
 export function signauxSansSourceDeDonnee(): SignalRuntime[] {
   return [
     {
@@ -189,13 +247,6 @@ export function signauxSansSourceDeDonnee(): SignalRuntime[] {
       statut: "UNKNOWN",
       fait: "Aucun événement de modification de permission/rôle n'est journalisé dans ce lot.",
       explication: "Pas de source de donnée observable — ce lot ne modifie pas les mécanismes d'attribution de rôle (RBAC déjà géré par User.role + middleware.ts). Signal non calculable, volontairement non simulé.",
-    },
-    {
-      regle: "acces_anormal_objets",
-      titre: "Accès anormal à des objets",
-      statut: "UNKNOWN",
-      fait: "Les événements actuels ne journalisent pas encore l'identifiant de chaque objet consulté en lecture (GET), seulement les actions sensibles (connexion, génération de contrat, refus RBAC).",
-      explication: "Pas de source de donnée observable à ce stade — voir 'limites' du rapport final. Étendre EvenementSecurite aux lectures d'objets sensibles est une amélioration future explicitement proposée, pas implémentée ici pour ne pas alourdir chaque requête de lecture sans preuve de besoin.",
     },
   ];
 }
@@ -206,6 +257,7 @@ export function calculerSignauxRuntime(evenements: EvenementSecuriteAllege[], ma
     signalVolumeAnormal(evenements, maintenant),
     signalErreursRepetees(evenements, maintenant),
     signalSequenceSuspecteConnexion(evenements, maintenant),
+    signalAccesAnormalObjets(evenements, maintenant),
     ...signauxSansSourceDeDonnee(),
   ];
 }

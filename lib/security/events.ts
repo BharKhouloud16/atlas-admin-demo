@@ -29,6 +29,14 @@ export type SeveriteEvenement = "INFO" | "ATTENTION" | "ALERTE";
 // libres non contrôlées qui rendraient les signaux (B16.3) impossibles à
 // interpréter de façon fiable. Extensible par un futur lot explicite,
 // jamais au fil de l'eau dans une route isolée.
+//
+// "objet.consultation" ajouté en B17 (08/09/2026, directive B17 section 2
+// "instrumenter progressivement les GET sensibles") : action générique de
+// LECTURE réussie d'un objet sensible (resultat toujours SUCCES — un accès
+// refusé reste "rbac.acces_refuse"), utilisée avec ressourceType/
+// ressourceId pour permettre le signal "accès anormal à des objets"
+// (lib/security/runtime-signals.ts) — la seule catégorie de signal B16 qui
+// restait UNKNOWN faute de source de donnée.
 export const ACTIONS_EVENEMENT_SECURITE = [
   "auth.login.succes",
   "auth.login.echec",
@@ -40,6 +48,7 @@ export const ACTIONS_EVENEMENT_SECURITE = [
   "auth.login.compte_inactif",
   "rbac.acces_refuse",
   "contrat.generation",
+  "objet.consultation",
 ] as const;
 export type ActionEvenementSecurite = (typeof ACTIONS_EVENEMENT_SECURITE)[number];
 
