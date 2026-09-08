@@ -160,7 +160,7 @@ export default function MissionsPage() {
         <div style={{ marginBottom: 20 }}>
           <button
             onClick={() => setAfficherFormulaire((v) => !v)}
-            style={{ padding: "6px 14px", fontWeight: 600, border: `1px solid ${bordure}`, background: "#fff", cursor: "pointer" }}
+            style={{ padding: "6px 14px", fontWeight: 600, border: `1px solid ${bordure}`, background: "#fff", color: bleuFonce, cursor: "pointer" }}
           >
             {afficherFormulaire ? "Annuler" : "+ Nouvelle mission"}
           </button>
