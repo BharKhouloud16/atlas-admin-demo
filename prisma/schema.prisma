@@ -20,9 +20,9 @@ enum TypeContrat {
 }
 
 enum Role {
-  ADMIN       // accès complet : clients, profils, hypothèses, tous les contrats, coûts internes, validation des inscriptions
-  INGENIEUR   // s'inscrit lui-même ; voit uniquement ses propres missions, aucune donnée tarifaire
-  CLIENT      // s'inscrit lui-même ; voit le suivi et les documents de ses propres missions uniquement
+  ADMIN // accès complet : clients, profils, hypothèses, tous les contrats, coûts internes, validation des inscriptions
+  INGENIEUR // s'inscrit lui-même ; voit uniquement ses propres missions, aucune donnée tarifaire
+  CLIENT // s'inscrit lui-même ; voit le suivi et les documents de ses propres missions uniquement
 }
 
 enum StatutDocument {
@@ -36,17 +36,17 @@ enum StatutDocument {
 // Un compte auto-inscrit (INGENIEUR ou CLIENT) démarre avec actif=false :
 // il ne peut pas se connecter tant qu'un ADMIN ne l'a pas validé.
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
+  id       String @id @default(cuid())
+  email    String @unique
   passwordHash String
-  role         Role
-  actif        Boolean  @default(true) // false pour tout compte auto-inscrit, en attente de validation
-  createdAt    DateTime @default(now())
+  role     Role
+  actif    Boolean @default(true) // false pour tout compte auto-inscrit, en attente de validation
+  createdAt DateTime @default(now())
 
   // Traçabilité pour la nouvelle rubrique Admin "Ingénieurs" (liste des
   // comptes validés, voir /admin/ingenieurs) : quand le compte a été validé
   // par un Admin, et sa toute première connexion réussie.
-  valideLe            DateTime?
+  valideLe DateTime?
   premiereConnexionLe DateTime?
 
   // Vérification de l'adresse email à l'inscription (voir lib/email.ts,
@@ -55,49 +55,48 @@ model User {
   // avant l'ajout de cette fonctionnalité) : seule l'inscription publique
   // (/api/auth/signup) le met explicitement à false pour un nouveau compte
   // INGENIEUR/CLIENT, le temps que le lien envoyé par email soit cliqué.
-  emailVerifie             Boolean   @default(true)
-  emailVerificationToken   String?   @unique
-  emailVerificationExpire  DateTime?
+  emailVerifie Boolean @default(true)
+  emailVerificationToken String? @unique
+  emailVerificationExpire DateTime?
 
-// Reinitialisation de mot de passe oublie (B14). Colonnes nullables, jamais renseignees par defaut, a usage unique.
-resetPasswordToken String? @unique
-resetPasswordExpire DateTime?
-
+  // Reinitialisation de mot de passe oublie (B14). Colonnes nullables, jamais renseignees par defaut, a usage unique.
+  resetPasswordToken String? @unique
+  resetPasswordExpire DateTime?
 
   // Désactivation temporaire du compte par l'ingénieur lui-même (voir
   // /ingenieur -> "Mon compte"). Un compte désactivé peut toujours se
   // reconnecter (contrairement à actif=false) mais est redirigé vers
   // /ingenieur/compte-desactive tant qu'il ne s'est pas réactivé.
-  desactive    Boolean   @default(false)
-  desactiveLe  DateTime?
+  desactive Boolean @default(false)
+  desactiveLe DateTime?
 
   // Consentement RGPD au traitement des données (voir /confidentialite),
   // recueilli obligatoirement à l'inscription pour un compte INGENIEUR ou
   // CLIENT (case à cocher, voir /inscription). Sert de preuve de
   // consentement (horodatage) — n'affecte pas les comptes ADMIN, créés
   // manuellement en base.
-  consentementRgpd    Boolean   @default(false)
-  consentementRgpdLe  DateTime?
+  consentementRgpd Boolean @default(false)
+  consentementRgpdLe DateTime?
 
-  profilId     String?  @unique // renseigné pour un compte INGENIEUR : relie à sa fiche Profil (tarifs)
-  profil       Profil?  @relation(fields: [profilId], references: [id])
+  profilId String? @unique // renseigné pour un compte INGENIEUR : relie à sa fiche Profil (tarifs)
+  profil   Profil? @relation(fields: [profilId], references: [id])
 
-  clientId     String?  @unique // renseigné pour un compte CLIENT : relie à sa fiche Client
-  client       Client?  @relation(fields: [clientId], references: [id])
+  clientId String? @unique // renseigné pour un compte CLIENT : relie à sa fiche Client
+  client   Client? @relation(fields: [clientId], references: [id])
 
   // Verrouillage progressif après échecs de connexion successifs (voir
   // app/api/auth/login/route.ts, lib/rate-limit.ts) : ralentit un bruteforce
   // ciblé sur un compte précis sans dépendre d'un service externe type
   // Redis. Remis à zéro dès qu'une connexion réussit.
-  echecsConnexion  Int       @default(0)
+  echecsConnexion Int @default(0)
   verrouilleJusqua DateTime?
 
   // Authentification à deux facteurs (TOTP) — pour l'instant réservée au
   // rôle ADMIN (le compte le plus sensible, accès aux coûts/marges
   // internes). totpSecret reste vide tant que la configuration n'est pas
   // terminée (voir /admin -> "Sécurité", app/api/auth/2fa).
-  totpSecret       String?
-  totpActif        Boolean  @default(false)
+  totpSecret String?
+  totpActif Boolean @default(false)
   totpCodesSecours String? // JSON string[] de codes à usage unique (hashés bcrypt)
 }
 
@@ -108,11 +107,11 @@ resetPasswordExpire DateTime?
 // Fenêtre glissante simple en base plutôt qu'un service externe (Redis...),
 // suffisant pour le volume de cette démo — voir lib/rate-limit.ts.
 model TentativeIp {
-  id           String   @id @default(cuid())
-  cle          String   @unique // ex. "login:1.2.3.4"
-  compteur     Int      @default(0)
+  id String @id @default(cuid())
+  cle String @unique // ex. "login:1.2.3.4"
+  compteur Int @default(0)
   fenetreDebut DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  updatedAt DateTime @updatedAt
 }
 
 // Journal d'audit des actions administratives sensibles (validation de
@@ -120,36 +119,130 @@ model TentativeIp {
 // voir lib/audit.ts. Attendu par tout client ESN/staffing sérieux : qui a
 // fait quoi, et quand. Consultable dans /admin/journal.
 model JournalActivite {
-  id          String   @id @default(cuid())
+  id String @id @default(cuid())
   acteurEmail String
-  acteurRole  Role
-  action      String // ex. "validation_compte", "creation_profil", "rejet_cra"
-  cible       String? // id de l'entité concernée (userId, profilId, feuilleId...)
-  detail      String?
-  createdAt   DateTime @default(now())
+  acteurRole Role
+  action String // ex. "validation_compte", "creation_profil", "rejet_cra"
+  cible String? // id de l'entité concernée (userId, profilId, feuilleId...)
+  detail String?
+  createdAt DateTime @default(now())
 
   @@index([createdAt])
 }
 
+// ============================================================================
+// ATLAS OS — TRUST & SECURITY INTELLIGENCE FOUNDATION (Batch 16, 08/09/2026)
+// Événement de sécurité TRANSVERSE (runtime), distinct de JournalActivite
+// ci-dessus : JournalActivite trace des actions MÉTIER déjà accomplies
+// (validation de compte, rejet CRA...) et reste inchangé (aucune
+// modification, aucune duplication). EvenementSecurite trace tout
+// événement PERTINENT POUR LA SÉCURITÉ, y compris les échecs et refus
+// (échec de connexion, verrouillage, refus RBAC, génération de contrat) —
+// ce que JournalActivite ne capture pas aujourd'hui (il n'écrit qu'en cas
+// de succès d'une action métier). Voir lib/security/events.ts.
+//
+// Champ par champ, respecte le modèle transverse demandé : acteur
+// (acteurEmail/acteurRole/acteurId), action, ressource
+// (ressourceType/ressourceId), contexte (contexteIp/contexteRoute),
+// résultat, timestamp (createdAt), severite, correlationId (regroupe
+// plusieurs événements liés à une même requête/tentative).
+//
+// Aucune donnée sensible : jamais de mot de passe, token, secret, hash —
+// voir lib/security/events.ts, detail est plafonné et jamais une stack
+// trace. Écriture best-effort (même discipline que journaliser() /
+// lib/audit.ts) : un échec d'écriture ne bloque jamais l'action réelle.
+enum ResultatEvenementSecurite {
+  SUCCES
+  REFUSE
+  ERREUR
+}
+
+enum SeveriteEvenementSecurite {
+  INFO
+  ATTENTION
+  ALERTE
+}
+
+model EvenementSecurite {
+  id String @id @default(cuid())
+  correlationId String // regroupe les événements d'une même requête/tentative
+
+  acteurEmail String?
+  acteurRole Role?
+  acteurId String?
+
+  action String // vocabulaire fermé côté lib/security/events.ts, ex. "auth.login.echec"
+  ressourceType String?
+  ressourceId String?
+
+  contexteIp String?
+  contexteRoute String?
+
+  resultat ResultatEvenementSecurite
+  severite SeveriteEvenementSecurite @default(INFO)
+  detail String? // texte court, jamais de secret/stack trace (plafonné en code)
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([action])
+  @@index([acteurEmail])
+  @@index([correlationId])
+}
+
+// Interface de la boucle d'amélioration continue demandée (OBSERVE ->
+// ANALYSE -> PROPOSE -> SIMULE -> VALIDATION HUMAINE -> CHANGE -> MESURE) :
+// seuls OBSERVE (EvenementSecurite), ANALYSE (lib/security/runtime-signals.ts)
+// et PROPOSE/VALIDATION HUMAINE (ce modèle + ses routes) existent à ce
+// stade. AUCUN mécanisme d'application automatique (CHANGE) n'existe dans
+// ce lot, et c'est volontaire — voir lib/security/runtime-risk.ts et
+// app/api/security/propositions : une proposition ne modifie jamais seule
+// une permission, une règle de sécurité ou une donnée. Elle reste à l'état
+// PROPOSEE jusqu'à une décision humaine explicite (APPROUVEE/REJETEE),
+// tracée (decideParEmail/decideLe/motifDecision) — et même APPROUVEE ne
+// déclenche aujourd'hui aucune action automatique : la mise en œuvre reste
+// manuelle, hors périmètre de ce lot (voir rapport final, limites).
+enum StatutPropositionSecurite {
+  PROPOSEE
+  APPROUVEE
+  REJETEE
+}
+
+model PropositionSecurite {
+  id String @id @default(cuid())
+  origine String // ex. "SIGNAL:acces_refuses_repetes" ou "MANUEL:admin-demo@example.com" — traçabilité de la source
+  titre String
+  description String
+  statut StatutPropositionSecurite @default(PROPOSEE)
+  proposeParEmail String? // null si générée depuis un signal plutôt que saisie par un humain
+  proposeLe DateTime @default(now())
+  decideParEmail String?
+  decideLe DateTime?
+  motifDecision String?
+
+  @@index([statut])
+  @@index([proposeLe])
+}
+
 model Client {
-  id                  String    @id @default(cuid())
-  nom                 String    // raison sociale
-  pays                String?   // pays d'implantation du client (affiché dans l'historique de mission ingénieur, et sert à terme au calendrier de jours fériés des feuilles de temps)
-  secteur             String?
-  contactReferent     String?   // nom de la personne de contact côté client
-  email               String?
-  telephone           String?
+  id String @id @default(cuid())
+  nom String // raison sociale
+  pays String? // pays d'implantation du client (affiché dans l'historique de mission ingénieur, et sert à terme au calendrier de jours fériés des feuilles de temps)
+  secteur String?
+  contactReferent String? // nom de la personne de contact côté client
+  email String?
+  telephone String?
   identifiantEntreprise String? // RC / RNE selon le pays
-  formeJuridique      String?   // SARL, SA, EURL, Auto-entrepreneur, etc.
-  statutPreferere     TypeContrat?
-  dateDebutPrevue     DateTime?
-  notes               String?
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
-  missions            Mission[]
-  documents           Document[]
-  compte              User?     // le compte de connexion du client, une fois inscrit
-  demandesTalent      DemandeTalent[] // ATLAS TALENT (fondations, 06/09) — voir DemandeTalent
+  formeJuridique String? // SARL, SA, EURL, Auto-entrepreneur, etc.
+  statutPreferere TypeContrat?
+  dateDebutPrevue DateTime?
+  notes String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  missions Mission[]
+  documents Document[]
+  compte User? // le compte de connexion du client, une fois inscrit
+  demandesTalent DemandeTalent[] // ATLAS TALENT (fondations, 06/09) — voir DemandeTalent
 }
 
 // Fiche interne d'un profil d'ingénieur. Créée automatiquement, vide de
@@ -158,366 +251,238 @@ model Client {
 // déterminés après import + validation du CV (voir InfoCV), sur la base de
 // l'analyse du profil (séniorité, compétences) — voir lib/analyse-profil.ts.
 model Profil {
-  id                  String       @id @default(cuid())
-  nom                 String       // nom de famille (avant la refonte, contenait le nom complet — voir prenom)
-  prenom              String?      // prénom, saisi séparément à l'inscription depuis la refonte du 4 sept.
-  type                TypeContrat?
-  montantSaisi        Float?       // laissé vide jusqu'à ce qu'un contrat soit négocié
+  id String @id @default(cuid())
+  nom String // nom de famille (avant la refonte, contenait le nom complet — voir prenom)
+  prenom String? // prénom, saisi séparément à l'inscription depuis la refonte du 4 sept.
+  type TypeContrat?
+  montantSaisi Float? // laissé vide jusqu'à ce qu'un contrat soit négocié
 
-  // Import & validation du CV (voir /ingenieur/cv et /ingenieur/cv/verifier)
-  cvUrl               String?      // URL du fichier CV stocké (Vercel Blob)
-  cvNomFichier        String?
-  cvImporteLe         DateTime?
-  cvValide            Boolean      @default(false) // true une fois toutes les InfoCV validées
+  cvUrl String?
+  cvNomFichier String?
+  cvImporteLe DateTime?
+  cvValide Boolean @default(false)
 
-  // Résultat de l'analyse du profil (déduit des InfoCV validées) — voir
-  // lib/analyse-profil.ts. Champs laissés vides tant que l'analyse
-  // automatique (IA) n'est pas branchée ; alimentables manuellement par
-  // l'Admin en attendant.
-  anneesExperience    Int?
-  seniorite           String?      // "Junior" | "Confirmé" | "Senior" | "Expert"
-  pointsForts         String?
-  tjmEstime           Float?
-  typeContratSuggere  TypeContrat?
+  anneesExperience Int?
+  seniorite String?
+  pointsForts String?
+  tjmEstime Float?
+  typeContratSuggere TypeContrat?
 
-  // Questionnaire de disponibilité (voir /ingenieur/disponibilite), rempli
-  // juste après la validation du CV, avant l'accès à l'espace ingénieur
-  // (voir app/ingenieur/page.tsx). Réponses à choix prédéfinis.
-  disponibilite              String?   // "Disponible immédiatement" | "En mission actuellement chez Atlas" | "En mission actuellement chez un autre client" | "Non disponible immédiatement"
-  disponibilitePrevue        String?   // prévision (date/période) donnée par l'ingénieur si disponibilite = "Non disponible immédiatement"
-  changerMissionActuelle     Boolean?  // souhaite changer de mission actuelle (si en mission, Atlas ou autre client)
-  missionApres               String?   // "Nouvelle mission anticipée" | "Libre juste après" | "Non concerné"
-  preavis                    String?   // ex: "Aucun / immédiat", "1 mois"...
-  preavisPrecision           String?   // précision libre si preavis = "Autre"
-  disponibiliteRenseigneeLe  DateTime?
-  questionnaireValide        Boolean   @default(false) // true une fois le questionnaire soumis
+  disponibilite String?
+  disponibilitePrevue String?
+  changerMissionActuelle Boolean?
+  missionApres String?
+  preavis String?
+  preavisPrecision String?
+  disponibiliteRenseigneeLe DateTime?
+  questionnaireValide Boolean @default(false)
 
-  // Localisation & régime adapté (voir lib/localisation.ts) — permet de
-  // proposer un profil/contrat adapté à la situation de l'ingénieur
-  // (France, Maghreb, Golfe, etc.). regimeSuggere est calculé
-  // automatiquement à partir de paysResidence, à titre indicatif.
-  nationalite                String?   // choisie dans une liste fermée (voir lib/localisation.ts, NATIONALITES)
-  nationalitePrecision       String?   // précision libre si nationalite = "Autre"
-  paysResidence              String?
-  paysResidencePrecision     String?   // précision libre si paysResidence = "Autre"
-  regimeSuggere              String?
+  nationalite String?
+  nationalitePrecision String?
+  paysResidence String?
+  paysResidencePrecision String?
+  regimeSuggere String?
 
-  // Prétention salariale (TJM souhaité) déclarée par l'ingénieur, dans la
-  // devise de son choix (internationale ou locale à son pays de
-  // résidence) — voir lib/localisation.ts (DEVISES, convertirEnEur).
-  // Permet à l'Admin de comparer avec tjmEstime et de proposer, à budget
-  // client égal, le profil le plus compétitif selon la localisation.
-  tjmSouhaite                Float?
-  tjmSouhaiteDevise          String?
+  tjmSouhaite Float?
+  tjmSouhaiteDevise String?
 
-  // Compétences techniques structurées, choisies dans une liste fermée
-  // groupée par catégorie (voir lib/competences.ts) — renseignées par
-  // l'ingénieur lui-même (voir /ingenieur/disponibilite et
-  // EspaceIngenieur.tsx), utilisées côté Admin pour filtrer/rechercher les
-  // profils par compétence dans le tableau de matching (/admin/profils).
-  competences                String[]  @default([])
+  competences String[] @default([])
 
-  // Nombre d'entretiens clients réalisés par l'ingénieur via Atlas — saisi
-  // manuellement par l'Admin (voir /admin/profils, pas de module
-  // d'entretiens dédié pour l'instant) et affiché à l'ingénieur dans ses
-  // statistiques personnelles (voir EspaceIngenieur.tsx).
-  entretiensRealises         Int          @default(0)
+  entretiensRealises Int @default(0)
 
-  // Portfolio de réalisations concrètes, façon Malt : distinct de
-  // l'expérience déclarative extraite du CV (InfoCV, catégorie
-  // "experience") — ici l'ingénieur met en avant jusqu'à 10 réalisations
-  // (titre, description, lien optionnel) visibles par l'Admin et servant
-  // à convaincre un client. Voir app/api/ingenieur/realisations/route.ts.
-  // Stocké en JSON plutôt qu'un modèle dédié pour rester simple (pas de
-  // relation, pas de tri serveur nécessaire) : [{id, titre, description,
-  // lien}, ...].
-  realisations               Json?
+  realisations Json?
 
-  // Courte vidéo de présentation (60-90s conseillé), façon "CV vidéo" —
-  // tendance recrutement 2026, humanise le profil avant l'appel client.
-  // Même mécanisme de stockage privé que le CV (voir lib/storage.ts,
-  // app/api/ingenieur/video/route.ts) : jamais d'URL publique, servi via
-  // une route authentifiée (Ingénieur propriétaire, Admin, ou Client ayant
-  // une mission avec ce profil — voir app/api/ingenieur/video/fichier).
-  videoUrl                   String?
-  videoNomFichier             String?
-  videoImporteLe              DateTime?
+  videoUrl String?
+  videoNomFichier String?
+  videoImporteLe DateTime?
 
-  createdAt           DateTime     @default(now())
-  updatedAt           DateTime     @updatedAt
-  missions            Mission[]
-  infosCv             InfoCV[]
-  versionsCv          VersionCv[]
-  compte              User?
-  shortlistEntrees    ShortlistEntree[] // ATLAS TALENT (fondations, 06/09) — voir ShortlistEntree
-  competencesGraph    ProfilCompetence[] // ATLAS SKILL GRAPH V1 (06/09) — voir ProfilCompetence
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  missions Mission[]
+  infosCv InfoCV[]
+  versionsCv VersionCv[]
+  compte User?
+  shortlistEntrees ShortlistEntree[]
+  competencesGraph ProfilCompetence[]
 }
 
-// Historique des versions du CV — "gap technique" demandé le 4 sept. À
-// chaque nouvel import (voir POST /api/ingenieur/cv), la version PRÉCÉDENTE
-// (cvUrl/cvNomFichier/cvImporteLe encore en place à ce moment-là) est
-// archivée ici avant d'être écrasée sur Profil, plutôt que perdue. Le
-// fichier Blob de chaque ancienne version reste stocké (jamais supprimé) :
-// consultable par l'Admin sur /admin/profils, ou par l'ingénieur lui-même,
-// voir GET /api/ingenieur/cv/historique et
-// GET /api/ingenieur/cv/fichier?versionId=...
 model VersionCv {
-  id            String   @id @default(cuid())
-  profil        Profil   @relation(fields: [profilId], references: [id], onDelete: Cascade)
-  profilId      String
-  cvUrl         String
-  cvNomFichier  String?
-  importeLe     DateTime // date d'import d'ORIGINE de cette version (pas la date d'archivage)
-  createdAt     DateTime @default(now())
+  id String @id @default(cuid())
+  profil Profil @relation(fields: [profilId], references: [id], onDelete: Cascade)
+  profilId String
+  cvUrl String
+  cvNomFichier String?
+  importeLe DateTime
+  createdAt DateTime @default(now())
 
   @@index([profilId])
 }
 
-// Une information extraite (ou saisie) du CV d'un ingénieur, validée
-// individuellement (bouton "OK") avant d'alimenter son profil. Aujourd'hui
-// pré-remplie à vide (saisie manuelle guidée) ; conçue pour être pré-remplie
-// automatiquement dès qu'un service d'extraction IA est branché (voir
-// lib/cv-extraction.ts).
 model InfoCV {
-  id         String   @id @default(cuid())
-  profil     Profil   @relation(fields: [profilId], references: [id], onDelete: Cascade)
-  profilId   String
-  categorie  String   // "identite" | "contact" | "profil" | "competence" | "experience" | "formation"
-  libelle    String   // ex: "Nom complet", "Compétences principales"
-  valeur     String
-  ordre      Int      @default(0)
-  valide     Boolean  @default(false)
-  createdAt  DateTime @default(now())
+  id String @id @default(cuid())
+  profil Profil @relation(fields: [profilId], references: [id], onDelete: Cascade)
+  profilId String
+  categorie String
+  libelle String
+  valeur String
+  ordre Int @default(0)
+  valide Boolean @default(false)
+  createdAt DateTime @default(now())
 }
 
 model Mission {
-  id            String     @id @default(cuid())
-  repere        String?
-  client        Client     @relation(fields: [clientId], references: [id])
-  clientId      String
-  profil        Profil     @relation(fields: [profilId], references: [id])
-  profilId      String
-  nbJours       Int
-  margeCible    Float      @default(0.30)
-  tjmVente      Float
-  // Code devise (ISO 4217) du TJM de vente ci-dessus — ajouté le 06/09
-  // suite à l'audit (P1-01) : jusque-là tjmVente n'avait aucune devise
-  // réelle et la facture affichait systématiquement "EUR" quel que soit
-  // le contexte de la mission. Défaut "EUR" : toutes les missions déjà
-  // créées avant cette migration restent en EUR sans changement de
-  // comportement (voir migration 20260906000000_mission_devise). Jamais
-  // de conversion automatique ici — ce champ qualifie le montant déjà
-  // saisi, il ne le convertit pas.
-  deviseVente   String     @default("EUR")
-  statut        String     @default("En cours") // En cours / Terminée / Annulée
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
-  documents     Document[]
+  id String @id @default(cuid())
+  repere String?
+  client Client @relation(fields: [clientId], references: [id])
+  clientId String
+  profil Profil @relation(fields: [profilId], references: [id])
+  profilId String
+  nbJours Int
+  margeCible Float @default(0.30)
+  tjmVente Float
+  deviseVente String @default("EUR")
+  statut String @default("En cours") // En cours / Terminée / Annulée
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  documents Document[]
   feuillesDeTemps FeuilleDeTemps[]
-  evaluation      Evaluation?
+  evaluation Evaluation?
 }
 
-// Compte-rendu d'activité (CRA) mensuel, façon BoondManager/portage salarial :
-// l'ingénieur déclare ses jours travaillés + heures sup pour une mission et
-// un mois donnés, puis le CRA suit un circuit de double validation avant
-// facturation — Admin d'abord, Client ensuite (voir app/api/feuilles-de-temps
-// et EspaceIngenieur.tsx, /admin/feuilles-de-temps, /client). Un seul CRA par
-// mission et par mois (@@unique).
 model FeuilleDeTemps {
-  id                     String    @id @default(cuid())
-  mission                Mission   @relation(fields: [missionId], references: [id])
-  missionId              String
-  mois                   String    // format "AAAA-MM"
-  joursTravailles        Float     @default(0)
-  heuresSupplementaires  Float     @default(0)
-  commentaire            String?
-  // Détail jour par jour saisi via le calendrier façon Boond (voir
-  // components/CalendrierCra.tsx) : [{date:"2026-09-01", travaille:true,
-  // heures:8, commentaire:null}, ...]. joursTravailles/heuresSupplementaires
-  // ci-dessus restent les totaux dérivés (utilisés par l'Admin/Client et les
-  // anciennes feuilles saisies avant ce calendrier, qui n'ont pas ce détail).
-  detailJours            Json?
-  // Brouillon (édition libre par l'ingénieur) -> Soumise (verrouillée, en
-  // attente Admin) -> ValideeAdmin (en attente Client) -> ValideeClient
-  // (définitive, facturable) ; Rejetee renvoie à l'ingénieur avec motifRejet,
-  // ré-éditable comme un Brouillon.
-  statut                 String    @default("Brouillon")
-  motifRejet             String?
-  soumiseLe              DateTime?
-  valideeAdminLe         DateTime?
-  valideeClientLe        DateTime?
-  createdAt              DateTime  @default(now())
-  updatedAt              DateTime  @updatedAt
+  id String @id @default(cuid())
+  mission Mission @relation(fields: [missionId], references: [id])
+  missionId String
+  mois String // format "AAAA-MM"
+  joursTravailles Float @default(0)
+  heuresSupplementaires Float @default(0)
+  commentaire String?
+  detailJours Json?
+  statut String @default("Brouillon")
+  motifRejet String?
+  soumiseLe DateTime?
+  valideeAdminLe DateTime?
+  valideeClientLe DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([missionId, mois])
 }
 
-// Évaluation du client sur une mission terminée — preuve sociale simple pour
-// l'ingénieur (façon avis client Malt), affichée dans ses statistiques
-// personnelles (voir EspaceIngenieur.tsx) et consultable par l'Admin. Une
-// seule évaluation par mission (relation 1-1 côté Mission).
 model Evaluation {
-  id           String   @id @default(cuid())
-  mission      Mission  @relation(fields: [missionId], references: [id])
-  missionId    String   @unique
-  note         Int      // 1 à 5
-  commentaire  String?
-  createdAt    DateTime @default(now())
+  id String @id @default(cuid())
+  mission Mission @relation(fields: [missionId], references: [id])
+  missionId String @unique
+  note Int
+  commentaire String?
+  createdAt DateTime @default(now())
 }
 
-// Document consultable par le client dans son espace (rapport d'audit,
-// contrat signé, facture...). fileUrl pointe vers un stockage externe
-// (Supabase Storage, S3...) — voir lib/storage.ts.
 model Document {
-  id         String         @id @default(cuid())
-  titre      String
-  type       StatutDocument @default(AUTRE)
-  fileUrl    String
-  mission    Mission?       @relation(fields: [missionId], references: [id])
-  missionId  String?
-  client     Client         @relation(fields: [clientId], references: [id])
-  clientId   String
-  createdAt  DateTime       @default(now())
+  id String @id @default(cuid())
+  titre String
+  type StatutDocument @default(AUTRE)
+  fileUrl String
+  mission Mission? @relation(fields: [missionId], references: [id])
+  missionId String?
+  client Client @relation(fields: [clientId], references: [id])
+  clientId String
+  createdAt DateTime @default(now())
 }
 
-// Demande de contact / prise de rendez-vous depuis le site public (page
-// d'accueil, bouton "Reserver un appel de 30 minutes" et formulaire de
-// contact -- voir app/reserver-appel/page.tsx). Volontairement en acces
-// libre, SANS creation de compte : on ne recupere qu'un minimum
-// d'informations, l'equipe Atlas recontacte ensuite pour caler l'appel.
-// Consultee et traitee cote Admin (voir app/admin/demandes/page.tsx).
 model DemandeContact {
-id              String   @id @default(cuid())
-nom             String
-email           String
-entreprise      String?
-telephone       String?
-message         String?
-creneauSouhaite String?
-traite          Boolean  @default(false)
-createdAt       DateTime @default(now())
+  id String @id @default(cuid())
+  nom String
+  email String
+  entreprise String?
+  telephone String?
+  message String?
+  creneauSouhaite String?
+  traite Boolean @default(false)
+  createdAt DateTime @default(now())
 }
 
 model Hypotheses {
-  id                 String @id @default("singleton")
-  joursAn            Int    @default(218)
-  chargesSalarie     Float  @default(0.42)
-  fraisFreelance     Float  @default(0.08)
-  overhead           Float  @default(0.15)
-  margeDefaut        Float  @default(0.30)
+  id String @id @default("singleton")
+  joursAn Int @default(218)
+  chargesSalarie Float @default(0.42)
+  fraisFreelance Float @default(0.08)
+  overhead Float @default(0.15)
+  margeDefaut Float @default(0.30)
 }
 
 // ============================================================================
 // ATLAS TALENT V1 — fondations (06/09/2026)
-// CLIENT -> DEMANDE -> ANALYSE INTELLIGENTE -> PROFIL/COMPÉTENCES -> MATCHING
-// -> SHORTLIST. Réutilise Client, Profil et lib/competences.ts existants —
-// aucune nouvelle entité "compétence" créée. L'IA (AI Request Analyzer,
-// Matching Engine) est un fournisseur de SUGGESTIONS : elle ne décide jamais
-// seule — voir StatutShortlist et lib/ai/provider.ts (abstraction
-// provider-neutre, fonctionne aussi sans aucun provider IA configuré).
 // ============================================================================
 
 enum StatutDemandeTalent {
-  SOUMISE           // créée par le Client, en attente d'analyse
-  ANALYSEE          // l'AI Request Analyzer a extrait des critères (ré-éditables)
-  EN_MATCHING       // le Matching Engine a été exécuté au moins une fois
-  SHORTLIST_ENVOYEE // shortlist validée par un Admin et transmise au client
+  SOUMISE
+  ANALYSEE
+  EN_MATCHING
+  SHORTLIST_ENVOYEE
   CLOTUREE
 }
 
-// Une demande de talent exprimée par un Client — distincte de
-// DemandeContact (formulaire public, sans compte) : ici le Client est déjà
-// authentifié (voir middleware.ts, CLIENT_PREFIXES) et la demande est liée à
-// son Client (isolation stricte, jamais visible d'un autre Client).
 model DemandeTalent {
-  id                   String              @id @default(cuid())
-  client               Client              @relation(fields: [clientId], references: [id])
-  clientId             String
-  titre                String?
-  description          String              // besoin en texte libre — entrée de l'AI Request Analyzer
-  statut               StatutDemandeTalent @default(SOUMISE)
+  id String @id @default(cuid())
+  client Client @relation(fields: [clientId], references: [id])
+  clientId String
+  titre String?
+  description String
+  statut StatutDemandeTalent @default(SOUMISE)
 
-  // Sortie de l'AI Request Analyzer (lib/talent/analyseur.ts) : toujours
-  // ré-éditable par l'Admin, jamais figée par l'IA seule (human-in-the-loop).
-  // Champs "critères de matching" — voir PATCH /api/talent/demandes/[id] et
-  // la zone "Critères de matching" de /admin/talent/[id]. Ce sont ces
-  // valeurs (pas la description brute) que lit le Matching Engine (voir
-  // POST .../matching) : les modifier avant de lancer le matching change
-  // directement son résultat, sans code supplémentaire côté matching.
-  competencesExtraites String[]            @default([]) // compétences ET technologies recherchées (un seul champ, pas de doublon)
-  senioriteSouhaitee   String?             // "Junior" | "Confirmé" | "Senior" | "Expert"
-  anneesExperienceMin  Int?                // années d'expérience minimum souhaitées, si précisé
-  secteurActivite      String?            // secteur / contexte métier de la mission
-  localisation         String?            // ville/zone de la mission
-  mobilite             String?             // "Remote" | "Hybride" | "Sur site" | texte libre
-  disponibiliteSouhaitee String?           // ex. "Immédiate", "Sous 1 mois"
-  budgetTjmMax         Float?
-  budgetDevise         String              @default("EUR")
-  dateDebutSouhaitee   DateTime?
-  analyseProvider      String?             // "local" (défaut sans clé IA) | "anthropic" | "openai" | "gemini" ...
-  analyseConfiance     Float?              // 0-1, voir lib/ai/provider.ts
-  analyseeLe           DateTime?
+  competencesExtraites String[] @default([])
+  senioriteSouhaitee String?
+  anneesExperienceMin Int?
+  secteurActivite String?
+  localisation String?
+  mobilite String?
+  disponibiliteSouhaitee String?
+  budgetTjmMax Float?
+  budgetDevise String @default("EUR")
+  dateDebutSouhaitee DateTime?
+  analyseProvider String?
+  analyseConfiance Float?
+  analyseeLe DateTime?
 
-  // Traçabilité de la dernière modification manuelle des critères par un
-  // Admin (voir PATCH .../route.ts) — le détail avant/après va dans
-  // JournalActivite (lib/audit.ts), ces deux champs ne gardent que le
-  // "qui/quand" le plus récent directement sur la demande.
   criteresModifiesParEmail String?
-  criteresModifiesLe       DateTime?
+  criteresModifiesLe DateTime?
 
-  shortlist            ShortlistEntree[]
-  createdAt            DateTime            @default(now())
-  updatedAt            DateTime            @updatedAt
+  shortlist ShortlistEntree[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([clientId])
 }
 
 enum StatutShortlist {
-  SUGGEREE // proposée par le Matching Engine, pas encore revue par un humain
-  VALIDEE  // validée par un Admin — peut être transmise au client
-  REJETEE  // écartée par un Admin
+  SUGGEREE
+  VALIDEE
+  REJETEE
 }
 
-// Un profil proposé pour une DemandeTalent, avec le résultat du Matching
-// Engine (score/evidence/confidence) et une validation humaine explicite
-// avant tout envoi au client : l'IA ne fait jamais atterrir un profil chez
-// un client sans passage par SUGGEREE -> VALIDEE côté Admin.
 model ShortlistEntree {
-  id             String          @id @default(cuid())
-  demande        DemandeTalent   @relation(fields: [demandeId], references: [id], onDelete: Cascade)
-  demandeId      String
-  profil         Profil          @relation(fields: [profilId], references: [id])
-  profilId       String
-  score          Float           // 0-100, voir lib/talent/matching.ts
-  confiance      Float           // 0-1
-  motifs         Json            // evidence : [{critere, poids, detail}, ...] — jamais une boîte noire
-  statut         StatutShortlist @default(SUGGEREE)
-  valideParEmail String?         // email de l'Admin ayant validé/rejeté (traçabilité)
-  valideLe       DateTime?
-  createdAt      DateTime        @default(now())
+  id String @id @default(cuid())
+  demande DemandeTalent @relation(fields: [demandeId], references: [id], onDelete: Cascade)
+  demandeId String
+  profil Profil @relation(fields: [profilId], references: [id])
+  profilId String
+  score Float
+  confiance Float
+  motifs Json
+  statut StatutShortlist @default(SUGGEREE)
+  valideParEmail String?
+  valideLe DateTime?
+  createdAt DateTime @default(now())
 
   @@unique([demandeId, profilId])
 }
 
-// ATLAS SKILL GRAPH V1 (fondations, 06/09) — représentation structurée
-// d'une compétence de Profil, au-delà du simple Profil.competences: string[]
-// déclaratif. Objectif : pouvoir un jour répondre "pourquoi je crois que ce
-// profil sait faire Playwright ?" plutôt qu'un simple booléen. Volontairement
-// SANS Neo4j/moteur de graphe externe pour cette V1 — un modèle Prisma/
-// PostgreSQL classique suffit (un "graphe" à 2 sauts Profil -> Competence ->
-// Preuve n'a pas besoin d'un moteur dédié). Ne remplace PAS
-// Profil.competences (toujours utilisé par lib/talent/matching.ts
-// inchangé) : vient en complément, avec provenance et confiance.
-//
-// IMPORTANT — ne jamais fabriquer de preuve : une ligne n'est créée ici que
-// lorsqu'une source réelle existe (Profil.competences coché par l'ingénieur,
-// ou InfoCV validée, ou correction explicite d'un Admin) — voir
-// lib/talent/skill-graph.ts, aucune génération de données fictives.
 enum StatutPreuveCompetence {
-  VERIFIE  // confirmé explicitement par un humain (Admin) — le seul niveau qui doit inspirer confiance forte
-  DECLARE  // déclaré par l'ingénieur lui-même (ex: case cochée dans son profil), non vérifié
-  INFERE   // déduit par l'IA (AiProvider) à partir d'un texte libre (CV/InfoCV) — jamais présenté comme vérifié
-  INCONNU  // statut/niveau non déterminable avec les données actuelles
+  VERIFIE
+  DECLARE
+  INFERE
+  INCONNU
 }
 
 enum NiveauConfiance {
@@ -526,10 +491,6 @@ enum NiveauConfiance {
   BASSE
 }
 
-// Source d'une preuve de compétence — liste volontairement large (au-delà de
-// ce que la V1 sait réellement peupler automatiquement, voir
-// lib/talent/skill-graph.ts) pour ne pas avoir à migrer le schéma dès qu'un
-// prochain incrément branche les missions/évaluations/certifications.
 enum SourcePreuveCompetence {
   CV
   PROFIL
@@ -540,53 +501,33 @@ enum SourcePreuveCompetence {
   ADMIN
 }
 
-// Une compétence structurée pour un Profil donné : niveau/expérience/
-// contexte quand connus, jamais fabriqués (null = non déterminable, voir
-// statut=INCONNU côté niveau). `competence` reste une chaîne (comme
-// Profil.competences) plutôt qu'une table de référence séparée : la liste
-// fermée existe déjà en code (lib/competences.ts, TOUTES_COMPETENCES), pas
-// besoin d'un catalogue supplémentaire en base pour cette V1.
 model ProfilCompetence {
-  id               String                 @id @default(cuid())
-  profil           Profil                 @relation(fields: [profilId], references: [id], onDelete: Cascade)
-  profilId         String
-  competence       String
-  niveau           Int?                   // 1-5, null si non déterminable (voir statut) — jamais inventé par l'IA
+  id String @id @default(cuid())
+  profil Profil @relation(fields: [profilId], references: [id], onDelete: Cascade)
+  profilId String
+  competence String
+  niveau Int?
   anneesExperience Int?
-  contexte         String?                // ex: "QA Automation" — texte court, quand la source le précise
-  secteur          String?                // ex: "Banque" — idem
-  statut           StatutPreuveCompetence @default(INCONNU)
-  confiance        NiveauConfiance        @default(BASSE)
-  preuves          SkillEvidence[]
-  createdAt        DateTime               @default(now())
-  updatedAt        DateTime               @updatedAt
+  contexte String?
+  secteur String?
+  statut StatutPreuveCompetence @default(INCONNU)
+  confiance NiveauConfiance @default(BASSE)
+  preuves SkillEvidence[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([profilId, competence])
   @@index([profilId])
 }
 
-// Preuve individuelle appuyant une ProfilCompetence — une compétence peut
-// accumuler plusieurs preuves dans le temps (ex: déclarée ET retrouvée dans
-// le CV) sans jamais se substituer l'une à l'autre : voir
-// lib/talent/skill-graph.ts qui ne fait jamais régresser un statut VERIFIE
-// vers DECLARE/INFERE lors d'une reconstruction.
 model SkillEvidence {
-  id                 String                 @id @default(cuid())
-  profilCompetence   ProfilCompetence       @relation(fields: [profilCompetenceId], references: [id], onDelete: Cascade)
+  id String @id @default(cuid())
+  profilCompetence ProfilCompetence @relation(fields: [profilCompetenceId], references: [id], onDelete: Cascade)
   profilCompetenceId String
-  source             SourcePreuveCompetence
-  detail             String?                // court, factuel (ex: extrait InfoCV), jamais généré/fabriqué
-  // ATLAS DYNAMIC SKILL GRAPH (batch 06/09/2026) — niveau (1-5) OBSERVÉ par
-  // CETTE preuve précise, distinct de ProfilCompetence.niveau (le niveau
-  // COURANT, toujours fixé par un Admin humain, voir PATCH
-  // .../competences/[competenceId]). Permet de reconstituer l'historique
-  // d'évolution d'un niveau dans le temps (voir niveauxHistoriques() dans
-  // lib/talent/skill-graph.ts) SANS écraser quoi que ce soit : chaque preuve
-  // reste un événement immuable. Null quand la preuve ne renseigne aucun
-  // niveau (cas de la grande majorité des preuves DECLARE/INFERE
-  // automatiques, qui n'inventent jamais un niveau).
-  niveau             Int?
-  createdAt          DateTime               @default(now())
+  source SourcePreuveCompetence
+  detail String?
+  niveau Int?
+  createdAt DateTime @default(now())
 
   @@index([profilCompetenceId])
 }
