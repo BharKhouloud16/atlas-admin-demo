@@ -14,6 +14,11 @@ import { construireRisquesDepuisSignaux } from "@/lib/security/runtime-risk";
 //   franchi sur les événements déjà journalisés.
 // - Gestion d'erreur générique sans fuite de détail interne.
 // - Seul GET exporté (405 natif sur le reste).
+//
+// MISE À JOUR B17 (08/09/2026) — ressourceType/ressourceId ajoutés au
+// select : nécessaires à signalAccesAnormalObjets (lib/security/runtime-
+// signals.ts) pour compter les objets DISTINCTS consultés par acteur. Ce
+// ne sont pas des données sensibles (identifiants internes, pas de PII).
 export async function GET() {
   const session = await getSession();
   if (!session || session.role !== "ADMIN") {
@@ -24,7 +29,15 @@ export async function GET() {
     const horizon = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const evenementsBruts = await prisma.evenementSecurite.findMany({
       where: { createdAt: { gte: horizon } },
-      select: { action: true, resultat: true, acteurEmail: true, contexteIp: true, createdAt: true },
+      select: {
+        action: true,
+        resultat: true,
+        acteurEmail: true,
+        contexteIp: true,
+        ressourceType: true,
+        ressourceId: true,
+        createdAt: true,
+      },
       orderBy: { createdAt: "desc" },
       take: 5000,
     });
