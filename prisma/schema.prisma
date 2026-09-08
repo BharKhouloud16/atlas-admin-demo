@@ -225,26 +225,16 @@ model PropositionSecurite {
 }
 
 // ============================================================================
-// COMPANY ATLAS — B18 : REGISTRE DE RAPPORTS INTER-AGENTS (08/09/2026)
-// Recommandation de la Charte de Gouvernance V1.0 (section I) : généralise
-// la DISCIPLINE d'EvenementSecurite (best-effort, correlationId, UNKNOWN
-// légitime, aucune donnée sensible) — voir lib/gouvernance/rapports.ts
-// pour la justification du choix d'une table séparée (audit B18, étape 1 :
-// EvenementSecurite alimente sans filtre de type le calcul des signaux
-// runtime d'ATLAS TALENT — signalVolumeAnormal notamment — et y ajouter
-// des rapports de gouvernance aurait faussé ce calcul, une régression que
-// la directive B18 interdisait d'introduire sans nécessité).
-//
-// Un rapport correspond au format minimal de la Charte (section E.1) :
-// Objectif -> Analyse -> Actions -> Résultats/Risques -> Statut, avec un
-// correlationId explicite qui permet de relier plusieurs rapports d'une
-// même tâche transverse (Charte E.3), et un champ "inconnu" pour toute
-// zone UNKNOWN explicite (Charte E.5 / B.6) plutôt qu'une supposition.
-//
-// agentEmetteur est fermé aux 4 agents de l'architecture officielle
-// COMPANY ATLAS (contrainte de la directive B18 : ne jamais en créer un
-// 5e) — appliqué à la fois par l'enum Postgres ci-dessous et par la
-// validation de la route (app/api/security/rapports/route.ts).
+// COMPANY ATLAS — B18 (08/09/2026) : registre structuré de rapports
+// inter-agents, généralisant la discipline d'EvenementSecurite (ci-dessus)
+// sans réutiliser sa table — voir lib/gouvernance/rapports.ts pour la
+// justification (audit B18, étape 1) : /api/security/runtime calcule ses
+// signaux sur TOUS les EvenementSecurite sans filtre par action, donc y
+// écrire des rapports de gouvernance aurait faussé ces signaux déjà
+// validés (B16/B17). RapportAgent est donc une table séparée, avec la
+// même discipline : correlationId, vocabulaire fermé, textes plafonnés,
+// aucune donnée sensible, écriture toujours accompagnée d'un try/catch
+// côté appelant (voir enregistrerRapportAgent).
 enum AgentEmetteur {
   PRINCIPAL
   ATLAS_TALENT
@@ -260,21 +250,21 @@ enum StatutRapportAgent {
 }
 
 model RapportAgent {
-  id            String @id @default(cuid())
+  id String @id @default(cuid())
   correlationId String
 
   agentEmetteur AgentEmetteur
-  typeRapport   String // vocabulaire documenté dans lib/gouvernance/rapports.ts (TYPES_RAPPORT)
+  typeRapport String // vocabulaire documenté dans lib/gouvernance/rapports.ts (TYPES_RAPPORT)
 
   objectif String
-  analyse  String?
-  actions  String?
-  risques  String?
-  statut   StatutRapportAgent
-  inconnu  String? // UNKNOWN explicite (Charte E.5) — null si rien n'est resté UNKNOWN
-  contexte String? // texte libre court (repère de tâche) — jamais de secret
+  analyse String?
+  actions String?
+  risques String?
+  statut StatutRapportAgent
+  inconnu String?
+  contexte String?
 
-  severite SeveriteEvenementSecurite @default(INFO) // réutilise l'enum existant, aucune modification d'EvenementSecurite
+  severite SeveriteEvenementSecurite @default(INFO)
 
   createdAt DateTime @default(now())
 
