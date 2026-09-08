@@ -49,7 +49,26 @@ const CLIENT_PREFIXES = ["/client", "/api/client/"];
 // pas (toujours 403 pour CLIENT/INGENIEUR), mais l'autorisation ET la
 // traçabilité sont désormais assurées par la route elle-même — même
 // discipline de défense en profondeur que feuilles-de-temps/evaluations.
-const SHARED_PREFIXES = ["/api/feuilles-de-temps", "/api/evaluations", "/api/generate-contract"];
+//
+// FIX B17 (08/09/2026) — même pattern confirmé et corrigé pour
+// /api/missions et /api/clients (directive B17, section 1 : "étendre la
+// journalisation des refus RBAC actuellement bloqués par le middleware").
+// Inspection réelle du code (pas d'hypothèse) : app/api/missions/route.ts
+// bloque déjà CLIENT en GET ("Utilisez /api/client/missions") et impose
+// déjà ADMIN en POST ; app/api/clients/route.ts impose déjà ADMIN en GET
+// et POST, avec le commentaire explicite "le middleware protège déjà
+// /api/clients, mais on revérifie le rôle ici (defense in depth)" — ces
+// contrôles route existaient donc AVANT B17 mais restaient inatteignables
+// pour CLIENT (les deux routes) et pour INGENIEUR (/api/clients) car le
+// middleware bloquait en amont sans jamais les exécuter, empêchant toute
+// journalisation. Même correctif minimal que /api/generate-contract :
+// laisser passer l'utilisateur authentifié, la route reste seule
+// responsable de l'autorisation exacte (elle l'était déjà). Comportement
+// observable inchangé (toujours 403 pour un rôle non autorisé) ;
+// /api/missions/[id]/marge-intelligence hérite du même préfixe
+// "/api/missions" et bénéficie du même correctif sans modification
+// séparée.
+const SHARED_PREFIXES = ["/api/feuilles-de-temps", "/api/evaluations", "/api/generate-contract", "/api/missions", "/api/clients"];
 // ATLAS TALENT V1 (fondations, 06/09) — réservé à CLIENT (sa propre
 // DemandeTalent) et ADMIN (matching/shortlist) ; jamais l'INGENIEUR. Chaque
 // route vérifie aussi elle-même le rôle exact (voir
