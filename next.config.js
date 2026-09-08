@@ -55,6 +55,18 @@ const nextConfig = {
   // défini). Sans clé DSN, ce flag n'a aucun effet visible.
   experimental: {
     instrumentationHook: true,
+    // B15 : les 5 modèles .docx de /templates (voir templates/README.md)
+    // sont bien commités mais app/api/generate-contract/route.ts y accède
+    // via un objet (TEMPLATES[templateKey]), un accès dynamique que le
+    // traçage de fichiers de Next.js ne sait pas résoudre statiquement —
+    // les .docx étaient donc silencieusement exclus du bundle serverless
+    // Vercel ("Modèle introuvable : /var/task/templates/...") alors qu'ils
+    // fonctionnent en local (cwd = dépôt complet). Ce flag force leur
+    // inclusion explicite dans la fonction concernée, sans toucher au code
+    // de la route.
+    outputFileTracingIncludes: {
+      "/api/generate-contract": ["./templates/**"],
+    },
   },
   async headers() {
     return [
