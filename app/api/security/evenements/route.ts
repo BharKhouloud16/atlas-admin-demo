@@ -9,6 +9,13 @@ import { prisma } from "@/lib/prisma";
 // sans fuite de détail, seul GET est exporté (405 natif sur le reste).
 // Aucune donnée sensible à filtrer : EvenementSecurite ne stocke jamais de
 // mot de passe/token/secret (voir lib/security/events.ts).
+//
+// Le filtre acteurEmail a été ajouté après un test CI instable (B16) :
+// sous exécution parallèle, plusieurs suites de tests génèrent des
+// événements rbac.acces_refuse simultanément, et un simple LIMIT sur
+// action seule pouvait laisser passer l'événement recherché hors de la
+// fenêtre des N plus récents. Filtrer aussi par acteur rend la requête
+// déterministe sans changer le modèle de données ni la sécurité.
 export async function GET(req: NextRequest) {
   const session = await getSession();
   if (!session || session.role !== "ADMIN") {
@@ -19,6 +26,7 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const action = searchParams.get("action") ?? undefined;
     const resultat = searchParams.get("resultat") ?? undefined;
+    const acteurEmail = searchParams.get("acteurEmail") ?? undefined;
     const limiteBrute = Number(searchParams.get("limite"));
     const limite = Number.isFinite(limiteBrute) && limiteBrute > 0 ? Math.min(limiteBrute, 200) : 100;
 
@@ -28,6 +36,7 @@ export async function GET(req: NextRequest) {
         ...(resultat && ["SUCCES", "REFUSE", "ERREUR"].includes(resultat)
           ? { resultat: resultat as "SUCCES" | "REFUSE" | "ERREUR" }
           : {}),
+        ...(acteurEmail ? { acteurEmail } : {}),
       },
       orderBy: { createdAt: "desc" },
       take: limite,
