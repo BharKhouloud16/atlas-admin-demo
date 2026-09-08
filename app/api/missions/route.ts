@@ -2,12 +2,33 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { calculerTjmCout } from "@/lib/calculs";
 import { getSession } from "@/lib/auth";
+import { adresseIp } from "@/lib/rate-limit";
+import { enregistrerEvenementSecurite, nouveauCorrelationId } from "@/lib/security/events";
 
-export async function GET() {
+// FIX B17 (08/09/2026) — GET/POST prennent désormais `req: NextRequest`
+// (au lieu de `()` / déjà présent pour POST) pour pouvoir journaliser
+// l'IP sur un refus RBAC. Les contrôles de rôle ci-dessous existaient déjà
+// avant B17 ; seule la journalisation est nouvelle — voir middleware.ts
+// (FIX B17) pour l'explication de la faille de traçabilité corrigée
+// (ces contrôles étaient inatteignables pour CLIENT car bloqué en amont
+// par le middleware, donc jamais journalisés jusqu'ici).
+export async function GET(req: NextRequest) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
   if (session.role === "CLIENT") {
     // le client a son propre endpoint filtré : /api/client/missions
+    await enregistrerEvenementSecurite({
+      correlationId: nouveauCorrelationId(),
+      action: "rbac.acces_refuse",
+      resultat: "REFUSE",
+      severite: "ALERTE",
+      contexteIp: adresseIp(req),
+      contexteRoute: "/api/missions",
+      acteurEmail: session.email,
+      acteurRole: session.role,
+      ressourceType: "Mission",
+      detail: "Tentative d'accès à la liste complète des missions par un rôle Client (endpoint réservé Admin/Ingénieur, voir /api/client/missions).",
+    });
     return NextResponse.json({ error: "Utilisez /api/client/missions" }, { status: 403 });
   }
 
@@ -53,6 +74,18 @@ const DEVISES_ACCEPTEES = ["EUR", "USD", "GBP", "CHF", "MAD", "TND", "DZD", "AED
 export async function POST(req: NextRequest) {
   const session = await getSession();
   if (!session || session.role !== "ADMIN") {
+    await enregistrerEvenementSecurite({
+      correlationId: nouveauCorrelationId(),
+      action: "rbac.acces_refuse",
+      resultat: "REFUSE",
+      severite: "ALERTE",
+      contexteIp: adresseIp(req),
+      contexteRoute: "/api/missions",
+      acteurEmail: session?.email ?? null,
+      acteurRole: session?.role ?? null,
+      ressourceType: "Mission",
+      detail: "Tentative de création de mission par un rôle non-Admin.",
+    });
     return NextResponse.json({ error: "Accès réservé à l'administrateur" }, { status: 403 });
   }
 
