@@ -35,7 +35,21 @@ const CLIENT_PREFIXES = ["/client", "/api/client/"];
 // app/api/evaluations) — accessibles à ADMIN par défaut (cf. plus bas),
 // et explicitement ajoutés aux listes autorisées de INGENIEUR et CLIENT
 // sans passer par CLIENT_PREFIXES (qui déclenche le blocage ADMIN ci-dessous).
-const SHARED_PREFIXES = ["/api/feuilles-de-temps", "/api/evaluations"];
+//
+// FIX B16 (08/09/2026) — /api/generate-contract a été ajouté ici après un
+// audit de la chaîne d'authorization/traçabilité (directive B16, sections
+// 2 et 3) : cette route était protégée uniquement par le matcher +
+// ADMIN_PREFIXES (jamais réellement lu ci-dessous), ce qui la laissait
+// bloquée pour CLIENT/INGENIEUR directement par le middleware (Edge
+// runtime, sans accès Prisma) AVANT même d'atteindre le handler Node.js —
+// le contrôle ADMIN-only et la journalisation d'événement de sécurité
+// (rbac.acces_refuse) déjà présents dans app/api/generate-contract/route.ts
+// n'étaient donc jamais exécutés pour ces rôles, un mort-code découvert par
+// les tests d'audit B16. Le comportement de sécurité observable ne change
+// pas (toujours 403 pour CLIENT/INGENIEUR), mais l'autorisation ET la
+// traçabilité sont désormais assurées par la route elle-même — même
+// discipline de défense en profondeur que feuilles-de-temps/evaluations.
+const SHARED_PREFIXES = ["/api/feuilles-de-temps", "/api/evaluations", "/api/generate-contract"];
 // ATLAS TALENT V1 (fondations, 06/09) — réservé à CLIENT (sa propre
 // DemandeTalent) et ADMIN (matching/shortlist) ; jamais l'INGENIEUR. Chaque
 // route vérifie aussi elle-même le rôle exact (voir
@@ -63,10 +77,10 @@ export async function middleware(req: NextRequest) {
   const isProtected =
     !PUBLIC_PATHS.includes(pathname) &&
     (pathname.startsWith("/admin") || pathname.startsWith("/client") || pathname.startsWith("/ingenieur") ||
-     pathname.startsWith("/api/clients") || pathname.startsWith("/api/profils") ||
-     pathname.startsWith("/api/missions") || pathname.startsWith("/api/generate-contract") ||
-     pathname.startsWith("/api/comptes") || pathname.startsWith("/api/client") || pathname.startsWith("/api/ingenieur") ||
-     SHARED_PREFIXES.some((p) => pathname.startsWith(p)) || TALENT_PREFIXES.some((p) => pathname.startsWith(p)));
+      pathname.startsWith("/api/clients") || pathname.startsWith("/api/profils") ||
+      pathname.startsWith("/api/missions") || pathname.startsWith("/api/generate-contract") ||
+      pathname.startsWith("/api/comptes") || pathname.startsWith("/api/client") || pathname.startsWith("/api/ingenieur") ||
+      SHARED_PREFIXES.some((p) => pathname.startsWith(p)) || TALENT_PREFIXES.some((p) => pathname.startsWith(p)));
 
   if (!isProtected) return NextResponse.next();
 
