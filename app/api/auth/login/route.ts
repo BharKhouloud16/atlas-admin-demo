@@ -5,11 +5,28 @@ import { createSession } from "@/lib/auth";
 import { loginSchema, premierMessageZod } from "@/lib/validation";
 import { adresseIp, verifierLimiteIp, enregistrerEchecConnexion, reinitialiserEchecsConnexion } from "@/lib/rate-limit";
 import { verifierCode } from "@/lib/totp";
+import { enregistrerEvenementSecurite, nouveauCorrelationId } from "@/lib/security/events";
 
 export async function POST(req: NextRequest) {
   const ip = adresseIp(req);
+  // ATLAS OS — TRUST & SECURITY INTELLIGENCE FOUNDATION (Batch 16,
+  // 08/09/2026) : un seul correlationId pour toute cette tentative de
+  // connexion, même si plusieurs événements sont écrits en chemin (ex.
+  // limite IP puis, sur une tentative suivante, échec de mot de passe) —
+  // voir lib/security/events.ts. Écriture best-effort, jamais bloquante.
+  const correlationId = nouveauCorrelationId();
+  const contexteRoute = "/api/auth/login";
+
   const autoriseParIp = await verifierLimiteIp(`login:${ip}`);
   if (!autoriseParIp) {
+    await enregistrerEvenementSecurite({
+      correlationId,
+      action: "auth.login.limite_ip",
+      resultat: "REFUSE",
+      severite: "ATTENTION",
+      contexteIp: ip,
+      contexteRoute,
+    });
     return NextResponse.json(
       { error: "Trop de tentatives de connexion depuis cette adresse. Réessayez dans quelques minutes." },
       { status: 429 }
@@ -26,10 +43,30 @@ export async function POST(req: NextRequest) {
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) {
     // même message que mot de passe invalide : ne pas révéler si l'email existe
+    await enregistrerEvenementSecurite({
+      correlationId,
+      action: "auth.login.echec",
+      resultat: "REFUSE",
+      severite: "INFO",
+      contexteIp: ip,
+      contexteRoute,
+      acteurEmail: email,
+    });
     return NextResponse.json({ error: "Identifiants invalides" }, { status: 401 });
   }
 
   if (user.verrouilleJusqua && user.verrouilleJusqua.getTime() > Date.now()) {
+    await enregistrerEvenementSecurite({
+      correlationId,
+      action: "auth.login.compte_verrouille",
+      resultat: "REFUSE",
+      severite: "ATTENTION",
+      contexteIp: ip,
+      contexteRoute,
+      acteurEmail: user.email,
+      acteurRole: user.role,
+      acteurId: user.id,
+    });
     return NextResponse.json(
       { error: "Compte temporairement verrouillé après plusieurs échecs de connexion. Réessayez dans quelques minutes." },
       { status: 429 }
@@ -39,12 +76,34 @@ export async function POST(req: NextRequest) {
   const valid = await bcrypt.compare(password, user.passwordHash);
   if (!valid) {
     await enregistrerEchecConnexion(user.id, user.echecsConnexion);
+    await enregistrerEvenementSecurite({
+      correlationId,
+      action: "auth.login.echec",
+      resultat: "REFUSE",
+      severite: "INFO",
+      contexteIp: ip,
+      contexteRoute,
+      acteurEmail: user.email,
+      acteurRole: user.role,
+      acteurId: user.id,
+    });
     return NextResponse.json({ error: "Identifiants invalides" }, { status: 401 });
   }
 
   await reinitialiserEchecsConnexion(user.id);
 
   if (!user.emailVerifie) {
+    await enregistrerEvenementSecurite({
+      correlationId,
+      action: "auth.login.email_non_verifie",
+      resultat: "REFUSE",
+      severite: "INFO",
+      contexteIp: ip,
+      contexteRoute,
+      acteurEmail: user.email,
+      acteurRole: user.role,
+      acteurId: user.id,
+    });
     return NextResponse.json(
       {
         error:
@@ -55,6 +114,17 @@ export async function POST(req: NextRequest) {
   }
 
   if (!user.actif) {
+    await enregistrerEvenementSecurite({
+      correlationId,
+      action: "auth.login.compte_inactif",
+      resultat: "REFUSE",
+      severite: "INFO",
+      contexteIp: ip,
+      contexteRoute,
+      acteurEmail: user.email,
+      acteurRole: user.role,
+      acteurId: user.id,
+    });
     return NextResponse.json(
       { error: "Votre compte est en attente de validation par l'administrateur." },
       { status: 403 }
@@ -70,6 +140,17 @@ export async function POST(req: NextRequest) {
   if (user.role === "ADMIN" && user.totpActif && user.totpSecret) {
     const code = typeof corps?.code === "string" ? corps.code : "";
     if (!code) {
+      await enregistrerEvenementSecurite({
+        correlationId,
+        action: "auth.login.totp_requis",
+        resultat: "REFUSE",
+        severite: "INFO",
+        contexteIp: ip,
+        contexteRoute,
+        acteurEmail: user.email,
+        acteurRole: user.role,
+        acteurId: user.id,
+      });
       return NextResponse.json({ error: "Code de vérification requis.", requiresTotp: true }, { status: 401 });
     }
 
@@ -87,6 +168,17 @@ export async function POST(req: NextRequest) {
     }
 
     if (!codeValide) {
+      await enregistrerEvenementSecurite({
+        correlationId,
+        action: "auth.login.totp_invalide",
+        resultat: "REFUSE",
+        severite: "ALERTE",
+        contexteIp: ip,
+        contexteRoute,
+        acteurEmail: user.email,
+        acteurRole: user.role,
+        acteurId: user.id,
+      });
       return NextResponse.json({ error: "Code de vérification invalide.", requiresTotp: true }, { status: 401 });
     }
   }
@@ -97,6 +189,18 @@ export async function POST(req: NextRequest) {
     profilId: user.profilId,
     clientId: user.clientId,
     desactive: user.desactive,
+  });
+
+  await enregistrerEvenementSecurite({
+    correlationId,
+    action: "auth.login.succes",
+    resultat: "SUCCES",
+    severite: "INFO",
+    contexteIp: ip,
+    contexteRoute,
+    acteurEmail: user.email,
+    acteurRole: user.role,
+    acteurId: user.id,
   });
 
   if (!user.premiereConnexionLe) {
