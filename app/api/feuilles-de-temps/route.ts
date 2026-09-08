@@ -4,12 +4,22 @@ import { getSession } from "@/lib/auth";
 import { craEstEditableParIngenieur, totauxDepuisDetail, libelleMois } from "@/lib/feuilles-de-temps";
 import { journaliser } from "@/lib/audit";
 import { envoyerEmailCraRejete } from "@/lib/email";
+import { adresseIp } from "@/lib/rate-limit";
+import { enregistrerEvenementSecurite, nouveauCorrelationId } from "@/lib/security/events";
 
 // Feuilles de temps (CRA) : un seul endpoint, comportement différent selon
 // le rôle (même approche que /api/missions) — voir lib/feuilles-de-temps.ts
 // pour le circuit de statuts. L'Ingénieur crée/soumet, l'Admin valide ou
 // rejette en premier, le Client valide en dernier avant facturation.
-export async function GET() {
+//
+// FIX B17 (08/09/2026) — cette route est déjà accessible aux 3 rôles via
+// SHARED_PREFIXES dans middleware.ts (pas de mort-code comme pour missions/
+// clients : elle applique elle-même toute la logique RBAC + object-level
+// depuis B13/B15). Contrairement à missions/clients, aucun changement de
+// middleware n'était nécessaire ici — seule la journalisation des refus
+// déjà émis par cette route manquait (directive B17, section 1). `GET`
+// prend désormais `req: NextRequest` pour journaliser l'IP.
+export async function GET(req: NextRequest) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
 
@@ -22,7 +32,21 @@ export async function GET() {
   }
 
   if (session.role === "INGENIEUR") {
-    if (!session.profilId) return NextResponse.json({ error: "Accès non autorisé" }, { status: 403 });
+    if (!session.profilId) {
+      await enregistrerEvenementSecurite({
+        correlationId: nouveauCorrelationId(),
+        action: "rbac.acces_refuse",
+        resultat: "REFUSE",
+        severite: "ATTENTION",
+        contexteIp: adresseIp(req),
+        contexteRoute: "/api/feuilles-de-temps",
+        acteurEmail: session.email,
+        acteurRole: session.role,
+        ressourceType: "FeuilleDeTemps",
+        detail: "Session Ingénieur sans profilId lors d'une lecture des feuilles de temps.",
+      });
+      return NextResponse.json({ error: "Accès non autorisé" }, { status: 403 });
+    }
     const [missions, feuilles] = await Promise.all([
       prisma.mission.findMany({
         where: { profilId: session.profilId },
@@ -39,7 +63,21 @@ export async function GET() {
   }
 
   if (session.role === "CLIENT") {
-    if (!session.clientId) return NextResponse.json({ error: "Accès non autorisé" }, { status: 403 });
+    if (!session.clientId) {
+      await enregistrerEvenementSecurite({
+        correlationId: nouveauCorrelationId(),
+        action: "rbac.acces_refuse",
+        resultat: "REFUSE",
+        severite: "ATTENTION",
+        contexteIp: adresseIp(req),
+        contexteRoute: "/api/feuilles-de-temps",
+        acteurEmail: session.email,
+        acteurRole: session.role,
+        ressourceType: "FeuilleDeTemps",
+        detail: "Session Client sans clientId lors d'une lecture des feuilles de temps.",
+      });
+      return NextResponse.json({ error: "Accès non autorisé" }, { status: 403 });
+    }
     const feuilles = await prisma.feuilleDeTemps.findMany({
       where: {
         mission: { clientId: session.clientId },
@@ -59,6 +97,18 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const session = await getSession();
   if (!session || session.role !== "INGENIEUR" || !session.profilId) {
+    await enregistrerEvenementSecurite({
+      correlationId: nouveauCorrelationId(),
+      action: "rbac.acces_refuse",
+      resultat: "REFUSE",
+      severite: "ALERTE",
+      contexteIp: adresseIp(req),
+      contexteRoute: "/api/feuilles-de-temps",
+      acteurEmail: session?.email ?? null,
+      acteurRole: session?.role ?? null,
+      ressourceType: "FeuilleDeTemps",
+      detail: "Tentative de création/soumission d'une feuille de temps par un rôle non-Ingénieur (ou profilId manquant).",
+    });
     return NextResponse.json({ error: "Accès non autorisé" }, { status: 403 });
   }
 
@@ -188,6 +238,23 @@ export async function PATCH(req: NextRequest) {
 
   if (session.role === "CLIENT") {
     if (!session.clientId || feuille.mission.clientId !== session.clientId) {
+      // Isolation inter-client (object-level) : un Client ne peut jamais
+      // agir sur une feuille de temps liée à la mission d'un AUTRE client —
+      // distinct d'un simple refus de rôle, journalisé avec la ressource
+      // concernée pour rester traçable (BOLA, directive B16 section 7).
+      await enregistrerEvenementSecurite({
+        correlationId: nouveauCorrelationId(),
+        action: "rbac.acces_refuse",
+        resultat: "REFUSE",
+        severite: "ALERTE",
+        contexteIp: adresseIp(req),
+        contexteRoute: "/api/feuilles-de-temps",
+        acteurEmail: session.email,
+        acteurRole: session.role,
+        ressourceType: "FeuilleDeTemps",
+        ressourceId: feuille.id,
+        detail: "Tentative de validation d'une feuille de temps liée à la mission d'un autre client (isolation inter-client).",
+      });
       return NextResponse.json({ error: "Accès non autorisé" }, { status: 403 });
     }
     if (feuille.statut !== "ValideeAdmin") {
@@ -203,5 +270,20 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "Action invalide." }, { status: 400 });
   }
 
+  // Rôle restant : INGENIEUR — jamais accès au circuit de validation
+  // Admin/Client des feuilles de temps.
+  await enregistrerEvenementSecurite({
+    correlationId: nouveauCorrelationId(),
+    action: "rbac.acces_refuse",
+    resultat: "REFUSE",
+    severite: "ALERTE",
+    contexteIp: adresseIp(req),
+    contexteRoute: "/api/feuilles-de-temps",
+    acteurEmail: session.email,
+    acteurRole: session.role,
+    ressourceType: "FeuilleDeTemps",
+    ressourceId: feuille.id,
+    detail: "Tentative d'accès au circuit de validation Admin/Client par un Ingénieur.",
+  });
   return NextResponse.json({ error: "Accès non autorisé" }, { status: 403 });
 }
