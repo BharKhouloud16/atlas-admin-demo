@@ -73,7 +73,18 @@ async function idPremierClient(request: APIRequestContext): Promise<string> {
   expect(reponse.ok()).toBeTruthy();
   const clients = await reponse.json();
   expect(clients.length).toBeGreaterThan(0);
-  return clients[0].id;
+  // FIX B17 (08/09/2026) — ne plus prendre clients[0] : /api/clients trie
+  // par date de création décroissante (voir app/api/clients/route.ts), donc
+  // tout test qui crée un nouveau Client (ex. la fixture d'isolation
+  // inter-client de tests/api/b17-observabilite-talent.spec.ts) devient
+  // silencieusement "le premier" et casse ce test — la mission de test est
+  // alors créée pour le MAUVAIS client, et validerClient (session
+  // client-demo) échoue par le contrôle d'isolation lui-même. Même
+  // correctif que idProfilIngenieurDemo ci-dessus : chercher explicitement
+  // le client de démo par son nom plutôt que par position.
+  const client = clients.find((c: { nom: string }) => c.nom === "Client Démo SAS");
+  expect(client, "le client de démo 'Client Démo SAS' devrait exister (voir prisma/seed.ts)").toBeTruthy();
+  return client.id;
 }
 
 // Fait avancer une mission jusqu'à la facture disponible et renvoie les
