@@ -78,16 +78,27 @@ test.describe("Sécurité — traçabilité de l'audit (EvenementSecurite)", () 
     });
     expect(refus.status()).toBe(403);
 
+    const avant = Date.now();
     await connecter(request, "admin-demo@example.com");
-    // Filtre aussi par acteurEmail (et pas seulement action) : sous
-    // exécution CI parallèle, d'autres suites déclenchent des refus RBAC
-    // concurrents et un simple LIMIT sur l'action seule peut laisser
-    // passer l'événement recherché hors de la fenêtre des plus récents.
+    // Filtre par acteurEmail (pas seulement action) ET par récence : la
+    // base de CI est réutilisée d'une exécution à l'autre, donc de
+    // nombreux événements rbac.acces_refuse historiques pour ce même
+    // compte de démo s'accumulent au fil des runs — un simple filtre
+    // action+acteur peut être noyé par ce bruit historique même avec une
+    // limite haute. On ne retient donc que l'événement créé pendant CE
+    // test (quelques secondes de marge pour l'horloge/latence réseau).
     const evenements = await request.get(
-      "/api/security/evenements?action=rbac.acces_refuse&acteurEmail=client-demo@example.com&limite=50"
+      "/api/security/evenements?action=rbac.acces_refuse&acteurEmail=client-demo@example.com&limite=200"
     );
     const { evenements: liste } = await evenements.json();
-    expect(liste.some((e: { acteurEmail: string; resultat: string }) => e.acteurEmail === "client-demo@example.com" && e.resultat === "REFUSE")).toBeTruthy();
+    expect(
+      liste.some(
+        (e: { acteurEmail: string; resultat: string; createdAt: string }) =>
+          e.acteurEmail === "client-demo@example.com" &&
+          e.resultat === "REFUSE" &&
+          new Date(e.createdAt).getTime() >= avant - 5000
+      )
+    ).toBeTruthy();
   });
 });
 
