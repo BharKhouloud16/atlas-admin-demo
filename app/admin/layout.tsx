@@ -19,6 +19,7 @@ const LIENS_NAV = [
   { href: "/admin/comptes-en-attente", label: "Comptes en attente", roles: ["ADMIN"] },
   { href: "/admin/journal", label: "Journal d'activité", roles: ["ADMIN"] },
   { href: "/admin/securite", label: "Sécurité (2FA)", roles: ["ADMIN"] },
+  { href: "/admin/securite-intelligence", label: "Sécurité — Intelligence", roles: ["ADMIN"] },
   { href: "/admin/qualite", label: "Qualité ATLAS OS", roles: ["ADMIN"] },
 ] as const;
 
@@ -27,24 +28,12 @@ const LABEL_ROLE: Record<string, string> = {
   INGENIEUR: "Ingénieur",
 };
 
-// Tableau de bord Admin — et, pour /admin/missions uniquement, également
-// utilisé par un compte INGENIEUR (voir plus bas). Reprend la charte
-// graphique de la page d'accueil (voir app/page.tsx et lib/theme.ts) :
-// logo, palette bleu/bleuFonce, plutôt que le rendu texte brut d'origine.
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  // Le middleware protège déjà ces routes, mais on revérifie ici pour
-  // ne jamais rendre de contenu admin sans session valide (defense in depth).
   const session = await getSession();
   if (!session || session.role === "CLIENT") {
     redirect("/connexion");
   }
 
-  // Un ingénieur doit d'abord importer son CV, valider chaque information
-  // extraite, puis renseigner sa disponibilité, avant d'accéder à son espace
-  // (voir /ingenieur/cv, /ingenieur/cv/verifier et /ingenieur/disponibilite).
-  // Une fois ces étapes faites, son espace principal est /ingenieur (et non
-  // plus ce tableau de bord admin) : /admin/missions reste accessible depuis
-  // la navigation, mais /admin lui-même redirige vers /ingenieur.
   if (session.role === "INGENIEUR" && session.profilId) {
     const profil = await prisma.profil.findUnique({
       where: { id: session.profilId },
