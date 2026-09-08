@@ -224,6 +224,45 @@ model PropositionSecurite {
   @@index([proposeLe])
 }
 
+// ============================================================================
+// COMPANY ATLAS — B19 (08/09/2026) : AGENT IDENTITY FOUNDATION.
+// Première fondation technique du Control Plane (Master Architecture V1,
+// section D) : donner à COMPANY ATLAS un registre d'identités techniques
+// pour ses 4 agents officiels, distinctes des comptes User humains
+// (ADMIN/INGENIEUR/CLIENT). Périmètre strictement limité à B19 : un
+// REGISTRE, rien d'autre — pas de permissions, pas de capabilities, pas
+// d'authentification agent complète (voir lib/agents/identity.ts pour la
+// limite documentée). Les 4 lignes sont créées de façon déterministe par
+// la migration elle-même (voir migration.sql) : AUCUNE route de création
+// n'existe (pas de POST), pour garantir qu'un 5e agent ne peut jamais être
+// introduit, même par erreur applicative.
+enum AgentOfficiel {
+  PRINCIPAL
+  ATLAS_TALENT
+  ATLAS_OS_SERVICES
+  COMPANY_OS
+}
+
+enum AgentIdentityStatut {
+  ACTIVE
+  DISABLED
+}
+
+model AgentIdentity {
+  id String @id // volontairement PAS @default(cuid()) : les 4 lignes sont seedées avec un identifiant déterministe fixe par la migration (voir migration.sql), jamais généré à la volée — cohérent avec le caractère fermé et non créable de ce registre.
+
+  agent AgentOfficiel @unique // vocabulaire fermé, exactement les 4 agents officiels — @unique interdit toute deuxième ligne pour le même agent
+  nomTechnique String // nom technique stable, ex. "atlas-talent" — usage interne/documentation, ne sert pas encore de mécanisme d'authentification (voir limite ci-dessus)
+  statut AgentIdentityStatut @default(ACTIVE)
+  description String?
+  version String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([statut])
+}
+
 model Client {
   id String @id @default(cuid())
   nom String // raison sociale
