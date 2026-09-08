@@ -5,6 +5,7 @@ import {
   signalVolumeAnormal,
   signalErreursRepetees,
   signalSequenceSuspecteConnexion,
+  signalAccesAnormalObjets,
   signauxSansSourceDeDonnee,
   type EvenementSecuriteAllege,
 } from "@/lib/security/runtime-signals";
@@ -14,6 +15,11 @@ import { deriverRisqueInconnu, identifierRisqueManuel, construireRisquesDepuisSi
 // Tests unitaires purs (aucune DB, aucun réseau) — même discipline que
 // tests/unit/security-*.spec.ts (B13) : vocabulaire fermé, FACT -> SIGNAL
 // -> RISK, jamais un raccourci UNKNOWN -> IDENTIFIED sans décision humaine.
+//
+// MISE À JOUR B17 (08/09/2026) — ajout de ressourceType/ressourceId au
+// helper `evenement()` (directive B17 : "accès anormal à des objets" passe
+// de UNKNOWN à un signal calculé, voir signalAccesAnormalObjets) et des
+// tests correspondants.
 
 const MAINTENANT = new Date("2026-09-08T12:00:00.000Z");
 
@@ -24,6 +30,8 @@ function evenement(partial: Partial<EvenementSecuriteAllege> & { minutesAvant?: 
     resultat: partial.resultat ?? "REFUSE",
     acteurEmail: partial.acteurEmail ?? "ingenieur-demo@example.com",
     contexteIp: partial.contexteIp ?? null,
+    ressourceType: partial.ressourceType ?? null,
+    ressourceId: partial.ressourceId ?? null,
     createdAt: new Date(MAINTENANT.getTime() - minutesAvant * 60 * 1000),
   };
 }
@@ -109,19 +117,69 @@ test.describe("lib/security/runtime-signals — séquence de connexion suspecte"
   });
 });
 
-test.describe("lib/security/runtime-signals — catégories sans source de donnée", () => {
-  test("changement de permissions et accès anormal aux objets restent UNKNOWN, jamais simulés", () => {
-    const signaux = signauxSansSourceDeDonnee();
-    expect(signaux).toHaveLength(2);
-    for (const s of signaux) {
-      expect(s.statut).toBe("UNKNOWN");
-    }
+test.describe("lib/security/runtime-signals — accès anormal à des objets (B17)", () => {
+  test("aucune lecture d'objet journalisée -> AUCUN_SIGNAL (jamais UNKNOWN : la source de donnée existe désormais)", () => {
+    const signal = signalAccesAnormalObjets([], MAINTENANT);
+    expect(signal.statut).toBe("AUCUN_SIGNAL");
   });
 
-  test("calculerSignauxRuntime inclut les 4 règles calculées + les 2 UNKNOWN, jamais moins", () => {
+  test("19 objets DISTINCTS consultés par le même acteur (sous le seuil de 20) -> AUCUN_SIGNAL", () => {
+    const evenements = Array.from({ length: 19 }, (_, i) =>
+      evenement({ action: "objet.consultation", resultat: "SUCCES", ressourceType: "Mission", ressourceId: `mission-${i}` })
+    );
+    expect(signalAccesAnormalObjets(evenements, MAINTENANT).statut).toBe("AUCUN_SIGNAL");
+  });
+
+  test("20 objets distincts consultés par le même acteur en 15 minutes -> SIGNAL_DETECTE", () => {
+    const evenements = Array.from({ length: 20 }, (_, i) =>
+      evenement({ action: "objet.consultation", resultat: "SUCCES", ressourceType: "Mission", ressourceId: `mission-${i}` })
+    );
+    const signal = signalAccesAnormalObjets(evenements, MAINTENANT);
+    expect(signal.statut).toBe("SIGNAL_DETECTE");
+    expect(signal.fait).toContain("ingenieur-demo@example.com");
+  });
+
+  test("50 consultations du MÊME objet -> AUCUN_SIGNAL (comptage par objet distinct, pas par volume brut)", () => {
+    const evenements = Array.from({ length: 50 }, () =>
+      evenement({ action: "objet.consultation", resultat: "SUCCES", ressourceType: "Mission", ressourceId: "mission-unique" })
+    );
+    expect(signalAccesAnormalObjets(evenements, MAINTENANT).statut).toBe("AUCUN_SIGNAL");
+  });
+
+  test("20 objets distincts mais répartis sur 20 acteurs différents -> AUCUN_SIGNAL (pas de faux positif agrégé)", () => {
+    const evenements = Array.from({ length: 20 }, (_, i) =>
+      evenement({
+        action: "objet.consultation",
+        resultat: "SUCCES",
+        ressourceType: "Mission",
+        ressourceId: `mission-${i}`,
+        acteurEmail: `acteur-${i}@example.com`,
+      })
+    );
+    expect(signalAccesAnormalObjets(evenements, MAINTENANT).statut).toBe("AUCUN_SIGNAL");
+  });
+
+  test("des refus RBAC (resultat REFUSE) ne comptent jamais comme des consultations", () => {
+    const evenements = Array.from({ length: 25 }, (_, i) =>
+      evenement({ action: "rbac.acces_refuse", resultat: "REFUSE", ressourceType: "Mission", ressourceId: `mission-${i}` })
+    );
+    expect(signalAccesAnormalObjets(evenements, MAINTENANT).statut).toBe("AUCUN_SIGNAL");
+  });
+});
+
+test.describe("lib/security/runtime-signals — catégories sans source de donnée", () => {
+  test("seul le changement de permissions reste UNKNOWN en B17 (accès objet est désormais calculé)", () => {
+    const signaux = signauxSansSourceDeDonnee();
+    expect(signaux).toHaveLength(1);
+    expect(signaux[0].regle).toBe("changement_inhabituel_permissions");
+    expect(signaux[0].statut).toBe("UNKNOWN");
+  });
+
+  test("calculerSignauxRuntime inclut les 5 règles calculées + 1 UNKNOWN, jamais moins", () => {
     const signaux = calculerSignauxRuntime([], MAINTENANT);
     expect(signaux).toHaveLength(6);
-    expect(signaux.filter((s) => s.statut === "UNKNOWN")).toHaveLength(2);
+    expect(signaux.filter((s) => s.statut === "UNKNOWN")).toHaveLength(1);
+    expect(signaux.some((s) => s.regle === "acces_anormal_objets")).toBe(true);
   });
 });
 
