@@ -79,7 +79,13 @@ test.describe("Sécurité — traçabilité de l'audit (EvenementSecurite)", () 
     expect(refus.status()).toBe(403);
 
     await connecter(request, "admin-demo@example.com");
-    const evenements = await request.get("/api/security/evenements?action=rbac.acces_refuse&limite=50");
+    // Filtre aussi par acteurEmail (et pas seulement action) : sous
+    // exécution CI parallèle, d'autres suites déclenchent des refus RBAC
+    // concurrents et un simple LIMIT sur l'action seule peut laisser
+    // passer l'événement recherché hors de la fenêtre des plus récents.
+    const evenements = await request.get(
+      "/api/security/evenements?action=rbac.acces_refuse&acteurEmail=client-demo@example.com&limite=50"
+    );
     const { evenements: liste } = await evenements.json();
     expect(liste.some((e: { acteurEmail: string; resultat: string }) => e.acteurEmail === "client-demo@example.com" && e.resultat === "REFUSE")).toBeTruthy();
   });
@@ -126,9 +132,18 @@ test.describe("Sécurité — isolation inter-client (object-level / horizontale
   });
 
   test("un Ingénieur n'a jamais accès au circuit de validation Admin/Client des feuilles de temps (PATCH)", async ({ request }) => {
+    // Utilise une feuille de temps réelle (pas un id inexistant) : la route
+    // vérifie d'abord l'existence de l'objet (404 sinon), donc un id fictif
+    // ne teste jamais la porte de rôle elle-même — voir
+    // app/api/feuilles-de-temps/route.ts (PATCH).
+    await connecter(request, "admin-demo@example.com");
+    const feuilles = await (await request.get("/api/feuilles-de-temps")).json();
+    const uneFeuille = feuilles.feuilles?.[0];
+    expect(uneFeuille, "au moins une feuille de temps doit exister dans les données de démo").toBeTruthy();
+
     await connecter(request, "ingenieur-demo@example.com");
     const reponse = await request.patch("/api/feuilles-de-temps", {
-      data: { id: "peu-importe", action: "validerAdmin" },
+      data: { id: uneFeuille.id, action: "validerAdmin" },
     });
     expect(reponse.status()).toBe(403);
   });
