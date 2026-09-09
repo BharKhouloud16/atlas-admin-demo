@@ -260,6 +260,66 @@ model AgentIdentity {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  permissions AgentPermission[] // B20 — voir modèle ci-dessous
+
+  @@index([statut])
+}
+
+// ============================================================================
+// COMPANY ATLAS — B20 (09/09/2026) : PERMISSION REGISTRY.
+// Deuxième brique du Control Plane, après AgentIdentity (B19) ci-dessus,
+// dans l'ordre strict IDENTITÉ -> PERMISSION -> CAPABILITY -> RISK ->
+// APPROVAL -> AUTONOMY (Master Architecture V1, directive B20). Référence
+// TOUJOURS un agent par sa clé étrangère agentId -> AgentIdentity.id,
+// jamais par un enum agent dupliqué — AgentIdentity reste l'UNIQUE source
+// de vérité pour l'identité d'un agent (directive B20, règles 1 et 2).
+//
+// Une permission ici est une CAPACITÉ POTENTIELLEMENT AUTORISÉE, jamais la
+// preuve qu'une action a été exécutée : aucun moteur d'autorisation ne
+// consomme encore ces lignes (voir lib/agents/permissions.ts). Volontai-
+// rement AUCUN scope "ALL"/"GLOBAL" dans AgentPermissionScope ci-dessous :
+// un agent ne peut structurellement jamais recevoir un accès global ou un
+// super-pouvoir implicite (directive B20, règles 7 et 8 — le Principal ne
+// doit pas devenir un super-admin technique). Seed volontairement minimal
+// et justifié par le périmètre réel de chaque agent (voir migration.sql) :
+// aucune permission n'est créée "au cas où".
+enum AgentPermissionAction {
+  READ
+  WRITE
+  EXECUTE
+  PROPOSE
+  REPORT
+  ANALYZE
+}
+
+enum AgentPermissionScope {
+  TALENT
+  SECURITY
+  COMPANY_OS
+  PRINCIPAL
+}
+
+enum AgentPermissionStatut {
+  ACTIVE
+  DISABLED
+}
+
+model AgentPermission {
+  id String @id // déterministe, seedé par la migration — même discipline que AgentIdentity.id (B19), jamais généré à la volée.
+
+  agentId String
+  agent AgentIdentity @relation(fields: [agentId], references: [id])
+
+  action AgentPermissionAction
+  scope AgentPermissionScope
+  statut AgentPermissionStatut @default(ACTIVE)
+  description String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([agentId, action, scope])
+  @@index([agentId])
   @@index([statut])
 }
 
