@@ -102,6 +102,24 @@ export function estEmergencyStopScopeValide(valeur: unknown): valeur is Emergenc
   return typeof valeur === "string" && (EMERGENCY_STOP_SCOPES as readonly string[]).includes(valeur);
 }
 
+// B22-FIX (14/09/2026, audit P0 section 6) — sous-ensemble RÉELLEMENT
+// évalué par estArreteUrgenceActif (lib/control-plane/emergency-stop.ts).
+// CAPABILITY/INTEGRATION/MISSION restent déclarés dans
+// EMERGENCY_STOP_SCOPES pour la complétude du vocabulaire cible, mais
+// aucune donnée B22 ne représente une Capability/Integration/Mission comme
+// entité — les évaluer réellement nécessiterait un registre qui n'existe
+// pas dans ce lot (hors périmètre B22 : aucune architecture nouvelle
+// inventée pour les couvrir). Un EmergencyStop créé avec un tel scope ne
+// bloquerait donc RIEN, en donnant une fausse impression de protection —
+// refusé explicitement à la création (Option B de l'audit, jamais un faux
+// mécanisme de blocage), plutôt que de l'implémenter par une extension
+// d'architecture hors mandat.
+export const EMERGENCY_STOP_SCOPES_EVALUES = ["GLOBAL", "AGENT", "ACTION_CLASS", "DELEGATION"] as const;
+
+export function estEmergencyStopScopeEvalueParB22(valeur: EmergencyStopScopeValeur): boolean {
+  return (EMERGENCY_STOP_SCOPES_EVALUES as readonly string[]).includes(valeur);
+}
+
 // Ajout justifié (Phase 3-FIX, point 3) — nécessaire au matching
 // déterministe de calculerHumanNecessity : un texte libre ne peut pas être
 // filtré de façon fiable par une table de règles fermée. N'est PAS un

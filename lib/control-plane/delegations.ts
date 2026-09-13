@@ -84,10 +84,16 @@ export async function revoquerDelegation(params: {
   if (delegation.status !== "ACTIVE") {
     return { ok: false, erreur: `Delegation déjà au statut ${delegation.status} — jamais révoquée deux fois.` };
   }
-  await prisma.delegation.update({
-    where: { id: params.delegationId },
+  // B22-FIX (audit P1 section 8) : updateMany conditionné sur status ACTIVE
+  // — transition atomique, jamais un update inconditionnel qui laisserait
+  // deux révocations concurrentes se croire toutes deux réussies.
+  const resultat = await prisma.delegation.updateMany({
+    where: { id: params.delegationId, status: "ACTIVE" },
     data: { status: "REVOKED", revokedAt: new Date(), revokedBy: params.revokedBy },
   });
+  if (resultat.count === 0) {
+    return { ok: false, erreur: "Delegation déjà révoquée (par un appel concurrent)." };
+  }
   return { ok: true };
 }
 

@@ -1,5 +1,10 @@
 import { prisma } from "@/lib/prisma";
-import { plafonnerTexteControlPlane, PLAFOND_CHAMP_CONTROL_PLANE, type EmergencyStopScopeValeur } from "./domain";
+import {
+  plafonnerTexteControlPlane,
+  PLAFOND_CHAMP_CONTROL_PLANE,
+  estEmergencyStopScopeEvalueParB22,
+  type EmergencyStopScopeValeur,
+} from "./domain";
 
 // COMPANY ATLAS — B22 (14/09/2026) : EMERGENCY STOP.
 // Prioritaire sur toute évaluation ou approbation d'AuthorizationRequest,
@@ -17,6 +22,18 @@ export async function activerArretUrgence(params: {
 }): Promise<{ ok: true; id: string } | { ok: false; erreur: string }> {
   if (params.scope !== "GLOBAL" && (!params.targetId || params.targetId.trim().length === 0)) {
     return { ok: false, erreur: "targetId requis pour tout scope différent de GLOBAL." };
+  }
+  // B22-FIX (audit P0 section 6) : CAPABILITY/INTEGRATION/MISSION sont
+  // déclarés dans le vocabulaire mais ne sont réellement évalués par
+  // aucun chemin de code (estArreteUrgenceActif ne les vérifie jamais,
+  // faute d'un registre Capability/Integration/Mission dans ce lot) —
+  // refusés explicitement pour ne jamais donner une fausse impression de
+  // protection (voir lib/control-plane/domain.ts, estEmergencyStopScopeEvalueParB22).
+  if (!estEmergencyStopScopeEvalueParB22(params.scope)) {
+    return {
+      ok: false,
+      erreur: `Scope ${params.scope} non évalué par cette fondation B22 (aucune action ne serait réellement bloquée) — jamais un faux mécanisme d'arrêt d'urgence.`,
+    };
   }
   const reason = plafonnerTexteControlPlane(params.reason, PLAFOND_CHAMP_CONTROL_PLANE);
   if (!reason) {
@@ -43,10 +60,16 @@ export async function leverArretUrgence(params: {
   if (stop.liftedAt !== null) {
     return { ok: false, erreur: "EmergencyStop déjà levé." };
   }
-  await prisma.emergencyStop.update({
-    where: { id: params.emergencyStopId },
+  // B22-FIX (audit P1 section 8) : updateMany conditionné sur liftedAt IS
+  // NULL — transition atomique au niveau SQL, jamais un update inconditionnel
+  // qui laisserait deux levées concurrentes se croire toutes deux réussies.
+  const resultat = await prisma.emergencyStop.updateMany({
+    where: { id: params.emergencyStopId, liftedAt: null },
     data: { liftedAt: new Date(), liftedBy: params.liftedBy },
   });
+  if (resultat.count === 0) {
+    return { ok: false, erreur: "EmergencyStop déjà levé (par un appel concurrent)." };
+  }
   return { ok: true };
 }
 

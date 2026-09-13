@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { listerPermissionsAgent, possedePermissionActive, type AgentPermissionActionValeur, type AgentPermissionScopeValeur } from "@/lib/agents/permissions";
+import { estAgentActif } from "@/lib/agents/identity";
 import { classifierAction } from "./commitment";
 import { calculerHumanNecessity } from "./human-necessity";
 import { estArreteUrgenceActif } from "./emergency-stop";
@@ -74,8 +75,20 @@ export async function creerDemandeAutorisation(params: {
   }
 
   let delegationCouvrante = false;
-  let montantDepasse = false;
-  let risqueDepasseFlag = false;
+  // B22-FIX (audit P1 section 7, Finance/Commitment Lock) : un montant ou
+  // un risque DÉCLARÉ sur la requête sans Delegation qui le couvre
+  // explicitement n'est JAMAIS considéré comme couvert par défaut — sinon
+  // une action classée INTERNAL_ACTION/WRITE porterait un engagement
+  // financier (ou un risque) sans jamais passer par une approbation
+  // humaine ni une délégation explicite. Principe : ENGAGEMENT FINANCIER/
+  // RISQUE DÉCLARÉ -> HUMAN APPROVAL ou DELEGATION EXPLICITE ET COUVRANTE,
+  // jamais une autorisation implicite. Initialisé à "non couvert" dès
+  // qu'une valeur est déclarée (même discipline fail-closed que NULL !=
+  // illimité sur Delegation.maxAmount/maxRiskLevel) ; seule une Delegation
+  // qui couvre RÉELLEMENT le contexte (estDelegationCouvrante) le ramène à
+  // false.
+  let montantDepasse = params.amount !== undefined;
+  let risqueDepasseFlag = params.riskLevel !== undefined;
   if (delegation) {
     const couverture = estDelegationCouvrante(delegation, permissions, params.agentId, {
       action: params.action,
@@ -107,6 +120,15 @@ export async function creerDemandeAutorisation(params: {
     decision = "DENY";
     decisionReason = "Aucune AgentPermission ACTIVE pour cet agent/action (B20).";
     status = "RESOLVED";
+  } else if (params.requestedAutonomyLevel === "L4_EXECUTE_WITH_APPROVAL") {
+    // B22-FIX (audit P0 section 3) : "avec approbation" est le nom même du
+    // niveau L4 — jamais un raccourci vers une résolution automatique,
+    // même si Human Necessity retourne H0/H1. Une approbation humaine
+    // minimale est TOUJOURS requise pour L4 (L0-L3 restent régis par
+    // Human Necessity seul, "selon politique").
+    decision = "APPROVAL_REQUIRED";
+    decisionReason = `requestedAutonomyLevel L4_EXECUTE_WITH_APPROVAL — validation humaine ADMIN toujours requise (Human Necessity ${humanNecessity}), jamais une résolution automatique.`;
+    status = "PENDING";
   } else if (humanNecessity === "H0" || humanNecessity === "H1") {
     decision = "ALLOW";
     decisionReason = "Permission active, aucun Emergency Stop, Human Necessity faible (H0/H1) — résolution automatique.";
@@ -197,14 +219,71 @@ export async function approuverDemande(params: {
     return { ok: false, erreur: "Emergency Stop actif — approbation impossible tant qu'il n'est pas levé par un ADMIN.", code: 409 };
   }
 
+  // B22-FIX (audit P0 sections 4/5/9B) : une décision ALLOW ne doit JAMAIS
+  // s'appuyer uniquement sur l'état enregistré à la création de la
+  // demande — AgentIdentity, AgentPermission et (le cas échéant)
+  // Delegation sont revalidés EN DIRECT ici, au moment exact de
+  // l'approbation. Un DENY reste toujours la direction sûre (fail-closed)
+  // et n'a donc besoin d'aucune revalidation.
+  if (params.decision === "ALLOW") {
+    const agent = await prisma.agentIdentity.findUnique({ where: { id: demande.agentId } });
+    if (!agent || !estAgentActif(agent)) {
+      return {
+        ok: false,
+        erreur: "AgentIdentity n'est plus ACTIVE — revalidée au moment de l'approbation, autorisation refusée.",
+        code: 409,
+      };
+    }
+
+    const permissionsActuelles = await listerPermissionsAgent();
+    if (!possedePermissionActive(permissionsActuelles, demande.agentId, demande.action)) {
+      return {
+        ok: false,
+        erreur: "Aucune AgentPermission ACTIVE ne correspond plus à cet agent/action — revalidée au moment de l'approbation, autorisation refusée.",
+        code: 409,
+      };
+    }
+
+    if (demande.delegationId) {
+      // Revalide UNIQUEMENT la validité en cours de vie de la Delegation
+      // (statut ACTIVE, non expirée, action/scope inchangés, permission
+      // sous-jacente toujours active) — jamais la couverture montant/
+      // risque : c'est précisément parce que la Delegation ne couvrait
+      // peut-être pas entièrement le montant/risque demandé que cette
+      // demande est passée par une approbation humaine ; l'ADMIN reste
+      // l'autorité qui tranche ce dépassement. Ce que cette revalidation
+      // ferme, c'est le scénario d'une Delegation RÉVOQUÉE ou EXPIRÉE
+      // depuis la création de la demande (directive B22-FIX, section 5).
+      const delegation = await prisma.delegation.findUnique({ where: { id: demande.delegationId } });
+      const couverture = delegation
+        ? estDelegationCouvrante(delegation, permissionsActuelles, demande.agentId, {
+            action: demande.action,
+            scope: demande.scope,
+          })
+        : null;
+      if (!delegation || !couverture?.couvre) {
+        return {
+          ok: false,
+          erreur:
+            "La Delegation associée n'est plus valide (révoquée, expirée, ou permission sous-jacente désactivée) — revalidée au moment de l'approbation, autorisation refusée.",
+          code: 409,
+        };
+      }
+    }
+  }
+
   const decisionReason = plafonnerTexteControlPlane(params.decisionReason, PLAFOND_CHAMP_CONTROL_PLANE);
   if (!decisionReason) {
     return { ok: false, erreur: "decisionReason requis et non vide.", code: 409 };
   }
 
   const maintenant = new Date();
-  await prisma.authorizationRequest.update({
-    where: { id: params.id },
+  // B22-FIX (audit P1 section 8, concurrence) : updateMany conditionné sur
+  // status PENDING — transition PENDING -> RESOLVED atomique au niveau
+  // SQL. Deux approbations concurrentes ne peuvent jamais toutes les deux
+  // réussir : la seconde constate count===0 et est refusée.
+  const resultat = await prisma.authorizationRequest.updateMany({
+    where: { id: params.id, status: "PENDING" },
     data: {
       decision: params.decision,
       decisionReason,
@@ -214,6 +293,13 @@ export async function approuverDemande(params: {
       status: "RESOLVED",
     },
   });
+  if (resultat.count === 0) {
+    return {
+      ok: false,
+      erreur: "Demande déjà résolue par un appel concurrent — jamais deux décisions incohérentes.",
+      code: 409,
+    };
+  }
 
   await enregistrerAuditEvent({
     correlationId: demande.correlationId,
@@ -245,7 +331,15 @@ export async function revoquerDemande(params: {
     return { ok: false, erreur: "reason requis et non vide.", code: 409 };
   }
 
-  await prisma.authorizationRequest.update({ where: { id: params.id }, data: { status: "REVOKED" } });
+  // B22-FIX (audit P1 section 8, concurrence) : updateMany conditionné sur
+  // status != REVOKED — même discipline atomique que approuverDemande.
+  const resultat = await prisma.authorizationRequest.updateMany({
+    where: { id: params.id, status: { not: "REVOKED" } },
+    data: { status: "REVOKED" },
+  });
+  if (resultat.count === 0) {
+    return { ok: false, erreur: "Demande déjà révoquée (par un appel concurrent).", code: 409 };
+  }
 
   await enregistrerAuditEvent({
     correlationId: demande.correlationId,
