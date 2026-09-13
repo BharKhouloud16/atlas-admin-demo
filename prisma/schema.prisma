@@ -491,6 +491,7 @@ model StrategicAnalysis {
 
 model StrategicOpportunity {
   id String @id @default(cuid())
+  correlationId String // B21.1 (M3) — propagé depuis StrategicAnalysis.correlationId (jamais fourni par l'appelant), même mécanisme transverse que StrategicSignal/StrategicAnalysis (lib/security/events.ts)
   analysisId String
   analysis StrategicAnalysis @relation(fields: [analysisId], references: [id])
 
@@ -501,10 +502,12 @@ model StrategicOpportunity {
 
   @@index([analysisId])
   @@index([priorite])
+  @@index([correlationId])
 }
 
 model StrategicThreat {
   id String @id @default(cuid())
+  correlationId String // B21.1 (M3) — propagé depuis StrategicAnalysis.correlationId
   analysisId String
   analysis StrategicAnalysis @relation(fields: [analysisId], references: [id])
 
@@ -515,10 +518,12 @@ model StrategicThreat {
 
   @@index([analysisId])
   @@index([priorite])
+  @@index([correlationId])
 }
 
 model StrategicRecommendation {
   id String @id @default(cuid())
+  correlationId String // B21.1 (M3) — propagé depuis StrategicAnalysis.correlationId
   analysisId String
   analysis StrategicAnalysis @relation(fields: [analysisId], references: [id])
 
@@ -531,6 +536,7 @@ model StrategicRecommendation {
 
   @@index([analysisId])
   @@index([priorite])
+  @@index([correlationId])
 }
 
 model StrategicActionProposal {

@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { enregistrerAnalyseStrategique } from "@/lib/strategic/veille";
 import { nouveauCorrelationId } from "@/lib/security/events";
+import { plafonnerCorrelationId } from "@/lib/strategic/domain";
 
 // COMPANY ATLAS — B21 (13/09/2026) : lecture/écriture des StrategicAnalysis
 // (voir lib/strategic/veille.ts). Réservé ADMIN, même discipline que
@@ -58,8 +59,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "constat requis — evidence-first, jamais une affirmation sans preuve." }, { status: 400 });
     }
 
-    const correlationIdFinal =
-      typeof body?.correlationId === "string" && body.correlationId.length > 0 ? body.correlationId : nouveauCorrelationId();
+    const correlationIdFinal = plafonnerCorrelationId(
+      typeof body?.correlationId === "string" && body.correlationId.length > 0 ? body.correlationId : nouveauCorrelationId()
+    );
 
     const id = await enregistrerAnalyseStrategique({
       correlationId: correlationIdFinal,

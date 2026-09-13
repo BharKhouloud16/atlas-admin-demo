@@ -87,4 +87,21 @@ export function plafonnerTexteStrategique(texte: string | null | undefined, max:
   return texte.length > max ? texte.slice(0, max) : texte;
 }
 
+// B21.1 — M2 (durcissement) : même discipline de plafonnement que les
+// autres champs texte stratégiques (plafonnerTexteStrategique ci-dessus),
+// mais dédiée à correlationId — un champ TOUJOURS requis (jamais null),
+// partagé tel quel entre StrategicSignal/StrategicAnalysis/
+// StrategicOpportunity/StrategicThreat/StrategicRecommendation/
+// StrategicActionProposal/StrategicAuthorization (voir lib/security/events.ts
+// pour le même mécanisme transverse, B16). Reçoit toujours une chaîne non
+// vide (l'appelant a déjà substitué nouveauCorrelationId() sinon) : ne
+// renvoie donc jamais null, contrairement à plafonnerTexteStrategique.
+// Comportement inchangé pour tout correlationId ≤ 300 caractères (tous les
+// correlationId réels observés aujourd'hui, y compris ceux générés par
+// nouveauCorrelationId()) — seul un correlationId anormalement long est
+// tronqué, jamais stocké intégralement, jamais un refus de la requête.
+export function plafonnerCorrelationId(correlationId: string): string {
+  return correlationId.length > PLAFOND_COURT ? correlationId.slice(0, PLAFOND_COURT) : correlationId;
+}
+
 export { PLAFOND_CHAMP as PLAFOND_CHAMP_STRATEGIQUE, PLAFOND_COURT as PLAFOND_COURT_STRATEGIQUE };

@@ -83,3 +83,21 @@ export function estPermissionActive(permission: Pick<AgentPermission, "statut">)
 export async function listerPermissionsAgent(): Promise<AgentPermission[]> {
   return prisma.agentPermission.findMany({ orderBy: [{ agentId: "asc" }, { action: "asc" }, { scope: "asc" }] });
 }
+
+// B21.1 — M1 (durcissement Strategic Intelligence Foundation) : garde-fou
+// PUR, testable sans base de donnees, meme discipline que estPermissionActive
+// ci-dessus et estAgentActif (B19, lib/agents/identity.ts). Repond a une
+// seule question — "cet agent a-t-il au moins une permission ACTIVE pour
+// cette action ?" — sans jamais introduire de nouvelle source de verite : il
+// consomme directement les AgentPermission deja chargees par l'appelant
+// (listerPermissionsAgent), jamais un vocabulaire ou un registre parallele.
+// Utilise par lib/strategic/propositions.ts pour verifier qu'un agent
+// possede la permission PROPOSE avant de creer une StrategicActionProposal
+// en son nom — sans jamais contourner AgentPermission.
+export function possedePermissionActive(
+  permissions: Pick<AgentPermission, "agentId" | "action" | "statut">[],
+  agentId: string,
+  action: AgentPermissionActionValeur
+): boolean {
+  return permissions.some((p) => p.agentId === agentId && p.action === action && estPermissionActive(p));
+}

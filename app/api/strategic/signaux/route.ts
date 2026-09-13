@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { enregistrerSignalStrategique } from "@/lib/strategic/veille";
-import { estStrategicCategoryValide, STRATEGIC_SIGNAL_STATUTS, type StrategicSignalStatutValeur } from "@/lib/strategic/domain";
+import {
+  estStrategicCategoryValide,
+  plafonnerCorrelationId,
+  STRATEGIC_SIGNAL_STATUTS,
+  type StrategicSignalStatutValeur,
+} from "@/lib/strategic/domain";
 import { nouveauCorrelationId } from "@/lib/security/events";
 
 // COMPANY ATLAS — B21 (13/09/2026) : lecture/écriture des StrategicSignal
@@ -65,8 +70,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "titre requis." }, { status: 400 });
     }
 
-    const correlationIdFinal =
-      typeof body?.correlationId === "string" && body.correlationId.length > 0 ? body.correlationId : nouveauCorrelationId();
+    const correlationIdFinal = plafonnerCorrelationId(
+      typeof body?.correlationId === "string" && body.correlationId.length > 0 ? body.correlationId : nouveauCorrelationId()
+    );
 
     const id = await enregistrerSignalStrategique({
       correlationId: correlationIdFinal,

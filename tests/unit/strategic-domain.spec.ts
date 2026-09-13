@@ -6,6 +6,7 @@ import {
   estStrategicCategoryValide,
   estStrategicPriorityValide,
   estStrategicProposalStatutValide,
+  plafonnerCorrelationId,
   plafonnerTexteStrategique,
 } from "@/lib/strategic/domain";
 
@@ -74,5 +75,21 @@ test.describe("COMPANY ATLAS B21 — vocabulaires fermés (fonctions pures)", ()
 
     // @ts-expect-error — simulation volontaire d'une entrée mal typée (ex. JSON externe)
     expect(plafonnerTexteStrategique(12345)).toBeNull();
+  });
+
+  // B21.1 — M2 : correlationId est TOUJOURS requis (jamais null en base),
+  // donc plafonnerCorrelationId ne renvoie jamais null, contrairement à
+  // plafonnerTexteStrategique — voir tests/api/b21-strategic-foundation.spec.ts
+  // pour la vérification bout en bout (un correlationId trop long est
+  // tronqué, jamais stocké intégralement, jamais un refus de la requête —
+  // même comportement fonctionnel qu'avant B21.1).
+  test("plafonnerCorrelationId laisse passer un correlationId de taille normale, tronque un correlationId anormalement long", () => {
+    expect(plafonnerCorrelationId("court")).toBe("court");
+    expect(plafonnerCorrelationId("b21-cycle-1700000000000-abc123def")).toBe("b21-cycle-1700000000000-abc123def");
+
+    const long = "x".repeat(1000);
+    const tronque = plafonnerCorrelationId(long);
+    expect(tronque.length).toBe(300);
+    expect(tronque).toBe(long.slice(0, 300));
   });
 });
