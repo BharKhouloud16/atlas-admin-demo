@@ -207,7 +207,9 @@ test.describe("COMPANY ATLAS B18-FIX — registre de rapports agents (API)", () 
     const permissions = await request.get("/api/security/permissions");
     expect(permissions.ok()).toBeTruthy();
     const { permissions: listePermissions } = await permissions.json();
-    expect(listePermissions.length).toBe(2);
+    // B21.1 (M1) a ajouté 2 permissions PROPOSE au registre B20 (2 -> 4) —
+    // voir tests/api/b20-permission-registry.spec.ts pour le détail complet.
+    expect(listePermissions.length).toBe(4);
   });
 
   test("absence de secrets : aucun champ du modèle n'accepte un identifiant de type mot de passe/token", async ({ request }) => {
