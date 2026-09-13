@@ -261,6 +261,7 @@ model AgentIdentity {
   updatedAt DateTime @updatedAt
 
   permissions AgentPermission[] // B20 — voir modèle ci-dessous
+  rapports RapportAgent[] // B18-FIX — voir modèle plus bas
 
   @@index([statut])
 }
@@ -321,6 +322,77 @@ model AgentPermission {
   @@unique([agentId, action, scope])
   @@index([agentId])
   @@index([statut])
+}
+
+// ============================================================================
+// COMPANY ATLAS — B18-FIX (10/09/2026) : AGENT IDENTITY RECONCILIATION.
+// Reconstruction propre de B18 (registre structuré de rapports
+// inter-agents, Charte de Gouvernance V1.0 section I) directement sur la
+// base de main actuel (B19 AgentIdentity + B20 AgentPermission déjà
+// fusionnés ci-dessus). La branche b18-registre-rapports d'origine
+// (PR #1, ouverte le 08/09/2026, jamais fusionnée) référençait chaque
+// rapport par un enum libre AgentEmetteur (4 valeurs dupliquant
+// exactement AgentOfficiel/AgentIdentity de B19) — voir le rapport
+// d'audit B18 pré-fix pour le détail complet de ce constat. Cette
+// reconstruction n'introduit JAMAIS AgentEmetteur ni AGENTS_EMETTEURS :
+// RapportAgent.agentId référence directement AgentIdentity.id (FK),
+// exactement comme AgentPermission.agentId ci-dessus (B20). AgentIdentity
+// reste l'UNIQUE source de vérité pour l'identité d'un agent.
+//
+// PAS DE BACKFILL NÉCESSAIRE (écart documenté avec la directive B18-FIX,
+// signalé explicitement plutôt que décidé silencieusement) : RapportAgent
+// n'a jamais existé sur main — l'ancienne branche b18-registre-rapports
+// n'a jamais été fusionnée, donc aucune donnée de production ne référence
+// l'ancien enum AgentEmetteur. La discipline "migration additive avec
+// backfill déterministe, puis migration destructive séparée" demandée
+// s'applique au scénario où B18 aurait déjà été fusionnée avec
+// agentEmetteur en production — ce n'est pas le cas ici. Construire
+// directement avec la FK agentId est donc la migration complète et
+// correcte en une seule étape (voir prisma/migrations/.../migration.sql),
+// sans dette à résorber plus tard. Voir le rapport final B18-FIX, section
+// "écart avec la directive", pour la justification complète.
+//
+// Le reste de la conception de B18 (table séparée d'EvenementSecurite
+// pour ne pas fausser les signaux runtime B16/B17, correlationId réutilisé
+// tel quel, best-effort jamais bloquant, UNKNOWN explicite, plafonnement
+// des champs texte) est inchangé — voir lib/gouvernance/rapports.ts.
+//
+// CE QUE CETTE RECONSTRUCTION NE RÉSOUT PAS : le risque d'impersonation
+// déjà documenté dans l'audit B18 (POST accepte un agentId choisi par
+// l'appelant ADMIN humain, sans vérifier que cet appelant EST réellement
+// l'agent désigné) reste ouvert — aucune authentification agent réelle
+// n'existe encore dans COMPANY ATLAS. Explicitement hors périmètre de ce
+// lot B18-FIX (directive : "ne pas implémenter l'authentification réelle
+// des agents dans ce lot").
+enum StatutRapportAgent {
+  COMPLETE
+  PARTIEL
+  BLOQUE
+  REFUSE
+}
+
+model RapportAgent {
+  id String @id @default(cuid())
+  correlationId String // regroupe les rapports d'une même chaîne d'exécution — même mécanisme que EvenementSecurite (lib/security/events.ts)
+
+  agentId String
+  agent AgentIdentity @relation(fields: [agentId], references: [id])
+
+  typeRapport String // vocabulaire fermé côté lib/gouvernance/rapports.ts (TYPES_RAPPORT)
+  objectif String
+  analyse String?
+  actions String?
+  risques String?
+  statut StatutRapportAgent
+  inconnu String? // UNKNOWN explicite (Charte F.1) — jamais déduit, jamais omis silencieusement
+  contexte String?
+  severite SeveriteEvenementSecurite @default(INFO) // réutilise l'enum existant (B16) plutôt que d'en dupliquer un — même discipline que le reste de ce fichier
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([correlationId])
+  @@index([agentId])
 }
 
 model Client {
