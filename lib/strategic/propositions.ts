@@ -24,12 +24,15 @@ import { plafonnerTexteStrategique, PLAFOND_CHAMP_STRATEGIQUE, PLAFOND_COURT_STR
 //   REFUSEE/EXECUTEE/CONTROLEE (une autorisation n'est jamais réutilisée
 //   ni réémise) et exige scope + durée non vides (une autorisation
 //   scoped, conformément à la directive B21).
-// - Une proposition ne peut passer à EXECUTEE que si `peutExecuter` est
-//   vrai — c'est-à-dire seulement après une StrategicAuthorization réelle.
-//   Ce module N'EXÉCUTE RIEN lui-même : `marquerExecutee`/`controlerProposition`
-//   n'ouvrent pas d'action externe, ils enregistrent seulement le résultat
-//   déclaré par l'appelant (même limite que PropositionSecurite, B16 :
-//   observer/proposer/enregistrer n'est pas agir).
+// - `peutExecuter` est une fonction pure, testable sans base de données,
+//   qui indique seulement si le statut AUTORISEE est atteint — condition
+//   nécessaire avant toute exécution. Ce module N'EXÉCUTE RIEN lui-même et
+//   ne fournit AUCUNE fonction de transition vers EXECUTEE ou CONTROLEE
+//   (même limite que PropositionSecurite, B16 : observer/proposer/
+//   enregistrer n'est pas agir). EXECUTEE et CONTROLEE restent déclarés
+//   dans le vocabulaire fermé du cycle cible (lib/strategic/domain.ts)
+//   pour un lot futur, mais aucune route ni fonction de ce module ne les
+//   produit jamais dans cette fondation B21 (voir MANIFEST.md).
 
 export async function creerPropositionAction(params: {
   correlationId?: string;

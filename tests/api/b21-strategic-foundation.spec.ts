@@ -35,6 +35,40 @@ test.describe("COMPANY ATLAS B21 — Strategic Intelligence Foundation (API)", (
     expect(autoriser.status()).toBe(403);
   });
 
+  test("SÉCURITÉ (B21-FIX) : un CLIENT n'a jamais accès aux endpoints B21 (403 sur signaux, propositions, autorisation)", async ({
+    request,
+  }) => {
+    await connecter(request, "client-demo@example.com");
+
+    const signaux = await request.get("/api/strategic/signaux");
+    expect(signaux.status()).toBe(403);
+
+    const propositions = await request.get("/api/strategic/propositions");
+    expect(propositions.status()).toBe(403);
+
+    const autoriser = await request.post("/api/strategic/propositions/inexistant/autoriser", {
+      data: { scope: "test", duree: "1 jour" },
+    });
+    expect(autoriser.status()).toBe(403);
+  });
+
+  test("SÉCURITÉ (B21-FIX) : un INGENIEUR n'a jamais accès aux endpoints B21 (403 sur signaux, propositions, autorisation)", async ({
+    request,
+  }) => {
+    await connecter(request, "ingenieur-demo@example.com");
+
+    const signaux = await request.get("/api/strategic/signaux");
+    expect(signaux.status()).toBe(403);
+
+    const propositions = await request.get("/api/strategic/propositions");
+    expect(propositions.status()).toBe(403);
+
+    const autoriser = await request.post("/api/strategic/propositions/inexistant/autoriser", {
+      data: { scope: "test", duree: "1 jour" },
+    });
+    expect(autoriser.status()).toBe(403);
+  });
+
   test("cycle complet : Signal -> Analyse -> Recommandation -> Proposition -> Autorisation, tracé par un correlationId unique", async ({
     request,
   }) => {
