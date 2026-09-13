@@ -5,7 +5,7 @@ import { listerAgentsIdentity } from "@/lib/agents/identity";
 import { listerPermissionsAgent, possedePermissionActive } from "@/lib/agents/permissions";
 import { creerPropositionAction } from "@/lib/strategic/propositions";
 import { nouveauCorrelationId } from "@/lib/security/events";
-import { estStrategicProposalStatutValide, plafonnerCorrelationId } from "@/lib/strategic/domain";
+import { estCorrelationIdValide, estStrategicProposalStatutValide } from "@/lib/strategic/domain";
 
 // COMPANY ATLAS — B21 (13/09/2026) : lecture/écriture des
 // StrategicActionProposal (voir lib/strategic/propositions.ts). Réservé
@@ -96,9 +96,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "actionProposee requise." }, { status: 400 });
     }
 
-    const correlationIdFinal = plafonnerCorrelationId(
-      typeof body?.correlationId === "string" && body.correlationId.length > 0 ? body.correlationId : nouveauCorrelationId()
-    );
+    // B21.1 — M2 (correction) : correlationId est un identifiant de
+    // traçabilité, jamais tronqué — une valeur trop longue est un refus
+    // explicite (400), pas une troncature silencieuse.
+    const correlationIdBrut =
+      typeof body?.correlationId === "string" && body.correlationId.length > 0 ? body.correlationId : undefined;
+    if (correlationIdBrut && !estCorrelationIdValide(correlationIdBrut)) {
+      return NextResponse.json({ error: "correlationId invalide : ne doit jamais dépasser 300 caractères." }, { status: 400 });
+    }
+    const correlationIdFinal = correlationIdBrut ?? nouveauCorrelationId();
 
     const id = await creerPropositionAction({
       correlationId: correlationIdFinal,

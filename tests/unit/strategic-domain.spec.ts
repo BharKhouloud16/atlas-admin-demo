@@ -3,10 +3,10 @@ import {
   STRATEGIC_CATEGORIES,
   STRATEGIC_PRIORITIES,
   STRATEGIC_PROPOSAL_STATUTS,
+  estCorrelationIdValide,
   estStrategicCategoryValide,
   estStrategicPriorityValide,
   estStrategicProposalStatutValide,
-  plafonnerCorrelationId,
   plafonnerTexteStrategique,
 } from "@/lib/strategic/domain";
 
@@ -77,19 +77,26 @@ test.describe("COMPANY ATLAS B21 — vocabulaires fermés (fonctions pures)", ()
     expect(plafonnerTexteStrategique(12345)).toBeNull();
   });
 
-  // B21.1 — M2 : correlationId est TOUJOURS requis (jamais null en base),
-  // donc plafonnerCorrelationId ne renvoie jamais null, contrairement à
-  // plafonnerTexteStrategique — voir tests/api/b21-strategic-foundation.spec.ts
-  // pour la vérification bout en bout (un correlationId trop long est
-  // tronqué, jamais stocké intégralement, jamais un refus de la requête —
-  // même comportement fonctionnel qu'avant B21.1).
-  test("plafonnerCorrelationId laisse passer un correlationId de taille normale, tronque un correlationId anormalement long", () => {
-    expect(plafonnerCorrelationId("court")).toBe("court");
-    expect(plafonnerCorrelationId("b21-cycle-1700000000000-abc123def")).toBe("b21-cycle-1700000000000-abc123def");
+  // B21.1 — M2 (correction, décision architecturale du 13/09/2026) :
+  // correlationId est un identifiant de traçabilité, jamais un simple texte
+  // métier — il n'est JAMAIS tronqué. estCorrelationIdValide est une pure
+  // fonction de VALIDATION (jamais de transformation) : une valeur trop
+  // longue doit être refusée (400) par l'appelant, jamais tronquée puis
+  // acceptée. Voir tests/api/b21-strategic-foundation.spec.ts pour la
+  // vérification bout en bout (300 → accepté tel quel, 301 → 400).
+  test("estCorrelationIdValide accepte un correlationId de taille normale ou de exactement 300 caractères", () => {
+    expect(estCorrelationIdValide("court")).toBe(true);
+    expect(estCorrelationIdValide("b21-cycle-1700000000000-abc123def")).toBe(true);
+    expect(estCorrelationIdValide("x".repeat(300))).toBe(true);
+  });
 
-    const long = "x".repeat(1000);
-    const tronque = plafonnerCorrelationId(long);
-    expect(tronque.length).toBe(300);
-    expect(tronque).toBe(long.slice(0, 300));
+  test("estCorrelationIdValide rejette tout correlationId de 301 caractères ou plus, sans jamais le modifier", () => {
+    const valeur301 = "x".repeat(301);
+    expect(estCorrelationIdValide(valeur301)).toBe(false);
+    // Aucune troncature silencieuse : la fonction ne renvoie qu'un
+    // booléen, elle ne peut structurellement pas altérer la valeur reçue.
+    expect(valeur301.length).toBe(301);
+
+    expect(estCorrelationIdValide("x".repeat(1000))).toBe(false);
   });
 });

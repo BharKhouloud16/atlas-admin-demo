@@ -283,33 +283,15 @@ test.describe("COMPANY ATLAS B21 — Strategic Intelligence Foundation (API)", (
     expect(agentsAvecPropose.includes(idParAgent["COMPANY_OS"])).toBe(false);
   });
 
-  test("M2 : un correlationId anormalement long est tronqué (jamais stocké intégralement, jamais un refus de la requête)", async ({
+  // B21.1 — M2 (correction, décision architecturale du 13/09/2026) :
+  // correlationId est un identifiant de traçabilité, jamais tronqué —
+  // <= 300 caractères : accepté et conservé strictement à l'identique ;
+  // > 300 caractères : refus explicite (400), jamais un enregistrement
+  // partiel de la valeur.
+
+  test("M2 : un correlationId de taille normale est accepté et conservé strictement à l'identique (signaux)", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
-    const correlationIdLong = `b21.1-m2-trop-long-${"x".repeat(1000)}`;
-
-    const signalRes = await request.post("/api/strategic/signaux", {
-      data: {
-        correlationId: correlationIdLong,
-        categorie: "TECHNOLOGY",
-        source: "veille manuelle — test M2",
-        titre: "Signal de test M2",
-      },
-    });
-    expect(signalRes.status(), await signalRes.text()).toBe(201);
-    const corps = await signalRes.json();
-    expect(corps.correlationId.length).toBe(300);
-    expect(corps.correlationId).toBe(correlationIdLong.slice(0, 300));
-
-    const lecture = await request.get(`/api/strategic/signaux?categorie=TECHNOLOGY&limite=200`);
-    const { signaux } = await lecture.json();
-    const cible = signaux.find((s: { correlationId: string }) => s.correlationId === corps.correlationId);
-    expect(cible).toBeTruthy();
-    expect(cible.correlationId.length).toBeLessThanOrEqual(300);
-  });
-
-  test("M2 : un correlationId de taille normale est accepté sans troncature", async ({ request }) => {
     await connecter(request, "admin-demo@example.com");
     const correlationId = `b21.1-m2-normal-${Date.now()}`;
 
@@ -319,6 +301,73 @@ test.describe("COMPANY ATLAS B21 — Strategic Intelligence Foundation (API)", (
     expect(signalRes.status(), await signalRes.text()).toBe(201);
     const corps = await signalRes.json();
     expect(corps.correlationId).toBe(correlationId);
+  });
+
+  test("M2 : un correlationId d'exactement 300 caractères est accepté et conservé à l'identique (signaux)", async ({
+    request,
+  }) => {
+    await connecter(request, "admin-demo@example.com");
+    const correlationId300 = `b21.1-m2-300-${"x".repeat(300 - "b21.1-m2-300-".length)}`;
+    expect(correlationId300.length).toBe(300);
+
+    const signalRes = await request.post("/api/strategic/signaux", {
+      data: { correlationId: correlationId300, categorie: "INNOVATION", source: "veille manuelle — test M2", titre: "Signal" },
+    });
+    expect(signalRes.status(), await signalRes.text()).toBe(201);
+    const corps = await signalRes.json();
+    expect(corps.correlationId).toBe(correlationId300);
+    expect(corps.correlationId.length).toBe(300);
+  });
+
+  test("M2 : un correlationId de 301 caractères est refusé (400), jamais tronqué ni enregistré (signaux)", async ({
+    request,
+  }) => {
+    await connecter(request, "admin-demo@example.com");
+    const correlationId301 = "x".repeat(301);
+
+    const signalRes = await request.post("/api/strategic/signaux", {
+      data: { correlationId: correlationId301, categorie: "INNOVATION", source: "veille manuelle — test M2", titre: "Signal" },
+    });
+    expect(signalRes.status()).toBe(400);
+    const erreur = await signalRes.json();
+    expect(erreur.error).toContain("300");
+
+    const lecture = await request.get(`/api/strategic/signaux?categorie=INNOVATION&limite=200`);
+    const { signaux } = await lecture.json();
+    expect(signaux.some((s: { correlationId: string }) => s.correlationId.startsWith("x".repeat(300)))).toBe(false);
+  });
+
+  test("M2 : un correlationId trop long (>300) est refusé (400) sur analyses et propositions également", async ({ request }) => {
+    await connecter(request, "admin-demo@example.com");
+    const agentId = await idAgent(request, "ATLAS_TALENT");
+    const correlationId301 = "y".repeat(301);
+
+    // Signal valide, requis pour atteindre la route /analyses.
+    const signalRes = await request.post("/api/strategic/signaux", {
+      data: { categorie: "INNOVATION", source: "veille manuelle — test M2", titre: "Signal de test M2 (analyses/propositions)" },
+    });
+    const { id: signalId } = await signalRes.json();
+
+    const analyseRes = await request.post("/api/strategic/analyses", {
+      data: { correlationId: correlationId301, signalId, constat: "Constat de test M2" },
+    });
+    expect(analyseRes.status()).toBe(400);
+
+    // Recommandation valide (correlationId propre à la route derives, non
+    // concerné par M2), pour atteindre la route /propositions.
+    const analyseValide = await request.post("/api/strategic/analyses", {
+      data: { signalId, constat: "Constat de test M2 (valide)" },
+    });
+    const { id: analysisId } = await analyseValide.json();
+    const recoRes = await request.post(`/api/strategic/analyses/${analysisId}/derives`, {
+      data: { type: "recommandation", description: "Recommandation de test M2", priorite: "P3_MONITOR" },
+    });
+    const { id: recommendationId } = await recoRes.json();
+
+    const propRes = await request.post("/api/strategic/propositions", {
+      data: { correlationId: correlationId301, recommendationId, agentId, actionProposee: "Action de test M2" },
+    });
+    expect(propRes.status()).toBe(400);
   });
 
   test("M3 : correlationId se propage de façon déterministe de Signal à Opportunité/Menace/Recommandation", async ({ request }) => {
