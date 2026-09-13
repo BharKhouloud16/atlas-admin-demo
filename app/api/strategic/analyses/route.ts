@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { enregistrerAnalyseStrategique } from "@/lib/strategic/veille";
 import { nouveauCorrelationId } from "@/lib/security/events";
+import { estCorrelationIdValide } from "@/lib/strategic/domain";
 
 // COMPANY ATLAS — B21 (13/09/2026) : lecture/écriture des StrategicAnalysis
 // (voir lib/strategic/veille.ts). Réservé ADMIN, même discipline que
@@ -58,8 +59,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "constat requis — evidence-first, jamais une affirmation sans preuve." }, { status: 400 });
     }
 
-    const correlationIdFinal =
-      typeof body?.correlationId === "string" && body.correlationId.length > 0 ? body.correlationId : nouveauCorrelationId();
+    // B21.1 — M2 (correction) : correlationId est un identifiant de
+    // traçabilité, jamais tronqué — une valeur trop longue est un refus
+    // explicite (400), pas une troncature silencieuse.
+    const correlationIdBrut =
+      typeof body?.correlationId === "string" && body.correlationId.length > 0 ? body.correlationId : undefined;
+    if (correlationIdBrut && !estCorrelationIdValide(correlationIdBrut)) {
+      return NextResponse.json({ error: "correlationId invalide : ne doit jamais dépasser 300 caractères." }, { status: 400 });
+    }
+    const correlationIdFinal = correlationIdBrut ?? nouveauCorrelationId();
 
     const id = await enregistrerAnalyseStrategique({
       correlationId: correlationIdFinal,

@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { enregistrerSignalStrategique } from "@/lib/strategic/veille";
-import { estStrategicCategoryValide, STRATEGIC_SIGNAL_STATUTS, type StrategicSignalStatutValeur } from "@/lib/strategic/domain";
+import {
+  estCorrelationIdValide,
+  estStrategicCategoryValide,
+  STRATEGIC_SIGNAL_STATUTS,
+  type StrategicSignalStatutValeur,
+} from "@/lib/strategic/domain";
 import { nouveauCorrelationId } from "@/lib/security/events";
 
 // COMPANY ATLAS — B21 (13/09/2026) : lecture/écriture des StrategicSignal
@@ -65,8 +70,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "titre requis." }, { status: 400 });
     }
 
-    const correlationIdFinal =
-      typeof body?.correlationId === "string" && body.correlationId.length > 0 ? body.correlationId : nouveauCorrelationId();
+    // B21.1 — M2 (correction) : correlationId est un identifiant de
+    // traçabilité, jamais tronqué — une valeur trop longue est un refus
+    // explicite (400), pas une troncature silencieuse.
+    const correlationIdBrut =
+      typeof body?.correlationId === "string" && body.correlationId.length > 0 ? body.correlationId : undefined;
+    if (correlationIdBrut && !estCorrelationIdValide(correlationIdBrut)) {
+      return NextResponse.json({ error: "correlationId invalide : ne doit jamais dépasser 300 caractères." }, { status: 400 });
+    }
+    const correlationIdFinal = correlationIdBrut ?? nouveauCorrelationId();
 
     const id = await enregistrerSignalStrategique({
       correlationId: correlationIdFinal,

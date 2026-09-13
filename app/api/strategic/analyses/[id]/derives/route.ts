@@ -46,13 +46,21 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ error: "priorite invalide." }, { status: 400 });
     }
 
+    // B21.1 — M3 : correlationId est TOUJOURS celui de la StrategicAnalysis
+    // parente, déjà relue ci-dessus (`analysis`) — jamais accepté depuis le
+    // corps de la requête, pour garantir une propagation déterministe.
     let id: string | null = null;
     if (type === "opportunite") {
-      id = await enregistrerOpportuniteStrategique({ analysisId, description, priorite });
+      id = await enregistrerOpportuniteStrategique({ analysisId, correlationId: analysis.correlationId, description, priorite });
     } else if (type === "menace") {
-      id = await enregistrerMenaceStrategique({ analysisId, description, priorite });
+      id = await enregistrerMenaceStrategique({ analysisId, correlationId: analysis.correlationId, description, priorite });
     } else {
-      id = await enregistrerRecommandationStrategique({ analysisId, recommandation: description, priorite });
+      id = await enregistrerRecommandationStrategique({
+        analysisId,
+        correlationId: analysis.correlationId,
+        recommandation: description,
+        priorite,
+      });
     }
 
     if (!id) {

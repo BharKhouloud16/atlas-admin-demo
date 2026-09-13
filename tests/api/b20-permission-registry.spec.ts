@@ -17,31 +17,55 @@ const ACTIONS_VALIDES = ["READ", "WRITE", "EXECUTE", "PROPOSE", "REPORT", "ANALY
 const SCOPES_VALIDES = ["TALENT", "SECURITY", "COMPANY_OS", "PRINCIPAL"];
 
 test.describe("COMPANY ATLAS B20 — Permission Registry (API)", () => {
-  test("le registre contient exactement les 2 permissions minimales justifiées, aucune implicite pour PRINCIPAL ni COMPANY_OS", async ({
+  test("le registre contient exactement les 4 permissions justifiées (2 B20 + 2 PROPOSE B21.1/M1), aucune implicite pour PRINCIPAL ni COMPANY_OS", async ({
     request,
   }) => {
     await connecter(request, "admin-demo@example.com");
     const reponse = await request.get("/api/security/permissions");
     expect(reponse.ok(), await reponse.text()).toBeTruthy();
     const { permissions } = await reponse.json();
-    expect(permissions.length).toBe(2);
+    // B21.1 (M1) a ajouté 2 permissions PROPOSE (ATLAS_TALENT, ATLAS_OS_SERVICES)
+    // aux 2 permissions B20 d'origine — voir prisma/migrations/
+    // 20260913010000_b21_1_strategic_hardening. .find() par agentId seul ne
+    // suffit plus (un agent peut désormais porter plusieurs permissions) :
+    // chaque recherche ci-dessous précise aussi l'action.
+    expect(permissions.length).toBe(4);
 
     const agents = await (await request.get("/api/security/agents")).json();
     const idParAgent: Record<string, string> = {};
     for (const a of agents.agents) idParAgent[a.agent] = a.id;
 
-    const talent = permissions.find((p: { agentId: string }) => p.agentId === idParAgent["ATLAS_TALENT"]);
-    expect(talent).toBeTruthy();
-    expect(talent.action).toBe("READ");
-    expect(talent.scope).toBe("TALENT");
+    const talentRead = permissions.find(
+      (p: { agentId: string; action: string }) => p.agentId === idParAgent["ATLAS_TALENT"] && p.action === "READ"
+    );
+    expect(talentRead).toBeTruthy();
+    expect(talentRead.scope).toBe("TALENT");
 
-    const security = permissions.find((p: { agentId: string }) => p.agentId === idParAgent["ATLAS_OS_SERVICES"]);
-    expect(security).toBeTruthy();
-    expect(security.action).toBe("ANALYZE");
-    expect(security.scope).toBe("SECURITY");
+    const securityAnalyze = permissions.find(
+      (p: { agentId: string; action: string }) => p.agentId === idParAgent["ATLAS_OS_SERVICES"] && p.action === "ANALYZE"
+    );
+    expect(securityAnalyze).toBeTruthy();
+    expect(securityAnalyze.scope).toBe("SECURITY");
+
+    // B21.1 (M1) — permissions PROPOSE, réutilisant exactement les mêmes
+    // périmètres déjà établis en B20 (aucun nouveau scope).
+    const talentPropose = permissions.find(
+      (p: { agentId: string; action: string }) => p.agentId === idParAgent["ATLAS_TALENT"] && p.action === "PROPOSE"
+    );
+    expect(talentPropose).toBeTruthy();
+    expect(talentPropose.scope).toBe("TALENT");
+    expect(talentPropose.statut).toBe("ACTIVE");
+
+    const securityPropose = permissions.find(
+      (p: { agentId: string; action: string }) => p.agentId === idParAgent["ATLAS_OS_SERVICES"] && p.action === "PROPOSE"
+    );
+    expect(securityPropose).toBeTruthy();
+    expect(securityPropose.scope).toBe("SECURITY");
+    expect(securityPropose.statut).toBe("ACTIVE");
 
     // Aucune permission implicite : ni PRINCIPAL ni COMPANY_OS ne reçoivent
-    // de ligne dans le seed initial (directive B20, règles 7 et 8).
+    // de ligne, ni dans le seed B20 ni dans l'ajout B21.1 (directive B20,
+    // règles 7 et 8).
     expect(permissions.some((p: { agentId: string }) => p.agentId === idParAgent["PRINCIPAL"])).toBe(false);
     expect(permissions.some((p: { agentId: string }) => p.agentId === idParAgent["COMPANY_OS"])).toBe(false);
   });

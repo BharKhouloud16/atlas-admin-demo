@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { listerAgentsIdentity } from "@/lib/agents/identity";
+import { listerPermissionsAgent, possedePermissionActive } from "@/lib/agents/permissions";
 import { creerPropositionAction } from "@/lib/strategic/propositions";
 import { nouveauCorrelationId } from "@/lib/security/events";
-import { estStrategicProposalStatutValide } from "@/lib/strategic/domain";
+import { estCorrelationIdValide, estStrategicProposalStatutValide } from "@/lib/strategic/domain";
 
 // COMPANY ATLAS — B21 (13/09/2026) : lecture/écriture des
 // StrategicActionProposal (voir lib/strategic/propositions.ts). Réservé
@@ -14,6 +15,16 @@ import { estStrategicProposalStatutValide } from "@/lib/strategic/domain";
 // app/api/strategic/propositions/[id]/autoriser/route.ts pour la seule
 // route capable de la faire progresser vers AUTORISEE (jamais cette
 // route-ci : créer une proposition ne l'autorise jamais soi-même).
+//
+// B21.1 — M1 (13/09/2026, durcissement) : avant de créer la proposition, ce
+// POST vérifie désormais que l'agent possède réellement une AgentPermission
+// PROPOSE active (B20, lib/agents/permissions.ts) — jusqu'ici seule
+// l'existence/activité de l'AgentIdentity était vérifiée, jamais le
+// Permission Registry lui-même. Ne contourne jamais AgentPermission, ne
+// crée aucun nouveau champ `scope` d'API ni aucune correspondance entre
+// StrategicCategory et AgentPermissionScope (directive B21.1) : l'agent est
+// autorisé dès qu'une permission PROPOSE active existe pour lui, quel que
+// soit le scope qu'elle porte.
 
 export async function GET(req: NextRequest) {
   const session = await getSession();
@@ -74,12 +85,26 @@ export async function POST(req: NextRequest) {
     if (!agentValide) {
       return NextResponse.json({ error: "agentId invalide : doit référencer une identité AgentIdentity active." }, { status: 400 });
     }
+    const permissions = await listerPermissionsAgent();
+    if (!possedePermissionActive(permissions, agentId, "PROPOSE")) {
+      return NextResponse.json(
+        { error: "agentId invalide : aucune permission PROPOSE active (AgentPermission, B20) pour cet agent." },
+        { status: 400 }
+      );
+    }
     if (typeof actionProposee !== "string" || actionProposee.trim().length === 0) {
       return NextResponse.json({ error: "actionProposee requise." }, { status: 400 });
     }
 
-    const correlationIdFinal =
-      typeof body?.correlationId === "string" && body.correlationId.length > 0 ? body.correlationId : nouveauCorrelationId();
+    // B21.1 — M2 (correction) : correlationId est un identifiant de
+    // traçabilité, jamais tronqué — une valeur trop longue est un refus
+    // explicite (400), pas une troncature silencieuse.
+    const correlationIdBrut =
+      typeof body?.correlationId === "string" && body.correlationId.length > 0 ? body.correlationId : undefined;
+    if (correlationIdBrut && !estCorrelationIdValide(correlationIdBrut)) {
+      return NextResponse.json({ error: "correlationId invalide : ne doit jamais dépasser 300 caractères." }, { status: 400 });
+    }
+    const correlationIdFinal = correlationIdBrut ?? nouveauCorrelationId();
 
     const id = await creerPropositionAction({
       correlationId: correlationIdFinal,

@@ -87,4 +87,18 @@ export function plafonnerTexteStrategique(texte: string | null | undefined, max:
   return texte.length > max ? texte.slice(0, max) : texte;
 }
 
-export { PLAFOND_CHAMP as PLAFOND_CHAMP_STRATEGIQUE, PLAFOND_COURT as PLAFOND_COURT_STRATEGIQUE };
+// B21.1 — M2 (correction, décision architecturale du 13/09/2026) :
+// correlationId est un IDENTIFIANT DE TRAÇABILITÉ, jamais un simple texte
+// métier — contrairement aux autres champs texte stratégiques
+// (plafonnerTexteStrategique ci-dessus), il n'est JAMAIS tronqué
+// silencieusement : une valeur trop longue doit être un refus explicite
+// (HTTP 400 côté route), pas une troncature qui déguiserait un identifiant
+// tronqué en identifiant valide. Fonction pure de validation uniquement —
+// ne modifie ni ne renvoie jamais une version altérée de la valeur reçue.
+const CORRELATION_ID_MAX = PLAFOND_COURT;
+
+export function estCorrelationIdValide(correlationId: string): boolean {
+  return correlationId.length <= CORRELATION_ID_MAX;
+}
+
+export { PLAFOND_CHAMP as PLAFOND_CHAMP_STRATEGIQUE, PLAFOND_COURT as PLAFOND_COURT_STRATEGIQUE, CORRELATION_ID_MAX };

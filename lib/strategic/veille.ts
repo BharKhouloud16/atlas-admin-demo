@@ -80,8 +80,18 @@ export async function enregistrerAnalyseStrategique(params: {
   }
 }
 
+// B21.1 — M3 (durcissement, traçabilité) : `correlationId` est TOUJOURS
+// fourni par l'appelant, jamais généré ici ni laissé optionnel — il doit
+// provenir de la StrategicAnalysis parente (`analysisId`) déjà validée par
+// la route appelante (app/api/strategic/analyses/[id]/derives/route.ts),
+// jamais du corps de la requête cliente : c'est ce qui garantit une
+// propagation déterministe Signal -> Analyse -> Opportunité/Menace/
+// Recommandation, sans faire confiance à une valeur reformulée par
+// l'appelant à chaque étape.
+
 export async function enregistrerOpportuniteStrategique(params: {
   analysisId: string;
+  correlationId: string;
   description: string;
   priorite: StrategicPriorityValeur;
 }): Promise<string | null> {
@@ -89,6 +99,7 @@ export async function enregistrerOpportuniteStrategique(params: {
     const o = await prisma.strategicOpportunity.create({
       data: {
         analysisId: params.analysisId,
+        correlationId: params.correlationId,
         description: plafonnerTexteStrategique(params.description, PLAFOND_CHAMP_STRATEGIQUE) ?? "",
         priorite: params.priorite,
       },
@@ -102,6 +113,7 @@ export async function enregistrerOpportuniteStrategique(params: {
 
 export async function enregistrerMenaceStrategique(params: {
   analysisId: string;
+  correlationId: string;
   description: string;
   priorite: StrategicPriorityValeur;
 }): Promise<string | null> {
@@ -109,6 +121,7 @@ export async function enregistrerMenaceStrategique(params: {
     const m = await prisma.strategicThreat.create({
       data: {
         analysisId: params.analysisId,
+        correlationId: params.correlationId,
         description: plafonnerTexteStrategique(params.description, PLAFOND_CHAMP_STRATEGIQUE) ?? "",
         priorite: params.priorite,
       },
@@ -122,6 +135,7 @@ export async function enregistrerMenaceStrategique(params: {
 
 export async function enregistrerRecommandationStrategique(params: {
   analysisId: string;
+  correlationId: string;
   recommandation: string;
   priorite: StrategicPriorityValeur;
 }): Promise<string | null> {
@@ -129,6 +143,7 @@ export async function enregistrerRecommandationStrategique(params: {
     const r = await prisma.strategicRecommendation.create({
       data: {
         analysisId: params.analysisId,
+        correlationId: params.correlationId,
         recommandation: plafonnerTexteStrategique(params.recommandation, PLAFOND_CHAMP_STRATEGIQUE) ?? "",
         priorite: params.priorite,
       },
