@@ -278,22 +278,62 @@ export async function approuverDemande(params: {
   }
 
   const maintenant = new Date();
-  // B22-FIX (audit P1 section 8, concurrence) : updateMany conditionné sur
-  // status PENDING — transition PENDING -> RESOLVED atomique au niveau
-  // SQL. Deux approbations concurrentes ne peuvent jamais toutes les deux
-  // réussir : la seconde constate count===0 et est refusée.
-  const resultat = await prisma.authorizationRequest.updateMany({
-    where: { id: params.id, status: "PENDING" },
-    data: {
-      decision: params.decision,
-      decisionReason,
-      decidedBy: params.decidedBy,
-      approvedBy: params.decision === "ALLOW" ? params.decidedBy : null,
-      approvedAt: params.decision === "ALLOW" ? maintenant : null,
-      status: "RESOLVED",
-    },
-  });
-  if (resultat.count === 0) {
+  const approvedBy = params.decision === "ALLOW" ? params.decidedBy : null;
+  const approvedAt = params.decision === "ALLOW" ? maintenant : null;
+
+  // B22-FIX2 (audit P1) : la vérification estArreteUrgenceActif() ci-dessus
+  // laissait une fenêtre — même brève — entre la LECTURE de l'état
+  // Emergency Stop et l'ÉCRITURE finale du statut RESOLVED, pendant
+  // laquelle un ADMIN pouvait activer un arrêt d'urgence sans que cette
+  // approbation ne le constate. Fermée en intégrant la MÊME condition
+  // (les 3 cibles déjà évaluées par estArreteUrgenceActif : GLOBAL, AGENT
+  // par agentId, ACTION_CLASS par actionClass, DELEGATION par
+  // delegationId) directement dans le UPDATE atomique : PostgreSQL évalue
+  // le NOT EXISTS et la clause de statut dans le MÊME instantané que
+  // l'écriture — aucune fenêtre ne subsiste entre "vérifier" et "écrire".
+  // Continue d'utiliser exclusivement les tables B22 (AuthorizationRequest,
+  // EmergencyStop) : aucun nouveau registre, aucune nouvelle architecture —
+  // juste la même logique que estArreteUrgenceActif exprimée dans la
+  // condition finale, comme demandé par l'audit.
+  const resultat = await prisma.$executeRaw`
+    UPDATE "AuthorizationRequest"
+    SET "decision" = ${params.decision}::"AuthorizationDecision",
+        "decisionReason" = ${decisionReason},
+        "decidedBy" = ${params.decidedBy},
+        "approvedBy" = ${approvedBy},
+        "approvedAt" = ${approvedAt},
+        "status" = 'RESOLVED',
+        "updatedAt" = now()
+    WHERE "id" = ${params.id}
+      AND "status" = 'PENDING'
+      AND NOT EXISTS (
+        SELECT 1 FROM "EmergencyStop" es
+        WHERE es."liftedAt" IS NULL
+          AND (
+            es."scope" = 'GLOBAL'
+            OR (es."scope" = 'AGENT' AND es."targetId" = ${demande.agentId})
+            OR (es."scope" = 'ACTION_CLASS' AND es."targetId" = ${demande.actionClass})
+            OR (es."scope" = 'DELEGATION' AND es."targetId" = ${demande.delegationId})
+          )
+      )
+  `;
+  if (resultat === 0) {
+    // Distingue le cas "Emergency Stop activé dans la fenêtre" (message
+    // précis) du cas générique "déjà résolue par un appel concurrent" —
+    // sans jamais rouvrir la fenêtre : cette relecture est seulement
+    // informative, elle ne conditionne aucune écriture.
+    const arretUrgenceApres = await estArreteUrgenceActif({
+      agentId: demande.agentId,
+      actionClass: demande.actionClass,
+      delegationId: demande.delegationId ?? undefined,
+    });
+    if (arretUrgenceApres) {
+      return {
+        ok: false,
+        erreur: "Emergency Stop activé pendant la résolution — approbation impossible tant qu'il n'est pas levé par un ADMIN.",
+        code: 409,
+      };
+    }
     return {
       ok: false,
       erreur: "Demande déjà résolue par un appel concurrent — jamais deux décisions incohérentes.",

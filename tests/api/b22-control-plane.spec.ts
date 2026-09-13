@@ -1347,4 +1347,326 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     await request.patch(`/api/control-plane/emergency-stops/${stopActionClassId}/lift`, { data: {} });
     await request.patch(`/api/control-plane/emergency-stops/${stopDelegationId}/lift`, { data: {} });
   });
+
+  // ==========================================================================
+  // B22-FIX2 (audit ciblé du commit 612f7c9) — DELEGATION (pouvoir préalable
+  // délégué, régit l'ALLOW automatique) ≠ HUMAN AUTHORIZATION (décision
+  // ponctuelle explicite du CEO/ADMIN). Une délégation insuffisante en
+  // montant/risque doit empêcher l'ALLOW automatique et provoquer
+  // APPROVAL_REQUIRED, mais ne doit JAMAIS empêcher par principe le CEO/
+  // ADMIN de décider explicitement ALLOW — seule une Delegation/Permission/
+  // Identity RÉVOQUÉE, EXPIRÉE ou DÉSACTIVÉE (jamais un simple dépassement
+  // de plafond) reste un motif de refus à l'approbation. Confirmé par
+  // reproduction directe (montant/risque dépassé -> ADMIN ALLOW accepté)
+  // avant l'écriture de ces tests : aucune régression du code de 612f7c9
+  // n'a été nécessaire pour ce point — seule la couverture de test
+  // manquait. Voir aussi l'amélioration P1 (fenêtre Emergency Stop) dans
+  // lib/control-plane/authorization.ts::approuverDemande.
+
+  test("B22-FIX2 (Delegation/montant) : montant couvert par la Delegation -> comportement normal (ALLOW automatique)", async ({
+    request,
+  }) => {
+    await connecter(request, "admin-demo@example.com");
+    const agentId = await idAgent(request, "ATLAS_TALENT");
+    const delegationRes = await request.post("/api/control-plane/delegations", {
+      data: {
+        agentId,
+        action: "PROPOSE",
+        scope: "TALENT",
+        objective: "Délégation — montant couvert",
+        maxAmount: 2000,
+        expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      },
+    });
+    const { id: delegationId } = await delegationRes.json();
+
+    const demande = await request.post("/api/control-plane/authorization-requests", {
+      data: {
+        agentId,
+        action: "PROPOSE",
+        scope: "TALENT",
+        objective: "Dépense couverte par la délégation",
+        reason: "Test B22-FIX2 — montant couvert",
+        amount: 1500,
+        delegationId,
+        requestedAutonomyLevel: "L2_RECOMMEND",
+      },
+    });
+    expect(demande.status(), await demande.text()).toBe(201);
+    const corps = await demande.json();
+    expect(corps.decision).toBe("ALLOW");
+    expect(corps.status).toBe("RESOLVED");
+  });
+
+  test("B22-FIX2 (Delegation/montant) : montant dépassant la Delegation -> pas d'ALLOW automatique, PUIS une décision humaine ALLOW explicite reste possible", async ({
+    request,
+  }) => {
+    await connecter(request, "admin-demo@example.com");
+    const agentId = await idAgent(request, "ATLAS_TALENT");
+    const delegationRes = await request.post("/api/control-plane/delegations", {
+      data: {
+        agentId,
+        action: "PROPOSE",
+        scope: "TALENT",
+        objective: "Délégation — montant insuffisant",
+        maxAmount: 2000,
+        expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      },
+    });
+    const { id: delegationId } = await delegationRes.json();
+
+    const demande = await request.post("/api/control-plane/authorization-requests", {
+      data: {
+        agentId,
+        action: "PROPOSE",
+        scope: "TALENT",
+        objective: "Dépense dépassant la délégation",
+        reason: "Test B22-FIX2 — montant dépassé",
+        amount: 3000,
+        delegationId,
+        requestedAutonomyLevel: "L2_RECOMMEND",
+      },
+    });
+    expect(demande.status(), await demande.text()).toBe(201);
+    const corpsDemande = await demande.json();
+    expect(corpsDemande.decision).toBe("APPROVAL_REQUIRED"); // jamais ALLOW automatique
+    expect(corpsDemande.status).toBe("PENDING");
+
+    // Une DÉLÉGATION insuffisante n'est jamais une "HUMAN AUTHORIZATION
+    // IMPOSSIBLE" : le CEO/ADMIN reste l'autorité qui tranche ce
+    // dépassement — aucune règle absolue (Identity/Permission/Delegation
+    // révoquée/Emergency Stop/L5-L6) n'est ici en jeu.
+    const approbation = await request.patch(`/api/control-plane/authorization-requests/${corpsDemande.id}/approve`, {
+      data: { decision: "ALLOW", decisionReason: "Le CEO autorise explicitement ce dépassement ponctuel" },
+    });
+    expect(approbation.status(), await approbation.text()).toBe(200);
+    const corpsApprobation = await approbation.json();
+    expect(corpsApprobation.decision).toBe("ALLOW");
+    expect(corpsApprobation.status).toBe("RESOLVED");
+    expect(corpsApprobation.decidedBy).toBe("admin-demo@example.com");
+  });
+
+  test("B22-FIX2 (Delegation/risque) : risque couvert par la Delegation -> comportement normal (ALLOW automatique)", async ({
+    request,
+  }) => {
+    await connecter(request, "admin-demo@example.com");
+    const agentId = await idAgent(request, "ATLAS_TALENT");
+    const delegationRes = await request.post("/api/control-plane/delegations", {
+      data: {
+        agentId,
+        action: "PROPOSE",
+        scope: "TALENT",
+        objective: "Délégation — risque couvert",
+        maxRiskLevel: "HIGH",
+        expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      },
+    });
+    const { id: delegationId } = await delegationRes.json();
+
+    const demande = await request.post("/api/control-plane/authorization-requests", {
+      data: {
+        agentId,
+        action: "PROPOSE",
+        scope: "TALENT",
+        objective: "Action risquée couverte par la délégation",
+        reason: "Test B22-FIX2 — risque couvert",
+        riskLevel: "MEDIUM",
+        riskJustification: "Justification de test",
+        delegationId,
+        requestedAutonomyLevel: "L2_RECOMMEND",
+      },
+    });
+    expect(demande.status(), await demande.text()).toBe(201);
+    const corps = await demande.json();
+    expect(corps.decision).toBe("ALLOW");
+    expect(corps.status).toBe("RESOLVED");
+  });
+
+  test("B22-FIX2 (Delegation/risque) : risque dépassant la Delegation -> pas d'ALLOW automatique, PUIS une décision humaine ALLOW explicite reste possible", async ({
+    request,
+  }) => {
+    await connecter(request, "admin-demo@example.com");
+    const agentId = await idAgent(request, "ATLAS_TALENT");
+    const delegationRes = await request.post("/api/control-plane/delegations", {
+      data: {
+        agentId,
+        action: "PROPOSE",
+        scope: "TALENT",
+        objective: "Délégation — risque insuffisant",
+        maxRiskLevel: "MEDIUM",
+        expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      },
+    });
+    const { id: delegationId } = await delegationRes.json();
+
+    const demande = await request.post("/api/control-plane/authorization-requests", {
+      data: {
+        agentId,
+        action: "PROPOSE",
+        scope: "TALENT",
+        objective: "Action dépassant le risque délégué",
+        reason: "Test B22-FIX2 — risque dépassé",
+        riskLevel: "HIGH",
+        riskJustification: "Justification de test",
+        delegationId,
+        requestedAutonomyLevel: "L2_RECOMMEND",
+      },
+    });
+    expect(demande.status(), await demande.text()).toBe(201);
+    const corpsDemande = await demande.json();
+    expect(corpsDemande.decision).toBe("APPROVAL_REQUIRED");
+    expect(corpsDemande.status).toBe("PENDING");
+
+    const approbation = await request.patch(`/api/control-plane/authorization-requests/${corpsDemande.id}/approve`, {
+      data: { decision: "ALLOW", decisionReason: "Le CEO autorise explicitement ce risque ponctuel" },
+    });
+    expect(approbation.status(), await approbation.text()).toBe(200);
+    const corpsApprobation = await approbation.json();
+    expect(corpsApprobation.decision).toBe("ALLOW");
+  });
+
+  test("B22-FIX2 (sécurité inchangée) : permission désactivée, agent désactivé, delegation révoquée — l'ADMIN ALLOW reste refusé même après ce correctif", async ({
+    request,
+  }) => {
+    await connecter(request, "admin-demo@example.com");
+    const agentId = await idAgent(request, "ATLAS_TALENT");
+
+    // Permission désactivée.
+    const { permissions } = await (await request.get("/api/security/permissions")).json();
+    const permissionProposeTalent = permissions.find(
+      (p: { agentId: string; action: string }) => p.agentId === agentId && p.action === "PROPOSE"
+    );
+    const demandePermission = await request.post("/api/control-plane/authorization-requests", {
+      data: {
+        agentId,
+        action: "PROPOSE",
+        scope: "TALENT",
+        objective: "Objectif — sécurité inchangée (permission)",
+        reason: "Test B22-FIX2 sécurité",
+        amount: 1,
+        requestedAutonomyLevel: "L2_RECOMMEND",
+      },
+    });
+    const { id: demandePermissionId } = await demandePermission.json();
+    await prisma.agentPermission.update({ where: { id: permissionProposeTalent.id }, data: { statut: "DISABLED" } });
+    try {
+      const tentative = await request.patch(`/api/control-plane/authorization-requests/${demandePermissionId}/approve`, {
+        data: { decision: "ALLOW", decisionReason: "Tentative — permission désactivée" },
+      });
+      expect(tentative.status()).toBe(409);
+    } finally {
+      await prisma.agentPermission.update({ where: { id: permissionProposeTalent.id }, data: { statut: "ACTIVE" } });
+    }
+
+    // Agent désactivé.
+    const demandeIdentity = await request.post("/api/control-plane/authorization-requests", {
+      data: {
+        agentId,
+        action: "PROPOSE",
+        scope: "TALENT",
+        objective: "Objectif — sécurité inchangée (identity)",
+        reason: "Test B22-FIX2 sécurité",
+        amount: 1,
+        requestedAutonomyLevel: "L2_RECOMMEND",
+      },
+    });
+    const { id: demandeIdentityId } = await demandeIdentity.json();
+    await prisma.agentIdentity.update({ where: { id: agentId }, data: { statut: "DISABLED" } });
+    try {
+      const tentative = await request.patch(`/api/control-plane/authorization-requests/${demandeIdentityId}/approve`, {
+        data: { decision: "ALLOW", decisionReason: "Tentative — agent désactivé" },
+      });
+      expect(tentative.status()).toBe(409);
+    } finally {
+      await prisma.agentIdentity.update({ where: { id: agentId }, data: { statut: "ACTIVE" } });
+    }
+
+    // Delegation révoquée — utilisée comme fondement de la demande.
+    const delegationRes = await request.post("/api/control-plane/delegations", {
+      data: {
+        agentId,
+        action: "PROPOSE",
+        scope: "TALENT",
+        objective: "Délégation — sécurité inchangée (revocation)",
+        maxAmount: 1000,
+        expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      },
+    });
+    const { id: delegationId } = await delegationRes.json();
+    const demandeDelegation = await request.post("/api/control-plane/authorization-requests", {
+      data: {
+        agentId,
+        action: "PROPOSE",
+        scope: "TALENT",
+        objective: "Objectif — sécurité inchangée (delegation)",
+        reason: "Test B22-FIX2 sécurité",
+        amount: 500,
+        delegationId,
+        requestedAutonomyLevel: "L4_EXECUTE_WITH_APPROVAL",
+      },
+    });
+    const { id: demandeDelegationId } = await demandeDelegation.json();
+    await request.patch(`/api/control-plane/delegations/${delegationId}/revoke`, { data: { reason: "Test B22-FIX2 sécurité" } });
+    const tentativeDelegation = await request.patch(`/api/control-plane/authorization-requests/${demandeDelegationId}/approve`, {
+      data: { decision: "ALLOW", decisionReason: "Tentative — délégation révoquée" },
+    });
+    expect(tentativeDelegation.status()).toBe(409);
+  });
+
+  test("B22-FIX2 P1 (Emergency Stop, fenêtre de course) : l'invariant tient sous concurrence — jamais un ALLOW résolu si un arrêt d'urgence a gagné la course", async ({
+    request,
+  }) => {
+    await connecter(request, "admin-demo@example.com");
+    const agentId = await idAgent(request, "ATLAS_TALENT");
+
+    const demandeRes = await request.post("/api/control-plane/authorization-requests", {
+      data: {
+        agentId,
+        action: "PROPOSE",
+        scope: "TALENT",
+        objective: "Objectif — test course Emergency Stop",
+        reason: "Test B22-FIX2 P1",
+        amount: 1,
+        requestedAutonomyLevel: "L2_RECOMMEND",
+      },
+    });
+    const { id: demandeId, status } = await demandeRes.json();
+    expect(status).toBe("PENDING");
+
+    // Tir concurrent : approbation ALLOW et activation GLOBAL simultanées.
+    // Quel que soit l'ordre réel d'exécution, l'invariant doit tenir :
+    // jamais un statut RESOLVED/ALLOW alors qu'un arrêt d'urgence actif
+    // aurait dû l'empêcher.
+    const [reponseApprove, reponseStop] = await Promise.all([
+      request.patch(`/api/control-plane/authorization-requests/${demandeId}/approve`, {
+        data: { decision: "ALLOW", decisionReason: "Tentative concurrente avec Emergency Stop" },
+      }),
+      request.post("/api/control-plane/emergency-stops", {
+        data: { scope: "GLOBAL", reason: "Test B22-FIX2 P1 — course concurrente" },
+      }),
+    ]);
+
+    expect(reponseStop.status(), await reponseStop.text()).toBe(201);
+    const { id: stopId } = await reponseStop.json();
+
+    try {
+      const detail = await (await request.get(`/api/control-plane/authorization-requests?agentId=${agentId}`)).json();
+      const cible = detail.authorizationRequests.find((a: { id: string }) => a.id === demandeId);
+
+      if (reponseApprove.status() === 200) {
+        // L'approbation a gagné la course (stop créé après coup) : l'état
+        // final doit être cohérent avec un ALLOW réellement résolu.
+        expect(cible.status).toBe("RESOLVED");
+        expect(cible.decision).toBe("ALLOW");
+      } else {
+        // L'arrêt d'urgence a gagné la course (ou l'a rejointe pendant la
+        // fenêtre) : l'approbation doit avoir été refusée, et la demande
+        // ne doit JAMAIS être passée à RESOLVED/ALLOW.
+        expect(reponseApprove.status()).toBe(409);
+        expect(cible.status).not.toBe("RESOLVED");
+      }
+    } finally {
+      await request.patch(`/api/control-plane/emergency-stops/${stopId}/lift`, { data: {} });
+    }
+  });
 });
