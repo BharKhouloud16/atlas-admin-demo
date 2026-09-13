@@ -262,6 +262,7 @@ model AgentIdentity {
 
   permissions AgentPermission[] // B20 — voir modèle ci-dessous
   rapports RapportAgent[] // B18-FIX — voir modèle plus bas
+  strategicPropositions StrategicActionProposal[] // B21 — voir modèle plus bas
 
   @@index([statut])
 }
@@ -393,6 +394,185 @@ model RapportAgent {
   @@index([createdAt])
   @@index([correlationId])
   @@index([agentId])
+}
+
+// ============================================================================
+// COMPANY ATLAS — B21 (13/09/2026) : STRATEGIC INTELLIGENCE FOUNDATION.
+// Capacité transverse aux 4 agents officiels (AgentIdentity, B19) —
+// PAS un 5e agent (directive B21, règle absolue 1). Cycle cible : Veille ->
+// Signal -> Analyse -> Opportunité/Menace -> Proposition -> Autorisation ->
+// Action autorisée -> Contrôle -> Résultat -> Rapport -> Suivi.
+// Voir lib/strategic/domain.ts pour le détail complet des règles et
+// limites documentées (aucun Authorization Engine complet, aucun LLM
+// autonome, aucun RAG, aucun scraping massif, aucune action externe
+// autonome, jamais d'auto-autorisation).
+
+enum StrategicCategory {
+  MARKET
+  COMPETITOR
+  TECHNOLOGY
+  CLIENT
+  COMMERCIAL
+  PRODUCT
+  REGULATION
+  SECURITY
+  FINANCE
+  OPERATIONS
+  INNOVATION
+}
+
+enum StrategicPriority {
+  P0_CRITICAL
+  P1_STRATEGIC
+  P2_IMPORTANT
+  P3_MONITOR
+}
+
+enum StrategicSignalStatut {
+  NOUVEAU
+  ANALYSE
+  CLOS
+}
+
+// Cycle : PROPOSEE -> [AUTORISATION_DEMANDEE] -> AUTORISEE | REFUSEE ->
+// EXECUTEE -> CONTROLEE. Voir lib/strategic/propositions.ts (peutExecuter) :
+// une proposition REFUSEE ou jamais autorisée ne peut jamais devenir
+// EXECUTEE.
+enum StrategicProposalStatut {
+  PROPOSEE
+  AUTORISATION_DEMANDEE
+  AUTORISEE
+  REFUSEE
+  EXECUTEE
+  CONTROLEE
+}
+
+model StrategicSignal {
+  id String @id @default(cuid())
+  correlationId String // même mécanisme que EvenementSecurite/RapportAgent (lib/security/events.ts)
+
+  categorie StrategicCategory
+  source String // déclaratif, court (ex. "veille manuelle — communiqué concurrent X") — jamais une URL récupérée en masse (pas de scraping, directive B21)
+  titre String
+  description String?
+  statut StrategicSignalStatut @default(NOUVEAU)
+
+  createdAt DateTime @default(now())
+
+  analyses StrategicAnalysis[]
+
+  @@index([createdAt])
+  @@index([categorie])
+  @@index([correlationId])
+}
+
+model StrategicAnalysis {
+  id String @id @default(cuid())
+  correlationId String
+
+  signalId String
+  signal StrategicSignal @relation(fields: [signalId], references: [id])
+
+  constat String // fait observé appuyé sur le signal — evidence-first, jamais une affirmation sans preuve
+  preuves String?
+  hypothese String? // hypothèse distincte du fait constaté — jamais présentée comme confirmée
+  inconnu String? // UNKNOWN explicite (Charte F.1) — jamais déduit, jamais omis silencieusement
+
+  createdAt DateTime @default(now())
+
+  opportunites StrategicOpportunity[]
+  menaces StrategicThreat[]
+  recommandations StrategicRecommendation[]
+
+  @@index([createdAt])
+  @@index([signalId])
+  @@index([correlationId])
+}
+
+model StrategicOpportunity {
+  id String @id @default(cuid())
+  analysisId String
+  analysis StrategicAnalysis @relation(fields: [analysisId], references: [id])
+
+  description String
+  priorite StrategicPriority // toujours saisie par l'appelant humain — jamais calculée/déduite ici
+
+  createdAt DateTime @default(now())
+
+  @@index([analysisId])
+  @@index([priorite])
+}
+
+model StrategicThreat {
+  id String @id @default(cuid())
+  analysisId String
+  analysis StrategicAnalysis @relation(fields: [analysisId], references: [id])
+
+  description String
+  priorite StrategicPriority
+
+  createdAt DateTime @default(now())
+
+  @@index([analysisId])
+  @@index([priorite])
+}
+
+model StrategicRecommendation {
+  id String @id @default(cuid())
+  analysisId String
+  analysis StrategicAnalysis @relation(fields: [analysisId], references: [id])
+
+  recommandation String
+  priorite StrategicPriority
+
+  createdAt DateTime @default(now())
+
+  propositions StrategicActionProposal[]
+
+  @@index([analysisId])
+  @@index([priorite])
+}
+
+model StrategicActionProposal {
+  id String @id @default(cuid())
+  correlationId String
+
+  recommendationId String
+  recommendation StrategicRecommendation @relation(fields: [recommendationId], references: [id])
+
+  agentId String
+  agent AgentIdentity @relation(fields: [agentId], references: [id])
+
+  actionProposee String
+  perimetre String? // scope proposé par l'agent — n'engage rien tant qu'aucune StrategicAuthorization n'existe
+  statut StrategicProposalStatut @default(PROPOSEE)
+
+  createdAt DateTime @default(now())
+
+  autorisation StrategicAuthorization?
+
+  @@index([createdAt])
+  @@index([agentId])
+  @@index([correlationId])
+}
+
+model StrategicAuthorization {
+  id String @id @default(cuid())
+  correlationId String
+
+  proposalId String @unique // une seule autorisation par proposition — jamais réutilisée pour une autre action
+  proposal StrategicActionProposal @relation(fields: [proposalId], references: [id])
+
+  autorisateurEmail String // TOUJOURS dérivé de la session ADMIN authentifiée côté serveur (jamais du corps de la requête) — voir app/api/strategic/propositions/[id]/autoriser/route.ts. Aucun agent n'a de session (limite héritée B19/B20) : structurellement jamais un agent ici. Règle "ne jamais s'auto-autoriser" (directive B21).
+  scope String
+  duree String // durée de validité déclarée (texte court) — pas de moteur d'expiration automatique (Authorization Engine complet hors périmètre B21)
+  budget String?
+  limites String?
+
+  dateAutorisation DateTime @default(now())
+  createdAt DateTime @default(now())
+
+  @@index([correlationId])
 }
 
 model Client {
