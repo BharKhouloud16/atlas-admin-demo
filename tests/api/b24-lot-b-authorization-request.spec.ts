@@ -1,5 +1,8 @@
 import { test, expect, APIRequestContext } from "@playwright/test";
 import { prisma } from "@/lib/prisma";
+import { demanderAutorisationStrategique } from "@/lib/strategic/authorization-request";
+import { creerPropositionAction } from "@/lib/strategic/propositions";
+import { enregistrerSignalStrategique, enregistrerAnalyseStrategique, enregistrerRecommandationStrategique } from "@/lib/strategic/veille";
 
 // COMPANY ATLAS — B24 Lot B (14/09/2026) : chemin B21 -> B22 —
 // POST /api/strategic/propositions/[id]/request-authorization
@@ -9,6 +12,14 @@ import { prisma } from "@/lib/prisma";
 // gel de proposition, passage par le vrai mécanisme B22, Emergency Stop,
 // non-pouvoir de B23). Les tests de régression B21/B22/B23/complète sont
 // exécutés séparément (suites existantes, non dupliquées ici).
+//
+// B24 Lot B-FIX1 (14/09/2026) : bloc de tests dédié à la compensation
+// d'atomicité inter-systèmes, en bas de fichier. Ces tests appellent
+// demanderAutorisationStrategique() DIRECTEMENT (pas via HTTP) car ils
+// utilisent les paramètres réservés aux tests
+// (_simulerEchecCreationLienPourTest / _forcerIncoherenceDefensivePourTest)
+// — structurellement inaccessibles depuis la route HTTP, qui ne les
+// transmet jamais (voir lib/strategic/authorization-request.ts).
 
 async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
   const reponse = await request.post("/api/auth/login", { data: { email, password } });
@@ -323,6 +334,17 @@ test.describe("COMPANY ATLAS B24 Lot B — B21 → B22 Authorization Request Pat
     // Un seul StrategicAuthorizationLink créé pour cette proposition.
     const liens = await prisma.strategicAuthorizationLink.findMany({ where: { proposalId } });
     expect(liens.length).toBe(1);
+
+    // B24 Lot B-FIX1 : exactement 1 AuthorizationRequest PENDING liée à
+    // cette proposition, et c'est bien celle référencée par l'unique Link —
+    // pas seulement "un seul Link", mais bien "un seul PENDING réel".
+    // Filtré par le(s) StrategicAuthorizationLink de CETTE proposition
+    // uniquement (jamais par agentId seul, qui capterait des demandes
+    // d'autres tests exécutés en parallèle sur le même agent partagé).
+    const demandePending = await prisma.authorizationRequest.findUnique({
+      where: { id: liens[0].authorizationRequestId },
+    });
+    expect(demandePending?.status).toBe("PENDING");
   });
 
   // ---- FREEZE ---------------------------------------------------------
@@ -430,5 +452,166 @@ test.describe("COMPANY ATLAS B24 Lot B — B21 → B22 Authorization Request Pat
     // Structure de réponse strictement B22 — aucun champ B23
     // (autonomyCeiling/blocked/plafond...) n'existe dans ce payload.
     expect(Object.keys(corps).sort()).toEqual(["authorizationRequestId", "decision", "humanNecessity", "linkId", "status"].sort());
+  });
+});
+
+// ============================================================================
+// B24 Lot B-FIX1 — COMPENSATION D'ATOMICITÉ INTER-SYSTÈMES
+// ============================================================================
+
+async function idAgentDirect(nom: string): Promise<string> {
+  const agent = await prisma.agentIdentity.findFirst({ where: { agent: nom as never } });
+  if (!agent) throw new Error(`Agent ${nom} introuvable dans AgentIdentity`);
+  return agent.id;
+}
+
+async function creerPropositionDirecte(agentId: string): Promise<{ proposalId: string; correlationId: string }> {
+  const signalId = await enregistrerSignalStrategique({
+    categorie: "OPERATIONS",
+    source: "veille manuelle — test B24 Lot B-FIX1",
+    titre: "Signal de test B24 Lot B-FIX1",
+  });
+  if (!signalId) throw new Error("échec de création du signal de test");
+  const signal = await prisma.strategicSignal.findUnique({ where: { id: signalId } });
+  if (!signal) throw new Error("signal de test introuvable après création");
+
+  const analysisId = await enregistrerAnalyseStrategique({
+    correlationId: signal.correlationId,
+    signalId,
+    constat: "Constat de test B24 Lot B-FIX1",
+  });
+  if (!analysisId) throw new Error("échec de création de l'analyse de test");
+
+  const recommendationId = await enregistrerRecommandationStrategique({
+    analysisId,
+    correlationId: signal.correlationId,
+    recommandation: "Recommandation de test B24 Lot B-FIX1",
+    priorite: "P3_MONITOR",
+  });
+  if (!recommendationId) throw new Error("échec de création de la recommandation de test");
+
+  const proposalId = await creerPropositionAction({
+    correlationId: signal.correlationId,
+    recommendationId,
+    agentId,
+    actionProposee: "Action de test B24 Lot B-FIX1",
+  });
+  if (!proposalId) throw new Error("échec de création de la proposition de test");
+
+  return { proposalId, correlationId: signal.correlationId };
+}
+
+test.describe("COMPANY ATLAS B24 Lot B-FIX1 — Compensation d'atomicité B21 → B22", () => {
+  test("FIX1 Test 1 — nominal (appel direct) : AuthorizationRequest B22 créée + StrategicAuthorizationLink créé", async () => {
+    const agentId = await idAgentDirect("ATLAS_TALENT");
+    const { proposalId } = await creerPropositionDirecte(agentId);
+
+    const resultat = await demanderAutorisationStrategique({
+      proposalId,
+      action: "PROPOSE",
+      scope: "TALENT",
+      requestedAutonomyLevel: "L2_RECOMMEND",
+    });
+    expect(resultat.ok).toBe(true);
+    if (!resultat.ok) throw new Error("unreachable");
+
+    const lien = await prisma.strategicAuthorizationLink.findUnique({ where: { id: resultat.linkId } });
+    expect(lien?.proposalId).toBe(proposalId);
+    expect(lien?.authorizationRequestId).toBe(resultat.authorizationRequestId);
+  });
+
+  test("FIX1 Test 2 — échec RÉEL de StrategicAuthorizationLink.create() après création B22 -> AuthorizationRequest révoquée automatiquement, aucun Link orphelin", async () => {
+    const agentId = await idAgentDirect("ATLAS_TALENT");
+    const { proposalId } = await creerPropositionDirecte(agentId);
+
+    const resultat = await demanderAutorisationStrategique({
+      proposalId,
+      action: "PROPOSE",
+      scope: "TALENT",
+      requestedAutonomyLevel: "L4_EXECUTE_WITH_APPROVAL", // force PENDING avant l'échec injecté
+      _simulerEchecCreationLienPourTest: true,
+    });
+    expect(resultat.ok).toBe(false);
+    if (resultat.ok) throw new Error("unreachable");
+    expect(resultat.code).toBe(409);
+    expect(resultat.erreur).toContain("révoquée automatiquement");
+
+    const correspondance = resultat.erreur.match(/AuthorizationRequest (\S+) révoquée/);
+    expect(correspondance).toBeTruthy();
+    const idRevoquee = correspondance![1];
+
+    const demande = await prisma.authorizationRequest.findUnique({ where: { id: idRevoquee } });
+    expect(demande?.status).toBe("REVOKED");
+    expect(demande?.status).not.toBe("PENDING");
+
+    const liens = await prisma.strategicAuthorizationLink.findMany({ where: { authorizationRequestId: idRevoquee } });
+    expect(liens.length).toBe(0);
+    const liensProposition = await prisma.strategicAuthorizationLink.findMany({ where: { proposalId } });
+    expect(liensProposition.length).toBe(0);
+  });
+
+  test("FIX1 Test 3 — nouvelle tentative après compensation : nouvelle AuthorizationRequest créée proprement, ancienne reste REVOKED, un seul PENDING", async () => {
+    const agentId = await idAgentDirect("ATLAS_TALENT");
+    const { proposalId } = await creerPropositionDirecte(agentId);
+
+    const echec = await demanderAutorisationStrategique({
+      proposalId,
+      action: "PROPOSE",
+      scope: "TALENT",
+      requestedAutonomyLevel: "L4_EXECUTE_WITH_APPROVAL",
+      _simulerEchecCreationLienPourTest: true,
+    });
+    expect(echec.ok).toBe(false);
+    if (echec.ok) throw new Error("unreachable");
+    const idAncienne = echec.erreur.match(/AuthorizationRequest (\S+) révoquée/)![1];
+
+    const succes = await demanderAutorisationStrategique({
+      proposalId,
+      action: "PROPOSE",
+      scope: "TALENT",
+      requestedAutonomyLevel: "L4_EXECUTE_WITH_APPROVAL",
+    });
+    expect(succes.ok).toBe(true);
+    if (!succes.ok) throw new Error("unreachable");
+    expect(succes.status).toBe("PENDING");
+    expect(succes.authorizationRequestId).not.toBe(idAncienne);
+
+    const ancienne = await prisma.authorizationRequest.findUnique({ where: { id: idAncienne } });
+    expect(ancienne?.status).toBe("REVOKED");
+    const nouvelle = await prisma.authorizationRequest.findUnique({ where: { id: succes.authorizationRequestId } });
+    expect(nouvelle?.status).toBe("PENDING");
+
+    // Un seul PENDING parmi les deux demandes issues de cette proposition.
+    const desDeux = await prisma.authorizationRequest.findMany({
+      where: { id: { in: [idAncienne, succes.authorizationRequestId] } },
+    });
+    expect(desDeux.filter((d) => d.status === "PENDING").length).toBe(1);
+
+    const liens = await prisma.strategicAuthorizationLink.findMany({ where: { proposalId } });
+    expect(liens.length).toBe(1);
+    expect(liens[0].authorizationRequestId).toBe(succes.authorizationRequestId);
+  });
+
+  test("FIX1 Test 4 — incohérence défensive détectée (CAS B) -> AuthorizationRequest révoquée, aucun Link créé", async () => {
+    const agentId = await idAgentDirect("ATLAS_TALENT");
+    const { proposalId, correlationId } = await creerPropositionDirecte(agentId);
+
+    const resultat = await demanderAutorisationStrategique({
+      proposalId,
+      action: "PROPOSE",
+      scope: "TALENT",
+      requestedAutonomyLevel: "L2_RECOMMEND",
+      _forcerIncoherenceDefensivePourTest: true,
+    });
+    expect(resultat.ok).toBe(false);
+    if (resultat.ok) throw new Error("unreachable");
+    expect(resultat.erreur).toContain("incohérente");
+
+    const liens = await prisma.strategicAuthorizationLink.findMany({ where: { proposalId } });
+    expect(liens.length).toBe(0);
+
+    const demandesDeCetteProposition = await prisma.authorizationRequest.findMany({ where: { correlationId } });
+    expect(demandesDeCetteProposition.length).toBe(1);
+    expect(demandesDeCetteProposition[0].status).toBe("REVOKED");
   });
 });
