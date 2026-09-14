@@ -139,3 +139,24 @@ export async function obtenirStatutAutorisationStrategique(proposalId: string): 
 
   return deriverStatutAutorisationStrategique(demande);
 }
+
+// B27 (14/09/2026) : variante qui retourne la ligne AuthorizationRequest
+// COMPLÈTE (agentId/action/scope/correlationId inclus, pas seulement le
+// sous-ensemble utilisé par la dérivation de statut ci-dessus) — nécessaire
+// pour dériver, côté serveur et jamais depuis le client, les paramètres
+// exacts d'un appel à guardExecution() (B25) pour CETTE proposition. Même
+// sélection "Link le plus récent" que obtenirStatutAutorisationStrategique
+// ci-dessus (dupliquée en 6 lignes plutôt que refactorée en commun, pour
+// ne prendre AUCUN risque de modifier silencieusement le comportement déjà
+// testé et livré de la fonction existante — voir PR #19/#20). Lecture
+// seule, aucune écriture.
+export async function obtenirDemandeCouranteStrategique(proposalId: string) {
+  const lien = await prisma.strategicAuthorizationLink.findFirst({
+    where: { proposalId },
+    orderBy: { createdAt: "desc" },
+    select: { authorizationRequestId: true },
+  });
+  if (!lien) return null;
+
+  return prisma.authorizationRequest.findUnique({ where: { id: lien.authorizationRequestId } });
+}

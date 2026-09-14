@@ -55,8 +55,11 @@ import { deriverStatutAutorisationStrategique } from "./authorization-status";
 
 // Statuts B21 terminaux au sens de la RÈGLE MÉTIER DÉJÀ EXISTANTE (voir
 // lib/strategic/propositions.ts, autoriserProposition) — jamais réémis.
-// Réutilisés tels quels, aucune nouvelle règle inventée ici.
-const STATUTS_PROPOSAL_TERMINAUX = new Set(["AUTORISEE", "REFUSEE", "EXECUTEE", "CONTROLEE"]);
+// Réutilisés tels quels, aucune nouvelle règle inventée ici. Exporté
+// (B27, 14/09/2026) pour être réutilisé tel quel par
+// lib/strategic/execution-adapter.ts — jamais une seconde définition du
+// même vocabulaire.
+export const STATUTS_PROPOSAL_TERMINAUX = new Set(["AUTORISEE", "REFUSEE", "EXECUTEE", "CONTROLEE"]);
 
 type ProposalVerrouillee = {
   id: string;
