@@ -329,6 +329,62 @@ test.describe("COMPANY ATLAS B25 — Execution Guard Foundation", () => {
     }
   });
 
+  test("DENY — Emergency Stop est revérifié EN DERNIER, APRÈS Delegation/Risk (re-audit de continuité autonome) : un scénario avec Delegation couvrante n'échappe pas non plus au blocage", async () => {
+    // Reproduit précisément le défaut trouvé au re-audit : EMERGENCY_STOP
+    // était initialement vérifié AVANT Delegation/Risk/Autonomy — laissant
+    // une fenêtre où un Emergency Stop actif pendant CES étapes n'aurait
+    // pas empêché un ALLOW. Ce test utilise volontairement un scénario AVEC
+    // Delegation (donc plusieurs lectures DB intermédiaires avant le
+    // dernier contrôle) pour prouver que le chemin le plus long est bien
+    // celui qui se termine par la revérification Emergency Stop, pas
+    // l'inverse.
+    const agentId = await idAgentDirect("ATLAS_TALENT");
+    const delegationRes = await creerDelegation({
+      correlationId: nouveauCorrelationId(),
+      agentId,
+      action: "PROPOSE",
+      scope: "TALENT",
+      objective: "Test B25 — Emergency Stop après Delegation/Risk",
+      actionClass: "INTERNAL_ACTION",
+      maxRiskLevel: "MEDIUM",
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      createdBy: "admin-demo@example.com",
+    });
+    if (!delegationRes.ok) throw new Error("unreachable");
+    const { authorizationRequestId, correlationId } = await demandeApprouveeAutomatiquement(agentId, {
+      riskLevel: "MEDIUM",
+      delegationId: delegationRes.id,
+    });
+
+    const arretRes = await activerArretUrgence({
+      correlationId: nouveauCorrelationId(),
+      scope: "GLOBAL",
+      reason: "Test B25 — Emergency Stop après Delegation/Risk couvrants",
+      activatedBy: "admin-demo@example.com",
+    });
+    if (!arretRes.ok) throw new Error("unreachable");
+
+    try {
+      const resultat = await guardExecution({
+        agentId,
+        action: "PROPOSE",
+        scope: "TALENT",
+        riskLevel: "LOW",
+        authorizationRequestId,
+        correlationId,
+      });
+      expect(resultat.decision).toBe("DENY");
+      // Delegation ET Risk ont bien été évalués (et couvraient) AVANT que
+      // Emergency Stop ne bloque en dernier — preuve que le nouvel ordre
+      // est respecté, jamais un court-circuit qui aurait sauté ces étapes.
+      expect(resultat.reasons.find((r) => r.dimension === "DELEGATION")?.bloquant).toBe(false);
+      expect(resultat.reasons.find((r) => r.dimension === "RISK")?.bloquant).toBe(false);
+      expect(resultat.reasons.find((r) => r.dimension === "EMERGENCY_STOP")?.bloquant).toBe(true);
+    } finally {
+      await leverArretUrgence({ emergencyStopId: arretRes.id, liftedBy: "admin-demo@example.com" });
+    }
+  });
+
   test("DENY — action hors vocabulaire fermé (B20), fail-closed sur une entrée malformée", async () => {
     const agentId = await idAgentDirect("ATLAS_TALENT");
     const resultat = await guardExecution({

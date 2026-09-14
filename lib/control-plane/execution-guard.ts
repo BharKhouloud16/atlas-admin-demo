@@ -303,30 +303,6 @@ export async function guardExecution(params: {
   }
   reasons.push({ dimension: "PERMISSION", bloquant: false, detail: "AgentPermission ACTIVE (agentId+action+scope exact)." });
 
-  // ---- EMERGENCY STOP (B22, relue EN DIRECT — dernier rempart TOCTOU) ----
-  const arretUrgence = await estArreteUrgenceActif({
-    agentId: params.agentId,
-    actionClass: demande.actionClass,
-    delegationId: demande.delegationId ?? undefined,
-  });
-  if (arretUrgence) {
-    return conclure(
-      "DENY",
-      params.authorizationRequestId,
-      [
-        ...reasons,
-        {
-          dimension: "EMERGENCY_STOP",
-          bloquant: true,
-          detail: "Emergency Stop actif — bloque prioritairement toute exécution, y compris une AuthorizationRequest déjà APPROVED.",
-        },
-      ],
-      params.agentId,
-      params.correlationId
-    );
-  }
-  reasons.push({ dimension: "EMERGENCY_STOP", bloquant: false, detail: "Aucun Emergency Stop applicable actif." });
-
   // ---- DELEGATION (B22, relue EN DIRECT, si applicable) ------------------
   let delegation: Awaited<ReturnType<typeof prisma.delegation.findUnique>> = null;
   if (demande.delegationId) {
@@ -375,6 +351,41 @@ export async function guardExecution(params: {
     }
     reasons.push({ dimension: "RISK", bloquant: false, detail: "Risque déclaré couvert par l'AuthorizationRequest." });
   }
+
+  // ---- EMERGENCY STOP (B22, relue EN DIRECT EN DERNIER — dernier rempart
+  // TOCTOU avant ALLOW) --------------------------------------------------
+  // RE-AUDIT (mandat de continuité autonome, section 9) : cette lecture
+  // était initialement placée AVANT Delegation/Risk/Autonomy — laissant une
+  // fenêtre où un Emergency Stop activé PENDANT ces vérifications
+  // intermédiaires n'aurait été détecté qu'à l'appel SUIVANT, jamais celui-
+  // ci. Corrigé en déplaçant cette lecture ici, IMMÉDIATEMENT avant le
+  // retour ALLOW — même principe que B22-FIX2
+  // (lib/control-plane/authorization.ts, approuverDemande, fenêtre de
+  // course Emergency Stop déjà fermée une fois côté B22) appliqué au même
+  // problème structurel côté Guard. Aucune écriture, aucune modification de
+  // B22 : une seule lecture, positionnée le plus tard possible.
+  const arretUrgence = await estArreteUrgenceActif({
+    agentId: params.agentId,
+    actionClass: demande.actionClass,
+    delegationId: demande.delegationId ?? undefined,
+  });
+  if (arretUrgence) {
+    return conclure(
+      "DENY",
+      params.authorizationRequestId,
+      [
+        ...reasons,
+        {
+          dimension: "EMERGENCY_STOP",
+          bloquant: true,
+          detail: "Emergency Stop actif — bloque prioritairement toute exécution, y compris une AuthorizationRequest déjà APPROVED.",
+        },
+      ],
+      params.agentId,
+      params.correlationId
+    );
+  }
+  reasons.push({ dimension: "EMERGENCY_STOP", bloquant: false, detail: "Aucun Emergency Stop applicable actif." });
 
   // ---- AUTONOMY (B23, consultatif — jamais une autorité indépendante) ----
   // Recalculée EN DIRECT à partir des MÊMES faits déjà revalidés ci-dessus
