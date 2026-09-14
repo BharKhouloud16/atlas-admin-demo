@@ -82,7 +82,21 @@ export type DemandeAutorisationStrategiqueResultat =
 // révocation déjà en cours/effectuée : "déjà révoquée" est traité comme un
 // succès de compensation (l'objectif — statut != PENDING — est déjà
 // atteint), jamais comme un échec à remonter.
-async function tenterRevocationCompensatoire(id: string, motif: string): Promise<{ ok: true } | { ok: false; erreur: string }> {
+async function tenterRevocationCompensatoire(
+  id: string,
+  motif: string,
+  // Réservé aux TESTS (B24 Lot B-FIX1.1) — jamais positionné depuis la
+  // route HTTP (voir demanderAutorisationStrategique ci-dessous). Aucun
+  // mécanisme sûr n'existait pour provoquer un échec RÉEL de
+  // revoquerDemande() lui-même (B22, non modifié) sans corrompre son état
+  // (le seul échec naturel — "déjà révoquée" — est déjà traité comme un
+  // succès de compensation, jamais un échec) : ce seau minimal simule
+  // uniquement l'échec de LA COMPENSATION, jamais celui de B22.
+  forcerEchecPourTest?: boolean
+): Promise<{ ok: true } | { ok: false; erreur: string }> {
+  if (forcerEchecPourTest) {
+    return { ok: false, erreur: "Échec simulé de revoquerDemande() (B24 Lot B-FIX1.1, test de compensation uniquement)." };
+  }
   try {
     const resultat = await revoquerDemande({
       id,
@@ -95,6 +109,26 @@ async function tenterRevocationCompensatoire(id: string, motif: string): Promise
   } catch (e) {
     return { ok: false, erreur: e instanceof Error ? e.message : String(e) };
   }
+}
+
+// B24 Lot B-FIX1.1 — factorisation du SEUL cas partagé entre CAS B et CAS
+// C/D : la compensation elle-même échoue. Jamais utilisé pour le cas de
+// succès de la compensation, dont la sémantique reste distincte et propre
+// à chaque cas (CAS B renvoie l'erreur métier telle quelle ; CAS C/D
+// renvoie un message décrivant la révocation) — aucune exception
+// artificielle, aucun cas transformé pour ressembler à l'autre. L'échec
+// initial ET l'échec de compensation restent tous deux explicitement
+// détectables, jamais l'un masquant l'autre.
+function erreurCompensationEchouee(
+  erreurOrigine: string,
+  authorizationRequestId: string,
+  erreurCompensation: string
+): { ok: false; erreur: string; code: 500 } {
+  return {
+    ok: false,
+    erreur: `${erreurOrigine} — ÉCHEC ÉGALEMENT de la compensation par révocation (${erreurCompensation}) : AuthorizationRequest ${authorizationRequestId} peut rester active sans lien, intervention manuelle requise.`,
+    code: 500,
+  };
 }
 
 export async function demanderAutorisationStrategique(params: {
@@ -122,6 +156,11 @@ export async function demanderAutorisationStrategique(params: {
   // comparées proviennent du même appel) — ce seau est le seul moyen sûr de
   // l'exercer réellement sans corrompre B22.
   _forcerIncoherenceDefensivePourTest?: boolean;
+  // Réservé aux TESTS (B24 Lot B-FIX1.1), même discipline que ci-dessus —
+  // force tenterRevocationCompensatoire() à échouer (voir sa propre
+  // documentation) pour valider que CAS B et CAS C/D remontent tous deux
+  // explicitement l'échec de compensation, jamais silencieusement.
+  _simulerEchecCompensationPourTest?: boolean;
 }): Promise<DemandeAutorisationStrategiqueResultat> {
   // Validation des vocabulaires fermés AVANT toute ouverture de transaction
   // — aucune raison de verrouiller une ligne pour un input structurellement
@@ -312,17 +351,18 @@ export async function demanderAutorisationStrategique(params: {
     if (authorizationRequestIdCommise) {
       const compensation = await tenterRevocationCompensatoire(
         authorizationRequestIdCommise,
-        `échec après création B22 (${messageOriginal})`
+        `échec après création B22 (${messageOriginal})`,
+        params._simulerEchecCompensationPourTest
       );
       if (!compensation.ok) {
         // Erreur d'origine ET échec de compensation restent tous deux
         // explicitement détectables — jamais l'un masqué par l'autre, et
         // jamais une compensation silencieusement supposée réussie.
-        return {
-          ok: false,
-          erreur: `Échec de création du StrategicAuthorizationLink (${messageOriginal}) — ÉCHEC ÉGALEMENT de la compensation par révocation (${compensation.erreur}) : AuthorizationRequest ${authorizationRequestIdCommise} peut rester active sans lien, intervention manuelle requise.`,
-          code: 500,
-        };
+        return erreurCompensationEchouee(
+          `Échec de création du StrategicAuthorizationLink (${messageOriginal})`,
+          authorizationRequestIdCommise,
+          compensation.erreur
+        );
       }
       return {
         ok: false,
@@ -338,8 +378,25 @@ export async function demanderAutorisationStrategique(params: {
 
   // CAS B — compensation après un rollback PROPRE (pas d'exception) de la
   // transaction, pour l'incohérence défensive détectée ci-dessus.
+  //
+  // B24 Lot B-FIX1.1 : le résultat de tenterRevocationCompensatoire()
+  // n'était jusqu'ici jamais examiné — corrigé pour la même discipline que
+  // CAS C/D (voir bloc catch ci-dessus) :
+  // - compensation réussie -> l'erreur métier d'origine (resultatTx) est
+  //   retournée TELLE QUELLE, inchangée (CAS B1 de l'ordre) ;
+  // - compensation échouée -> l'erreur d'origine ET l'échec de
+  //   compensation sont tous deux explicitement retournés, jamais l'un
+  //   silencieusement ignoré (CAS B2 de l'ordre), via le même helper que
+  //   CAS C/D — aucune exception artificielle introduite pour cela.
   if (!resultatTx.ok && aRevoquerApresRollbackPropre) {
-    await tenterRevocationCompensatoire(aRevoquerApresRollbackPropre, "AuthorizationRequest créée incohérente avec le contexte attendu");
+    const compensation = await tenterRevocationCompensatoire(
+      aRevoquerApresRollbackPropre,
+      "AuthorizationRequest créée incohérente avec le contexte attendu",
+      params._simulerEchecCompensationPourTest
+    );
+    if (!compensation.ok) {
+      return erreurCompensationEchouee(resultatTx.erreur, aRevoquerApresRollbackPropre, compensation.erreur);
+    }
   }
 
   return resultatTx;

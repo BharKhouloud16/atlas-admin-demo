@@ -614,4 +614,62 @@ test.describe("COMPANY ATLAS B24 Lot B-FIX1 — Compensation d'atomicité B21 �
     expect(demandesDeCetteProposition.length).toBe(1);
     expect(demandesDeCetteProposition[0].status).toBe("REVOKED");
   });
+
+  // ---- B24 Lot B-FIX1.1 — symétrie de la compensation CAS B --------------
+
+  test("FIX1.1 Test B — CAS B (incohérence défensive) + échec de la compensation : erreur d'origine ET erreur de compensation toutes deux explicites, jamais l'une masquant l'autre", async () => {
+    const agentId = await idAgentDirect("ATLAS_TALENT");
+    const { proposalId, correlationId } = await creerPropositionDirecte(agentId);
+
+    const resultat = await demanderAutorisationStrategique({
+      proposalId,
+      action: "PROPOSE",
+      scope: "TALENT",
+      requestedAutonomyLevel: "L2_RECOMMEND",
+      _forcerIncoherenceDefensivePourTest: true,
+      _simulerEchecCompensationPourTest: true,
+    });
+    expect(resultat.ok).toBe(false);
+    if (resultat.ok) throw new Error("unreachable");
+    expect(resultat.code).toBe(500);
+    expect(resultat.erreur).toContain("incohérente"); // erreur d'origine (CAS B)
+    expect(resultat.erreur).toContain("ÉCHEC ÉGALEMENT de la compensation"); // échec de compensation, jamais masqué
+    expect(resultat.erreur).toContain("Échec simulé de revoquerDemande"); // message de compensation propagé tel quel
+    expect(resultat.erreur).toContain("intervention manuelle requise");
+
+    // La compensation n'a RÉELLEMENT jamais eu lieu (le seau de test
+    // empêche l'appel effectif à revoquerDemande) — la demande existe
+    // toujours, jamais REVOKED, et reste sans lien.
+    const demandes = await prisma.authorizationRequest.findMany({ where: { correlationId } });
+    expect(demandes.length).toBe(1);
+    expect(demandes[0].status).not.toBe("REVOKED");
+    const liens = await prisma.strategicAuthorizationLink.findMany({ where: { proposalId } });
+    expect(liens.length).toBe(0);
+  });
+
+  test("FIX1.1 Test C — régression CAS C/D : échec du Link + échec de la compensation -> erreur d'origine ET erreur de compensation toutes deux explicites (comportement déjà corrigé par FIX1 reste intact)", async () => {
+    const agentId = await idAgentDirect("ATLAS_TALENT");
+    const { proposalId, correlationId } = await creerPropositionDirecte(agentId);
+
+    const resultat = await demanderAutorisationStrategique({
+      proposalId,
+      action: "PROPOSE",
+      scope: "TALENT",
+      requestedAutonomyLevel: "L4_EXECUTE_WITH_APPROVAL",
+      _simulerEchecCreationLienPourTest: true,
+      _simulerEchecCompensationPourTest: true,
+    });
+    expect(resultat.ok).toBe(false);
+    if (resultat.ok) throw new Error("unreachable");
+    expect(resultat.code).toBe(500);
+    expect(resultat.erreur).toContain("Échec de création du StrategicAuthorizationLink"); // erreur d'origine (CAS C)
+    expect(resultat.erreur).toContain("ÉCHEC ÉGALEMENT de la compensation");
+    expect(resultat.erreur).toContain("Échec simulé de revoquerDemande");
+
+    const demandes = await prisma.authorizationRequest.findMany({ where: { correlationId } });
+    expect(demandes.length).toBe(1);
+    expect(demandes[0].status).not.toBe("REVOKED");
+    const liens = await prisma.strategicAuthorizationLink.findMany({ where: { proposalId } });
+    expect(liens.length).toBe(0);
+  });
 });
