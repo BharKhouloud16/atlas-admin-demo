@@ -1261,6 +1261,218 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(erreur.error).toContain("n'est plus valide");
   });
 
+  // ==========================================================================
+  // B24-FIX0 (audit B24 Phase 1, P0-1) : authorization.ts vérifiait la
+  // permission par agentId+action SEULEMENT (possedePermissionActive à 3
+  // arguments), aussi bien à la création (creerDemandeAutorisation) qu'à la
+  // revalidation lors de l'approbation (approuverDemande) — une
+  // AgentPermission ACTIVE pour ce même agent/action mais un AUTRE scope
+  // pouvait donc masquer l'absence réelle de permission pour le scope
+  // demandé. Corrigé par le 4e argument scope, déjà disponible depuis
+  // B23-FIX1. Les tests ci-dessous correspondent exactement aux scénarios 1
+  // à 6 de l'audit.
+
+  test("B24-FIX0 Test 1 — scope correct : ATLAS_TALENT + PROPOSE + TALENT (permission ACTIVE) -> accepté", async ({ request }) => {
+    await connecter(request, "admin-demo@example.com");
+    const agentId = await idAgent(request, "ATLAS_TALENT");
+
+    const demandeRes = await request.post("/api/control-plane/authorization-requests", {
+      data: {
+        agentId,
+        action: "PROPOSE",
+        scope: "TALENT",
+        objective: "B24-FIX0 Test 1 — scope correct",
+        reason: "Test B24-FIX0",
+        requestedAutonomyLevel: "L2_RECOMMEND", // H1 attendu -> ALLOW automatique si permission/scope valides
+      },
+    });
+    expect(demandeRes.status(), await demandeRes.text()).toBe(201);
+    const corps = await demandeRes.json();
+    expect(corps.decision).toBe("ALLOW");
+    expect(corps.status).toBe("RESOLVED");
+  });
+
+  test("B24-FIX0 Test 2 — scope incorrect : ATLAS_TALENT n'a PROPOSE que sur TALENT, jamais sur SECURITY -> DENY à la création", async ({ request }) => {
+    await connecter(request, "admin-demo@example.com");
+    const agentId = await idAgent(request, "ATLAS_TALENT");
+
+    const demandeRes = await request.post("/api/control-plane/authorization-requests", {
+      data: {
+        agentId,
+        action: "PROPOSE",
+        scope: "SECURITY", // ATLAS_TALENT n'a PROPOSE que sur TALENT (B21.1)
+        objective: "B24-FIX0 Test 2 — scope incorrect",
+        reason: "Test B24-FIX0",
+        requestedAutonomyLevel: "L2_RECOMMEND",
+      },
+    });
+    expect(demandeRes.status(), await demandeRes.text()).toBe(201);
+    const corps = await demandeRes.json();
+    expect(corps.decision).toBe("DENY");
+    expect(corps.status).toBe("RESOLVED");
+  });
+
+  test("B24-FIX0 Test 3 — permission DISABLED (même scope exact) -> DENY à la création", async ({ request }) => {
+    await connecter(request, "admin-demo@example.com");
+    const agentId = await idAgent(request, "ATLAS_TALENT");
+    const { permissions } = await (await request.get("/api/security/permissions")).json();
+    const permissionProposeTalent = permissions.find(
+      (p: { agentId: string; action: string; scope: string }) => p.agentId === agentId && p.action === "PROPOSE" && p.scope === "TALENT"
+    );
+    expect(permissionProposeTalent).toBeTruthy();
+
+    await prisma.agentPermission.update({ where: { id: permissionProposeTalent.id }, data: { statut: "DISABLED" } });
+    try {
+      const demandeRes = await request.post("/api/control-plane/authorization-requests", {
+        data: {
+          agentId,
+          action: "PROPOSE",
+          scope: "TALENT",
+          objective: "B24-FIX0 Test 3 — permission désactivée",
+          reason: "Test B24-FIX0",
+          requestedAutonomyLevel: "L2_RECOMMEND",
+        },
+      });
+      expect(demandeRes.status(), await demandeRes.text()).toBe(201);
+      const corps = await demandeRes.json();
+      expect(corps.decision).toBe("DENY");
+    } finally {
+      await prisma.agentPermission.update({ where: { id: permissionProposeTalent.id }, data: { statut: "ACTIVE" } });
+    }
+  });
+
+  test("B24-FIX0 Test 4 — revalidation à l'approbation : permission désactivée après création d'une demande PENDING -> refus (déjà couvert par B22-FIX, confirmé scope-aware)", async ({
+    request,
+  }) => {
+    await connecter(request, "admin-demo@example.com");
+    const agentId = await idAgent(request, "ATLAS_TALENT");
+    const { permissions } = await (await request.get("/api/security/permissions")).json();
+    const permissionProposeTalent = permissions.find(
+      (p: { agentId: string; action: string; scope: string }) => p.agentId === agentId && p.action === "PROPOSE" && p.scope === "TALENT"
+    );
+    expect(permissionProposeTalent).toBeTruthy();
+
+    const demandeRes = await request.post("/api/control-plane/authorization-requests", {
+      data: {
+        agentId,
+        action: "PROPOSE",
+        scope: "TALENT",
+        objective: "B24-FIX0 Test 4 — revalidation à l'approbation",
+        reason: "Test B24-FIX0",
+        requestedAutonomyLevel: "L4_EXECUTE_WITH_APPROVAL", // force PENDING
+      },
+    });
+    const { id: demandeId, status } = await demandeRes.json();
+    expect(status).toBe("PENDING");
+
+    await prisma.agentPermission.update({ where: { id: permissionProposeTalent.id }, data: { statut: "DISABLED" } });
+    try {
+      const tentativeAllow = await request.patch(`/api/control-plane/authorization-requests/${demandeId}/approve`, {
+        data: { decision: "ALLOW", decisionReason: "Tentative — permission désactivée entre-temps (B24-FIX0)" },
+      });
+      expect(tentativeAllow.status()).toBe(409);
+      const erreur = await tentativeAllow.json();
+      expect(erreur.error).toContain("agent/action/scope");
+    } finally {
+      await prisma.agentPermission.update({ where: { id: permissionProposeTalent.id }, data: { statut: "ACTIVE" } });
+    }
+  });
+
+  test("B24-FIX0 Test 5 — revalidation scope-exacte à l'approbation : une permission ACTIVE pour agentId+action mais un AUTRE scope ne doit jamais couvrir la demande", async ({
+    request,
+  }) => {
+    await connecter(request, "admin-demo@example.com");
+    const agentId = await idAgent(request, "ATLAS_TALENT");
+    const { permissions } = await (await request.get("/api/security/permissions")).json();
+    const permissionProposeTalent = permissions.find(
+      (p: { agentId: string; action: string; scope: string }) => p.agentId === agentId && p.action === "PROPOSE" && p.scope === "TALENT"
+    );
+    expect(permissionProposeTalent).toBeTruthy();
+
+    // Demande créée pendant que PROPOSE/TALENT est encore ACTIVE -> PENDING.
+    const demandeRes = await request.post("/api/control-plane/authorization-requests", {
+      data: {
+        agentId,
+        action: "PROPOSE",
+        scope: "TALENT",
+        objective: "B24-FIX0 Test 5 — scope modifié/incompatible",
+        reason: "Test B24-FIX0",
+        requestedAutonomyLevel: "L4_EXECUTE_WITH_APPROVAL", // force PENDING
+      },
+    });
+    const { id: demandeId, status } = await demandeRes.json();
+    expect(status).toBe("PENDING");
+
+    // Simule exactement le scénario du bug : la permission sur le scope
+    // demandé (TALENT) est désactivée, MAIS une AUTRE permission ACTIVE
+    // existe pour ce même agent/action sur un AUTRE scope (SECURITY) —
+    // avant B24-FIX0, possedePermissionActive() sans scope aurait trouvé
+    // cette dernière et laissé passer l'approbation à tort.
+    const permissionTemporaireId = "perm-test-b24-fix0-talent-propose-security";
+    await prisma.agentPermission.update({ where: { id: permissionProposeTalent.id }, data: { statut: "DISABLED" } });
+    await prisma.agentPermission.create({
+      data: {
+        id: permissionTemporaireId,
+        agentId,
+        action: "PROPOSE",
+        scope: "SECURITY",
+        statut: "ACTIVE",
+        description: "Test B24-FIX0 — permission ACTIVE sur un AUTRE scope, ne doit jamais couvrir une demande scope=TALENT",
+      },
+    });
+    try {
+      const tentativeAllow = await request.patch(`/api/control-plane/authorization-requests/${demandeId}/approve`, {
+        data: { decision: "ALLOW", decisionReason: "Tentative — permission ACTIVE seulement sur un autre scope (B24-FIX0)" },
+      });
+      expect(tentativeAllow.status(), await tentativeAllow.text()).toBe(409);
+      const erreur = await tentativeAllow.json();
+      expect(erreur.error).toContain("agent/action/scope");
+    } finally {
+      await prisma.agentPermission.delete({ where: { id: permissionTemporaireId } });
+      await prisma.agentPermission.update({ where: { id: permissionProposeTalent.id }, data: { statut: "ACTIVE" } });
+    }
+  });
+
+  test("B24-FIX0 Test 6 — régression B22-FIX2 : une délégation insuffisante en montant reste APPROVAL_REQUIRED (jamais bloquée par le correctif de scope)", async ({
+    request,
+  }) => {
+    await connecter(request, "admin-demo@example.com");
+    const agentId = await idAgent(request, "ATLAS_TALENT");
+
+    const delegationRes = await request.post("/api/control-plane/delegations", {
+      data: {
+        agentId,
+        action: "PROPOSE",
+        scope: "TALENT",
+        objective: "B24-FIX0 Test 6 — délégation insuffisante en montant",
+        maxAmount: 10,
+        expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      },
+    });
+    const { id: delegationId } = await delegationRes.json();
+
+    const demandeRes = await request.post("/api/control-plane/authorization-requests", {
+      data: {
+        agentId,
+        action: "PROPOSE",
+        scope: "TALENT", // permission/scope valides — seul le montant dépasse la délégation
+        objective: "Montant dépassant la délégation",
+        reason: "Test B24-FIX0 régression B22-FIX2",
+        amount: 999999,
+        delegationId,
+        requestedAutonomyLevel: "L2_RECOMMEND",
+      },
+    });
+    expect(demandeRes.status(), await demandeRes.text()).toBe(201);
+    const corps = await demandeRes.json();
+    // Permission/scope valides -> la vérification B24-FIX0 n'intervient pas
+    // ici ; seule la délégation insuffisante en montant détermine le
+    // résultat, et reste APPROVAL_REQUIRED (jamais un blocage définitif —
+    // une décision humaine ALLOW explicite reste possible, B22-FIX2).
+    expect(corps.decision).toBe("APPROVAL_REQUIRED");
+    expect(corps.humanNecessity).toBe("H4");
+  });
+
   test("B22-FIX P1 (concurrence) : deux approbations concurrentes sur la même demande PENDING — une seule réussit, jamais deux décisions incohérentes", async ({
     request,
   }) => {
