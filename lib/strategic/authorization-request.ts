@@ -82,23 +82,20 @@ export type DemandeAutorisationStrategiqueResultat =
 // révocation déjà en cours/effectuée : "déjà révoquée" est traité comme un
 // succès de compensation (l'objectif — statut != PENDING — est déjà
 // atteint), jamais comme un échec à remonter.
+//
+// B24 Lot B-FIX1.2 : `revoquerDemandeImpl` est une INJECTION DE DÉPENDANCE
+// ordinaire — jamais un interrupteur de test. La production passe TOUJOURS
+// `revoquerDemande` (B22, non modifié, voir demanderAutorisationStrategique
+// ci-dessous) ; seul un test peut fournir une implémentation alternative,
+// via le second argument (dependances) de demanderAutorisationStrategique —
+// jamais via `params`, qui ne porte plus aucun indicateur de simulation.
 async function tenterRevocationCompensatoire(
   id: string,
   motif: string,
-  // Réservé aux TESTS (B24 Lot B-FIX1.1) — jamais positionné depuis la
-  // route HTTP (voir demanderAutorisationStrategique ci-dessous). Aucun
-  // mécanisme sûr n'existait pour provoquer un échec RÉEL de
-  // revoquerDemande() lui-même (B22, non modifié) sans corrompre son état
-  // (le seul échec naturel — "déjà révoquée" — est déjà traité comme un
-  // succès de compensation, jamais un échec) : ce seau minimal simule
-  // uniquement l'échec de LA COMPENSATION, jamais celui de B22.
-  forcerEchecPourTest?: boolean
+  revoquerDemandeImpl: typeof revoquerDemande
 ): Promise<{ ok: true } | { ok: false; erreur: string }> {
-  if (forcerEchecPourTest) {
-    return { ok: false, erreur: "Échec simulé de revoquerDemande() (B24 Lot B-FIX1.1, test de compensation uniquement)." };
-  }
   try {
-    const resultat = await revoquerDemande({
+    const resultat = await revoquerDemandeImpl({
       id,
       revokedBy: "system",
       reason: plafonnerTexteStrategique(`B24 Lot B-FIX1 — compensation automatique : ${motif}.`, PLAFOND_CHAMP_STRATEGIQUE) ?? motif,
@@ -156,12 +153,21 @@ export async function demanderAutorisationStrategique(params: {
   // comparées proviennent du même appel) — ce seau est le seul moyen sûr de
   // l'exercer réellement sans corrompre B22.
   _forcerIncoherenceDefensivePourTest?: boolean;
-  // Réservé aux TESTS (B24 Lot B-FIX1.1), même discipline que ci-dessus —
-  // force tenterRevocationCompensatoire() à échouer (voir sa propre
-  // documentation) pour valider que CAS B et CAS C/D remontent tous deux
-  // explicitement l'échec de compensation, jamais silencieusement.
-  _simulerEchecCompensationPourTest?: boolean;
-}): Promise<DemandeAutorisationStrategiqueResultat> {
+},
+// B24 Lot B-FIX1.2 : injection de dépendance ORDINAIRE, PAS un paramètre
+// métier — absente de `params` ci-dessus, donc un appel normal
+// (demanderAutorisationStrategique({ proposalId, action, scope,
+// requestedAutonomyLevel })) n'a besoin d'aucun deuxième argument, et ne
+// porte plus aucun indicateur `_simulerEchecCompensationPourTest`. La
+// route HTTP (app/api/strategic/propositions/[id]/request-authorization/route.ts)
+// n'appelle jamais ce deuxième argument — la production utilise donc
+// TOUJOURS `revoquerDemande` (B22, non modifié) par défaut. Seul un test
+// peut fournir une implémentation alternative de la révocation, pour
+// exercer le comportement réel de compensation sans corrompre B22 ni
+// ajouter d'interrupteur au contrat métier.
+dependances?: { revoquerDemande?: typeof revoquerDemande }
+): Promise<DemandeAutorisationStrategiqueResultat> {
+  const revoquerDemandeReel = dependances?.revoquerDemande ?? revoquerDemande;
   // Validation des vocabulaires fermés AVANT toute ouverture de transaction
   // — aucune raison de verrouiller une ligne pour un input structurellement
   // invalide. Directive B24 Lot B, section 5 : AUCUN mapping automatique
@@ -352,7 +358,7 @@ export async function demanderAutorisationStrategique(params: {
       const compensation = await tenterRevocationCompensatoire(
         authorizationRequestIdCommise,
         `échec après création B22 (${messageOriginal})`,
-        params._simulerEchecCompensationPourTest
+        revoquerDemandeReel
       );
       if (!compensation.ok) {
         // Erreur d'origine ET échec de compensation restent tous deux
@@ -392,7 +398,7 @@ export async function demanderAutorisationStrategique(params: {
     const compensation = await tenterRevocationCompensatoire(
       aRevoquerApresRollbackPropre,
       "AuthorizationRequest créée incohérente avec le contexte attendu",
-      params._simulerEchecCompensationPourTest
+      revoquerDemandeReel
     );
     if (!compensation.ok) {
       return erreurCompensationEchouee(resultatTx.erreur, aRevoquerApresRollbackPropre, compensation.erreur);

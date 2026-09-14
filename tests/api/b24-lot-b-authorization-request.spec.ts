@@ -1,6 +1,7 @@
 import { test, expect, APIRequestContext } from "@playwright/test";
 import { prisma } from "@/lib/prisma";
 import { demanderAutorisationStrategique } from "@/lib/strategic/authorization-request";
+import type { revoquerDemande } from "@/lib/control-plane/authorization";
 import { creerPropositionAction } from "@/lib/strategic/propositions";
 import { enregistrerSignalStrategique, enregistrerAnalyseStrategique, enregistrerRecommandationStrategique } from "@/lib/strategic/veille";
 
@@ -615,20 +616,55 @@ test.describe("COMPANY ATLAS B24 Lot B-FIX1 — Compensation d'atomicité B21 �
     expect(demandesDeCetteProposition[0].status).toBe("REVOKED");
   });
 
-  // ---- B24 Lot B-FIX1.1 — symétrie de la compensation CAS B --------------
+  // ---- B24 Lot B-FIX1.1/FIX1.2 — symétrie de la compensation CAS B -------
 
-  test("FIX1.1 Test B — CAS B (incohérence défensive) + échec de la compensation : erreur d'origine ET erreur de compensation toutes deux explicites, jamais l'une masquant l'autre", async () => {
+  // B24 Lot B-FIX1.2 : injection de dépendance ORDINAIRE (deuxième argument
+  // de demanderAutorisationStrategique), jamais un indicateur dans le
+  // premier argument (params) — le seul moyen sûr, sans corrompre B22, de
+  // provoquer un échec RÉEL de LA COMPENSATION (le seul échec naturel de
+  // revoquerDemande() — "déjà révoquée" — est déjà traité comme un succès
+  // de compensation, jamais un échec observable).
+  const revoquerDemandeQuiEchoueTest: typeof revoquerDemande = async () => ({
+    ok: false,
+    erreur: "Échec simulé de revoquerDemande() (B24 Lot B-FIX1.2, test de compensation uniquement).",
+    code: 409,
+  });
+
+  test("FIX1.2 Test — un appel métier normal (un seul argument, sans _simulerEchecCompensationPourTest ni aucun autre indicateur de simulation lié à la compensation) fonctionne à l'identique", async () => {
     const agentId = await idAgentDirect("ATLAS_TALENT");
-    const { proposalId, correlationId } = await creerPropositionDirecte(agentId);
+    const { proposalId } = await creerPropositionDirecte(agentId);
 
+    // Un seul argument, exactement les 4 champs métier — aucun deuxième
+    // argument `dependances`, donc revoquerDemande() réel (B22) est
+    // utilisé implicitement par défaut. Le typage de
+    // demanderAutorisationStrategique n'accepte plus AUCUN champ
+    // `_simulerEchecCompensationPourTest` dans ce premier argument (retiré
+    // du contrat métier par B24 Lot B-FIX1.2) — une tentative de le
+    // fournir ici serait une erreur de compilation TypeScript, pas
+    // seulement une valeur ignorée à l'exécution.
     const resultat = await demanderAutorisationStrategique({
       proposalId,
       action: "PROPOSE",
       scope: "TALENT",
       requestedAutonomyLevel: "L2_RECOMMEND",
-      _forcerIncoherenceDefensivePourTest: true,
-      _simulerEchecCompensationPourTest: true,
     });
+    expect(resultat.ok).toBe(true);
+  });
+
+  test("FIX1.1 Test B — CAS B (incohérence défensive) + échec de la compensation : erreur d'origine ET erreur de compensation toutes deux explicites, jamais l'une masquant l'autre", async () => {
+    const agentId = await idAgentDirect("ATLAS_TALENT");
+    const { proposalId, correlationId } = await creerPropositionDirecte(agentId);
+
+    const resultat = await demanderAutorisationStrategique(
+      {
+        proposalId,
+        action: "PROPOSE",
+        scope: "TALENT",
+        requestedAutonomyLevel: "L2_RECOMMEND",
+        _forcerIncoherenceDefensivePourTest: true,
+      },
+      { revoquerDemande: revoquerDemandeQuiEchoueTest }
+    );
     expect(resultat.ok).toBe(false);
     if (resultat.ok) throw new Error("unreachable");
     expect(resultat.code).toBe(500);
@@ -651,14 +687,16 @@ test.describe("COMPANY ATLAS B24 Lot B-FIX1 — Compensation d'atomicité B21 �
     const agentId = await idAgentDirect("ATLAS_TALENT");
     const { proposalId, correlationId } = await creerPropositionDirecte(agentId);
 
-    const resultat = await demanderAutorisationStrategique({
-      proposalId,
-      action: "PROPOSE",
-      scope: "TALENT",
-      requestedAutonomyLevel: "L4_EXECUTE_WITH_APPROVAL",
-      _simulerEchecCreationLienPourTest: true,
-      _simulerEchecCompensationPourTest: true,
-    });
+    const resultat = await demanderAutorisationStrategique(
+      {
+        proposalId,
+        action: "PROPOSE",
+        scope: "TALENT",
+        requestedAutonomyLevel: "L4_EXECUTE_WITH_APPROVAL",
+        _simulerEchecCreationLienPourTest: true,
+      },
+      { revoquerDemande: revoquerDemandeQuiEchoueTest }
+    );
     expect(resultat.ok).toBe(false);
     if (resultat.ok) throw new Error("unreachable");
     expect(resultat.code).toBe(500);
