@@ -155,4 +155,21 @@ test.describe("COMPANY ATLAS B22 — Delegation (estDelegationCouvrante)", () =>
     });
     expect(resultat.couvre).toBe(true);
   });
+
+  // B23-FIX1 (audit humain PR #9, correction P0) : AgentPermission ACTIVE
+  // pour le même agentId+action mais un AUTRE scope que la Delegation ne
+  // doit jamais être confondue avec la permission qui l'a réellement
+  // autorisée. Avant cette correction, possedePermissionActive() ne
+  // vérifiait qu'agentId+action, donc cette permission TALENT aurait
+  // masqué la désactivation réelle de PROPOSE/COMPANY_OS.
+  test("AgentPermission active existe mais pour un AUTRE scope que la Delegation -> jamais couvrante (scope exact requis)", () => {
+    const resultat = estDelegationCouvrante(
+      delegationActive({ scope: "COMPANY_OS" }),
+      [permissionActive({ scope: "TALENT" })],
+      "agent-1",
+      { action: "EXECUTE", scope: "COMPANY_OS" }
+    );
+    expect(resultat.couvre).toBe(false);
+    expect(resultat.raison).toContain("désactivée");
+  });
 });
