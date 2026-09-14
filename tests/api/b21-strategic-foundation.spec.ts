@@ -69,7 +69,7 @@ test.describe("COMPANY ATLAS B21 — Strategic Intelligence Foundation (API)", (
     expect(autoriser.status()).toBe(403);
   });
 
-  test("cycle complet : Signal -> Analyse -> Recommandation -> Proposition -> Autorisation, tracé par un correlationId unique", async ({
+  test("cycle complet : Signal -> Analyse -> Recommandation -> Proposition, tracé par un correlationId unique (autorisation legacy fermée depuis B24 Lot C1 — voir tests/api/b24-lot-c1-close-legacy-authorization.spec.ts)", async ({
     request,
   }) => {
     await connecter(request, "admin-demo@example.com");
@@ -117,25 +117,26 @@ test.describe("COMPANY ATLAS B21 — Strategic Intelligence Foundation (API)", (
     const { id: proposalId, statut } = await propRes.json();
     expect(statut).toBe("PROPOSEE");
 
+    // B24 Lot C1 (14/09/2026) : le chemin legacy est désormais
+    // structurellement fermé — voir lib/strategic/propositions.ts,
+    // autoriserProposition, et tests/api/b24-lot-c1-close-legacy-authorization.spec.ts
+    // pour la couverture dédiée. Ce cycle s'arrête donc à PROPOSEE : la
+    // seule voie active pour une NOUVELLE autorisation est B22, via
+    // POST /api/strategic/propositions/[id]/request-authorization (B24 Lot B).
     const autoriserRes = await request.post(`/api/strategic/propositions/${proposalId}/autoriser`, {
       data: { scope: "étude comparative uniquement, périmètre TALENT", duree: "30 jours" },
     });
-    expect(autoriserRes.status(), await autoriserRes.text()).toBe(200);
+    expect(autoriserRes.status(), await autoriserRes.text()).toBe(403);
     const corpsAutorisation = await autoriserRes.json();
-    expect(corpsAutorisation.statut).toBe("AUTORISEE");
-    // L'autorisateur est TOUJOURS l'ADMIN de la session serveur, jamais une
-    // valeur fournie par l'appelant (aucun champ autorisateur n'est même
-    // accepté dans le corps de la requête, voir la route).
-    expect(corpsAutorisation.autorisateurEmail).toBe("admin-demo@example.com");
+    expect(corpsAutorisation.error).toContain("request-authorization");
 
     const lecture = await request.get(`/api/strategic/propositions?agentId=${agentId}`);
     const { propositions } = await lecture.json();
     const cible = propositions.find((p: { id: string }) => p.id === proposalId);
-    expect(cible.statut).toBe("AUTORISEE");
-    expect(cible.autorisation?.autorisateurEmail).toBe("admin-demo@example.com");
+    expect(cible.statut).toBe("PROPOSEE");
   });
 
-  test("une proposition déjà AUTORISEE ne peut jamais être ré-autorisée (aucune autorisation n'est réémise)", async ({
+  test("B24 Lot C1 : l'autorisation legacy directe est refusée inconditionnellement, même pour une proposition jamais encore autorisée (aucune autorisation n'est jamais créée par ce chemin)", async ({
     request,
   }) => {
     await connecter(request, "admin-demo@example.com");
@@ -162,20 +163,24 @@ test.describe("COMPANY ATLAS B21 — Strategic Intelligence Foundation (API)", (
     const premiere = await request.post(`/api/strategic/propositions/${proposalId}/autoriser`, {
       data: { scope: "test", duree: "7 jours" },
     });
-    expect(premiere.status()).toBe(200);
+    expect(premiere.status()).toBe(403);
 
     const seconde = await request.post(`/api/strategic/propositions/${proposalId}/autoriser`, {
       data: { scope: "tentative de réautorisation", duree: "1 jour" },
     });
-    expect(seconde.status()).toBe(400);
+    expect(seconde.status()).toBe(403);
     const erreur = await seconde.json();
-    expect(erreur.error).toContain("jamais réémise");
+    expect(erreur.error).toContain("request-authorization");
   });
 
-  test("l'autorisation exige scope et duree — refusée sans (aucune autorisation implicite)", async ({ request }) => {
+  test("l'autorisation legacy reste refusée même sur une proposition inexistante — aucune fuite d'information distinguant existence et fermeture structurelle", async ({
+    request,
+  }) => {
     await connecter(request, "admin-demo@example.com");
     const reponse = await request.post("/api/strategic/propositions/inexistant/autoriser", { data: {} });
-    expect(reponse.status()).toBe(400);
+    expect(reponse.status()).toBe(403);
+    const erreur = await reponse.json();
+    expect(erreur.error).toContain("request-authorization");
   });
 
   // B21.1 — STRATEGIC INTELLIGENCE HARDENING (13/09/2026). Ferme 3 lacunes

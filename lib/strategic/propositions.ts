@@ -1,6 +1,5 @@
 import { prisma } from "@/lib/prisma";
 import { nouveauCorrelationId } from "@/lib/security/events";
-import { enregistrerRapportAgent } from "@/lib/gouvernance/rapports";
 import { plafonnerTexteStrategique, PLAFOND_CHAMP_STRATEGIQUE, PLAFOND_COURT_STRATEGIQUE } from "./domain";
 
 // COMPANY ATLAS — B21 : STRATEGIC INTELLIGENCE FOUNDATION (13/09/2026).
@@ -20,10 +19,26 @@ import { plafonnerTexteStrategique, PLAFOND_CHAMP_STRATEGIQUE, PLAFOND_COURT_STR
 //   n'existe) : un agent ne peut donc structurellement jamais apparaître
 //   comme autorisateur. L'autorisateur est nécessairement un humain ADMIN
 //   distinct de l'agent proposant.
-// - `autoriserProposition` refuse toute proposition déjà AUTORISEE/
-//   REFUSEE/EXECUTEE/CONTROLEE (une autorisation n'est jamais réutilisée
-//   ni réémise) et exige scope + durée non vides (une autorisation
-//   scoped, conformément à la directive B21).
+// - B24 Lot C1 (14/09/2026) — FERMETURE STRUCTURELLE DU CHEMIN LEGACY :
+//   `autoriserProposition` est désormais TOUJOURS REFUSÉE, INCONDITIONNELLEMENT,
+//   pour toute NOUVELLE tentative d'autorisation — jamais seulement lorsqu'un
+//   StrategicAuthorizationLink existe déjà pour la proposition (une
+//   proposition qui n'en a encore aucun doit être refusée tout autant,
+//   sinon elle pourrait contourner B22 — Identity, Permission scope-exacte,
+//   Delegation, Commitment Lock, Risk, Human Necessity, Emergency Stop,
+//   Decision — en passant par ce chemin avant d'avoir jamais atteint B22).
+//   Ce module N'IMPLÉMENTE AUCUNE de ces vérifications lui-même (ce ne
+//   serait qu'un second Authorization Engine, hors périmètre B21) : la
+//   fermeture est purement STRUCTURELLE, jamais une règle métier dupliquée.
+//   B22 (lib/control-plane/authorization.ts, creerDemandeAutorisation, NON
+//   MODIFIÉ par ce lot) est désormais la SEULE autorité active pour toute
+//   nouvelle autorisation, via lib/strategic/authorization-request.ts
+//   (demanderAutorisationStrategique, POST .../request-authorization —
+//   strictement inchangé par ce lot). Aucune donnée historique n'est
+//   affectée : les StrategicAuthorization déjà créées et les propositions
+//   déjà au statut AUTORISEE restent telles quelles, en lecture seule —
+//   ce lot ferme uniquement la capacité d'en créer de NOUVELLES par ce
+//   chemin.
 // - `peutExecuter` est une fonction pure, testable sans base de données,
 //   qui indique seulement si le statut AUTORISEE est atteint — condition
 //   nécessaire avant toute exécution. Ce module N'EXÉCUTE RIEN lui-même et
@@ -70,6 +85,15 @@ export function estAutoAutorisationInterdite(params: { autorisateurEmail: string
   return valeur.length === 0 || valeur === params.agentIdProposant.trim().toLowerCase();
 }
 
+// B24 Lot C1 (14/09/2026) : chemin legacy structurellement fermé — voir
+// l'en-tête de ce fichier. `params` est conservé tel quel dans la
+// signature (compatibilité de l'appelant, app/api/strategic/propositions/[id]/autoriser/route.ts)
+// mais n'est plus lu : aucune vérification, aucune écriture Prisma,
+// aucune StrategicAuthorization n'est plus jamais créée par cette
+// fonction, quel que soit le contenu de `params` (proposition existante
+// ou non, statut, scope/durée, présence ou non d'un
+// StrategicAuthorizationLink). Le refus est le SEUL comportement possible
+// — pas une branche parmi d'autres.
 export async function autoriserProposition(params: {
   proposalId: string;
   autorisateurEmail: string;
@@ -78,52 +102,11 @@ export async function autoriserProposition(params: {
   budget?: string;
   limites?: string;
 }): Promise<{ ok: true; id: string } | { ok: false; erreur: string }> {
-  const proposition = await prisma.strategicActionProposal.findUnique({ where: { id: params.proposalId } });
-  if (!proposition) return { ok: false, erreur: "Proposition introuvable." };
-  if (proposition.statut !== "PROPOSEE" && proposition.statut !== "AUTORISATION_DEMANDEE") {
-    return { ok: false, erreur: `Proposition déjà au statut ${proposition.statut} — une autorisation n'est jamais réémise.` };
-  }
-  if (estAutoAutorisationInterdite({ autorisateurEmail: params.autorisateurEmail, agentIdProposant: proposition.agentId })) {
-    return { ok: false, erreur: "Autorisateur invalide — l'auto-autorisation est strictement interdite." };
-  }
-  if (params.scope.trim().length === 0 || params.duree.trim().length === 0) {
-    return { ok: false, erreur: "scope et duree sont requis — une autorisation doit toujours être scoped." };
-  }
-
-  try {
-    const correlationId = nouveauCorrelationId();
-    await prisma.$transaction([
-      prisma.strategicAuthorization.create({
-        data: {
-          correlationId,
-          proposalId: params.proposalId,
-          autorisateurEmail: params.autorisateurEmail,
-          scope: plafonnerTexteStrategique(params.scope, PLAFOND_COURT_STRATEGIQUE) ?? "",
-          duree: plafonnerTexteStrategique(params.duree, PLAFOND_COURT_STRATEGIQUE) ?? "",
-          budget: plafonnerTexteStrategique(params.budget, PLAFOND_COURT_STRATEGIQUE),
-          limites: plafonnerTexteStrategique(params.limites, PLAFOND_CHAMP_STRATEGIQUE),
-        },
-      }),
-      prisma.strategicActionProposal.update({ where: { id: params.proposalId }, data: { statut: "AUTORISEE" } }),
-    ]);
-
-    // Rapport best-effort vers le registre inter-agents existant
-    // (lib/gouvernance/rapports.ts, B18-FIX) — trace la décision humaine,
-    // jamais bloquant pour l'autorisation elle-même si l'écriture échoue.
-    await enregistrerRapportAgent({
-      correlationId,
-      agentId: proposition.agentId,
-      typeRapport: "autre",
-      objectif: "Autorisation humaine d'une StrategicActionProposal (B21).",
-      statut: "COMPLETE",
-      contexte: `proposalId=${params.proposalId}`,
-    });
-
-    return { ok: true, id: params.proposalId };
-  } catch (e) {
-    console.error("[strategic-propositions] échec d'écriture de l'autorisation stratégique", e);
-    return { ok: false, erreur: "Erreur interne lors de l'autorisation." };
-  }
+  return {
+    ok: false,
+    erreur:
+      "Autorisation directe B21 désactivée (B24 Lot C1) — toute nouvelle autorisation doit obligatoirement passer par B22 : POST /api/strategic/propositions/{id}/request-authorization.",
+  };
 }
 
 // Une action ne peut être marquée EXECUTEE que si une autorisation réelle

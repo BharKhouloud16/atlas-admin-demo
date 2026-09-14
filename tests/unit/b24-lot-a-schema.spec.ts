@@ -175,25 +175,28 @@ test.describe("COMPANY ATLAS B24 Lot A — StrategicAuthorizationLink (schéma u
     await prisma.auditEvent.delete({ where: { id: event.id } });
   });
 
-  test("Test 6 — aucune régression de comportement B21/B22 : autoriserProposition (B21) et creerDemandeAutorisation (B22) restent totalement indépendants et inchangés", async () => {
+  test("Test 6 — B22 (creerDemandeAutorisation) continue de fonctionner à l'identique, sans aucune connaissance de StrategicAuthorizationLink ni de B21 (B21 legacy fermé depuis B24 Lot C1, voir tests/api/b24-lot-c1-close-legacy-authorization.spec.ts)", async () => {
     const { proposalId, correlationId } = await creerPropositionDeTest();
 
-    // B21 : le chemin d'écriture directe StrategicAuthorization reste
-    // intact — Lot A ne l'a ni modifié ni câblé à StrategicAuthorizationLink.
+    // B21 (B24 Lot C1, 14/09/2026) : le chemin d'écriture directe
+    // StrategicAuthorization est désormais structurellement fermé —
+    // inconditionnellement refusé, plus jamais réémis pour aucune
+    // proposition. Ce test de schéma (Lot A) ne porte plus sur ce chemin ;
+    // voir tests/api/b24-lot-c1-close-legacy-authorization.spec.ts pour sa
+    // couverture dédiée.
     const resultat = await autoriserProposition({
       proposalId,
       autorisateurEmail: "admin-demo@example.com",
       scope: "test-b24-lot-a",
       duree: "1 jour",
     });
-    expect(resultat.ok).toBe(true);
+    expect(resultat.ok).toBe(false);
 
     const proposition = await prisma.strategicActionProposal.findUnique({ where: { id: proposalId } });
-    expect(proposition?.statut).toBe("AUTORISEE");
+    expect(proposition?.statut).toBe("PROPOSEE");
 
     // Zéro StrategicAuthorizationLink créé implicitement par ce chemin B21
-    // — les deux mécanismes restent non couplés dans ce lot (aucun
-    // comportement applicatif nouveau, conformément au périmètre Lot A).
+    // — toujours vrai, a fortiori maintenant que le chemin est fermé.
     const liens = await prisma.strategicAuthorizationLink.findMany({ where: { proposalId } });
     expect(liens.length).toBe(0);
 
