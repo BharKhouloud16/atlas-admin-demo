@@ -263,6 +263,10 @@ model AgentIdentity {
   permissions AgentPermission[] // B20 — voir modèle ci-dessous
   rapports RapportAgent[] // B18-FIX — voir modèle plus bas
   strategicPropositions StrategicActionProposal[] // B21 — voir modèle plus bas
+  decisions Decision[] // B22 — voir modèle plus bas
+  delegations Delegation[] // B22
+  authorizationRequests AuthorizationRequest[] // B22
+  auditEvents AuditEvent[] // B22
 
   @@index([statut])
 }
@@ -579,6 +583,366 @@ model StrategicAuthorization {
   createdAt DateTime @default(now())
 
   @@index([correlationId])
+}
+
+// ============================================================================
+// COMPANY ATLAS — B22 (14/09/2026) : AUTONOMY + DECISION + DELEGATION
+// CONTROL PLANE. Fondation uniquement (directive B22, section 2) : pose le
+// raisonnement (Decision/DecisionOption), l'octroi de pouvoir borné
+// (Delegation) et la porte d'autorisation (AuthorizationRequest), jamais un
+// moteur d'exécution universel — l'exécution réelle reste dans chaque
+// module métier (ex. lib/strategic/*), comme aujourd'hui.
+//
+// RÉUTILISE STRICTEMENT B19/B20 : AgentIdentity reste l'unique source de
+// vérité d'identité, AgentPermission l'unique source de vérité de
+// permission — aucun 5e agent, aucun second registre. Chaque agentId
+// ci-dessous est une FK vers AgentIdentity.id. Une Delegation ne peut
+// jamais accorder plus qu'une AgentPermission ACTIVE existante (vérifié à
+// la création ET à chaque évaluation d'AuthorizationRequest — jamais en
+// cache, voir lib/control-plane/*.ts).
+//
+// LIMITE ARCHITECTURALE CONNUE (documentée, pas introduite par B22) :
+// l'agentId porté par une Decision/Delegation/AuthorizationRequest est
+// choisi par un ADMIN authentifié — ce n'est PAS une authentification
+// agent réelle (aucune session/preuve cryptographique agent n'existe,
+// limite héritée B19/B20/B21). Une future authentification agent réelle
+// pourra remplacer la provenance de ce champ sans créer de nouvelle table
+// d'identité.
+//
+// RiskLevel : JAMAIS calculé automatiquement — toujours déclaré par un
+// humain (Delegation) ou un agent (AuthorizationRequest) avec justification
+// texte non vide (vérifié en code, même discipline que identifierRisqueManuel,
+// B13). UNKNOWN n'existe PAS dans cette échelle ordonnée (voir
+// EvidenceQuality pour l'état "preuve manquante", géré séparément).
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// Déterminé UNIQUEMENT côté serveur par le registre fermé
+// lib/control-plane/commitment.ts — jamais fourni par le client/agent.
+// Action inconnue du registre -> COMMITMENT par défaut (fail-closed),
+// jamais OBSERVATION.
+enum ActionClass {
+  OBSERVATION
+  INTERNAL_ACTION
+  EXTERNAL_ACTION
+  COMMITMENT
+}
+
+// L5/L6 existent pour compatibilité future — aucune route B22 ne peut les
+// accorder : toute AuthorizationRequest avec requestedAutonomyLevel > L4
+// est refusée (400) avant toute écriture.
+enum AutonomyLevel {
+  L0_OBSERVE
+  L1_ANALYZE
+  L2_RECOMMEND
+  L3_PREPARE
+  L4_EXECUTE_WITH_APPROVAL
+  L5_EXECUTE_WITH_GUARDRAILS
+  L6_AUTONOMOUS
+}
+
+// Purement informatif — jamais consulté par la logique de décision
+// d'autorisation (AuthorizationDecision ci-dessous). Aucun veto automatique
+// de l'image de marque contre le CEO (directive B22, section 10).
+enum BrandImpact {
+  POSITIVE
+  NEUTRAL
+  NEGATIVE
+  CRITICAL
+  UNKNOWN
+}
+
+// DENY réservé aux cas où une règle réelle interdit l'action (permission
+// absente/désactivée, agent inactif, délégation dépassée/expirée/révoquée,
+// emergency stop actif) — jamais une simple recommandation défavorable.
+enum AuthorizationDecision {
+  ALLOW
+  APPROVAL_REQUIRED
+  RESTRICT
+  DENY
+}
+
+// Purement explicatif/traçable (Why Engine) — ne remplace jamais
+// AuthorizationDecision, ne décide jamais rien par lui-même.
+enum HumanNecessityLevel {
+  H0
+  H1
+  H2
+  H3
+  H4
+}
+
+enum EmergencyStopScope {
+  GLOBAL
+  AGENT
+  ACTION_CLASS
+  CAPABILITY
+  INTEGRATION
+  DELEGATION
+  MISSION
+}
+
+// Ajout justifié (Phase 3-FIX, point 3) : nécessaire au matching
+// déterministe de calculerHumanNecessite (lib/control-plane/human-necessity.ts)
+// — un texte libre ne peut pas être filtré de façon fiable par une table de
+// règles fermée. N'est PAS un score, ne produit jamais seul un ALLOW.
+// UNKNOWN n'est jamais traité comme une preuve suffisante et augmente
+// mécaniquement le niveau de Human Necessity requis.
+enum EvidenceQuality {
+  VERIFIED
+  DECLARED
+  UNKNOWN
+}
+
+enum DecisionStatus {
+  OPEN
+  RECOMMENDED
+  CANCELLED
+}
+
+// Volontairement 2 valeurs seulement — "expirée" est un état CALCULÉ
+// (expiresAt < now()), jamais stocké : une 3e valeur nécessiterait une
+// tâche planifiée et risquerait de mentir tant qu'elle n'est pas passée.
+enum DelegationStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum AuthorizationRequestStatus {
+  PENDING
+  RESOLVED
+  EXPIRED
+  REVOKED
+}
+
+// Polymorphe par construction (directive B22, section 4) — AuditEvent ne
+// référence ces objets que par (objectType, objectId), jamais par une FK
+// stricte (Prisma ne supporte pas les FK polymorphes nativement).
+enum AuditObjectType {
+  DECISION
+  DECISION_OPTION
+  DELEGATION
+  AUTHORIZATION_REQUEST
+  EMERGENCY_STOP
+}
+
+// Le problème décisionnel. Ne possède AUCUN droit d'action — une
+// Decision ne modifie jamais rien hors d'elle-même et de ses options.
+model Decision {
+  id String @id @default(cuid())
+  correlationId String // validé via estCorrelationIdValide (lib/strategic/domain.ts) — ≤300 inchangé, >300 refusé (400), jamais tronqué
+
+  agentId String
+  agent AgentIdentity @relation(fields: [agentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  objective String
+  context String?
+
+  options DecisionOption[] @relation("DecisionOptions")
+  recommendedOptionId String?
+  recommendedOption DecisionOption? @relation("DecisionRecommendedOption", fields: [recommendedOptionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  confidence Float? // déclaratif uniquement (0.0-1.0, validé en code) — ne transforme jamais seul une décision en ALLOW
+  humanNecessity HumanNecessityLevel? // snapshot au moment de la recommandation — jamais copié vers AuthorizationRequest, toujours recalculé
+
+  status DecisionStatus @default(OPEN)
+
+  createdBy String // TOUJOURS session.email, jamais le corps de la requête
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  authorizationRequests AuthorizationRequest[]
+
+  @@index([agentId])
+  @@index([correlationId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// Une alternative parmi plusieurs pour une Decision. Dimensions
+// explicites, JAMAIS de score/rank calculé automatiquement (directive B22,
+// section 7/8) — un humain lit chaque dimension séparément.
+model DecisionOption {
+  id String @id @default(cuid())
+  correlationId String // toujours copié serveur depuis Decision.correlationId, jamais du body
+
+  decisionId String
+  decision Decision @relation("DecisionOptions", fields: [decisionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  decisionsRecommandant Decision[] @relation("DecisionRecommendedOption")
+
+  label String
+  description String
+
+  businessImpact String? // informatif, jamais un score
+  financialImpact String? // informatif, jamais un montant calculé (voir Delegation.maxAmount pour le seul champ numérique qui gate réellement)
+  strategicImpact String?
+  clientImpact String?
+  brandImpact BrandImpact? // informatif, jamais un veto (directive B22, section 10)
+
+  riskLevel RiskLevel? // déclaré + justifié, jamais calculé
+  riskJustification String? // requis en code si riskLevel non nul
+  reversibility String? // qualitatif libre — volontairement pas un enum supplémentaire (non demandé explicitement, voir Phase 3)
+  evidenceQuality EvidenceQuality @default(UNKNOWN) // jamais un null implicite (Charte F.1 : UNKNOWN toujours explicite)
+
+  createdAt DateTime @default(now())
+
+  @@index([decisionId])
+  @@index([riskLevel])
+  @@index([correlationId])
+}
+
+// Un pouvoir explicitement confié par le CEO (ADMIN) à un agent, dans un
+// périmètre défini — jamais automatique, jamais permanent. Ne peut JAMAIS
+// accorder plus qu'une AgentPermission ACTIVE existante (vérifié à la
+// création ET relu, jamais en cache, à chaque évaluation d'AuthorizationRequest
+// — voir lib/control-plane/delegations.ts).
+model Delegation {
+  id String @id @default(cuid())
+  correlationId String
+
+  agentId String
+  agent AgentIdentity @relation(fields: [agentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  action AgentPermissionAction // vocabulaire B20 réutilisé — aucun nouveau vocabulaire d'action
+  scope AgentPermissionScope // vocabulaire B20 réutilisé
+  resource String?
+  objective String
+  actionClass ActionClass
+
+  // NULL != illimité (directive B22/Phase 3-FIX, point 5) : NULL signifie
+  // "cette délégation ne couvre pas cette dimension", jamais "sans limite".
+  // Voir lib/control-plane/delegations.ts (estDelegationCouvrante).
+  maxAmount Float?
+  maxRiskLevel RiskLevel?
+  conditions String? // texte libre — volontairement pas un moteur de règles structuré
+
+  startsAt DateTime @default(now())
+  expiresAt DateTime // OBLIGATOIRE — aucune délégation permanente implicite
+  status DelegationStatus @default(ACTIVE)
+
+  createdBy String // TOUJOURS session.email, jamais le corps de la requête
+  revokedAt DateTime?
+  revokedBy String? // TOUJOURS session.email d'un ADMIN, jamais l'agent lui-même
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  authorizationRequests AuthorizationRequest[]
+
+  @@index([agentId])
+  @@index([status])
+  @@index([expiresAt])
+  @@index([correlationId])
+}
+
+// Modèle FUSIONNÉ (directive B22 : pas de AuthorizationDecision ni
+// HumanApproval séparés) — même pattern déjà en production que
+// PropositionSecurite (B16) : une seule ligne, statut + champs de
+// résolution inline, jamais réémise. Ne peut jamais dépasser AgentIdentity/
+// AgentPermission/Delegation/EmergencyStop (voir lib/control-plane/authorization.ts).
+model AuthorizationRequest {
+  id String @id @default(cuid())
+  correlationId String
+
+  agentId String
+  agent AgentIdentity @relation(fields: [agentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  action AgentPermissionAction
+  actionClass ActionClass // TOUJOURS recalculé serveur (lib/control-plane/commitment.ts) — jamais accepté du client
+  scope AgentPermissionScope
+  resource String?
+  objective String
+  reason String
+
+  riskLevel RiskLevel? // déclaré + justifié
+  riskJustification String?
+  amount Float? // montant demandé, uniquement si l'action porte un engagement financier — comparé à Delegation.maxAmount (NULL = jamais couvert, voir estDelegationCouvrante)
+  requestedAutonomyLevel AutonomyLevel // > L4 refusé (400) avant toute écriture — voir la route
+
+  decisionId String?
+  decisionRef Decision? @relation(fields: [decisionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  delegationId String?
+  delegation Delegation? @relation(fields: [delegationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  status AuthorizationRequestStatus @default(PENDING)
+  decision AuthorizationDecision? // verdict courant — système ("system") puis, si besoin, humain (session.email) ; même champ écrasé en place, jamais réémis après RESOLVED
+  decisionReason String? // requis en code si decision non nul
+  humanNecessity HumanNecessityLevel? // recalculé ici, jamais copié depuis Decision
+  decidedBy String? // "system" (évaluation automatique) ou session.email (résolution humaine) — jamais un agent
+  approvedBy String? // renseigné uniquement si la résolution humaine finale est ALLOW
+  approvedAt DateTime?
+
+  // OBLIGATOIRE, calculé serveur = requestedAt + 72h — jamais fourni par le
+  // client, jamais prolongé (Phase 3-FIX, point 5). Une nouvelle fenêtre
+  // exige une nouvelle AuthorizationRequest.
+  expiresAt DateTime
+
+  requestedAt DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([agentId])
+  @@index([status])
+  @@index([decisionId])
+  @@index([delegationId])
+  @@index([correlationId])
+  @@index([expiresAt])
+}
+
+// Mandat STRICT : trace uniquement le cycle de vie des 5 objets B22
+// ci-dessus. Ne remplace NI ne duplique RapportAgent (B18-FIX)/
+// EvenementSecurite (B16)/JournalActivite — chacun garde son domaine
+// exclusif (directive B22, section 14). Append-only : aucune route
+// PATCH/DELETE (même discipline que AgentIdentity/AgentPermission —
+// aucune mutation possible en dehors de la création).
+model AuditEvent {
+  id String @id @default(cuid())
+  correlationId String
+
+  objectType AuditObjectType
+  objectId String // volontairement PAS une FK — polymorphe par construction
+
+  action String // court, plafonné — ex. "created", "revoked", "decided:ALLOW"
+  decision AuthorizationDecision?
+  actor String // "system" ou session.email — jamais une prétention d'agent
+  agentId String?
+  agent AgentIdentity? @relation(fields: [agentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  reason String?
+  metadata Json? // jamais de secret/token/mot de passe — même discipline que EvenementSecurite.detail
+
+  timestamp DateTime @default(now())
+
+  @@index([objectType, objectId])
+  @@index([correlationId])
+  @@index([agentId])
+  @@index([timestamp])
+}
+
+// Arrêt d'urgence — prioritaire sur toute évaluation ou approbation
+// d'AuthorizationRequest, y compris une tentative humaine d'ALLOW.
+// Activation/levée réservées ADMIN, jamais un agent. "Actif" ⇔
+// liftedAt IS NULL — pas de champ status séparé (une seule source de
+// vérité, évite toute désynchronisation).
+model EmergencyStop {
+  id String @id @default(cuid())
+  correlationId String
+
+  scope EmergencyStopScope
+  targetId String? // requis en code si scope != GLOBAL (contrôle applicatif, pas une contrainte DB)
+  reason String
+
+  activatedBy String // TOUJOURS session.email d'un ADMIN, jamais un agent
+  activatedAt DateTime @default(now())
+  liftedBy String?
+  liftedAt DateTime?
+
+  @@index([scope, targetId])
+  @@index([correlationId])
+  @@index([liftedAt])
 }
 
 model Client {
