@@ -560,6 +560,7 @@ model StrategicActionProposal {
   createdAt DateTime @default(now())
 
   autorisation StrategicAuthorization?
+  authorizationLinks StrategicAuthorizationLink[]
 
   @@index([createdAt])
   @@index([agentId])
@@ -582,6 +583,53 @@ model StrategicAuthorization {
   dateAutorisation DateTime @default(now())
   createdAt DateTime @default(now())
 
+  @@index([correlationId])
+}
+
+// COMPANY ATLAS — B24 Lot A (14/09/2026) : fondation schéma uniquement pour
+// la future consolidation B21 → B22 (design verrouillé B24 Phase 2/2.1/2.2 —
+// audit read-only, aucune décision métier prise ici). Établit UNIQUEMENT la
+// relation historique StrategicActionProposal ↔ AuthorizationRequest.
+// AUCUN comportement applicatif nouveau dans ce lot (aucune route, aucun
+// flux de création, B21/B22/B23 strictement inchangés dans leur logique).
+//
+// Cardinalité 1 → N (StrategicActionProposal 1 → N StrategicAuthorizationLink)
+// : proposalId n'est PAS unique — une proposition peut accumuler plusieurs
+// demandes successives au fil du temps (EXPIRED, REVOKED, DENY, ALLOW...),
+// l'historique n'est jamais écrasé (directive B24 Phase 2.1, décision CEO 3).
+//
+// authorizationRequestId est une référence TEXTE, volontairement PAS une
+// relation/FK Prisma vers AuthorizationRequest (B22) — même discipline que
+// AuditEvent.objectId ("polymorphe par construction... jamais par une FK").
+// Objectif : AuthorizationRequest (B22) reste totalement générique et
+// indépendant de ses domaines consommateurs (directive B24 Phase 2.1,
+// décision CEO 2 — "ne pas ajouter de champ spécifique strategicProposalId
+// dans AuthorizationRequest, le consommateur B21 porte la relation").
+// @@unique([authorizationRequestId]) : une AuthorizationRequest ne peut être
+// liée qu'à une seule proposition (protection contre un lien frauduleux
+// vers l'AuthorizationRequest d'une autre proposition — B24 Phase 2.2,
+// section 3, question 9/11).
+//
+// AUCUN champ status/decision/authorizationStatus/pending/approved/rejected
+// ici, et AUCUN champ action/scope/risk/maxAutonomyLevel — interdiction
+// absolue de dupliquer l'état B22 (directive B24 Lot A, section 4).
+// L'état réel reste exclusivement AuthorizationRequest.status/.decision —
+// ce modèle établit uniquement la relation historique, jamais un second
+// registre d'état.
+model StrategicAuthorizationLink {
+  id String @id @default(cuid())
+  correlationId String
+
+  proposalId String
+  proposal StrategicActionProposal @relation(fields: [proposalId], references: [id])
+
+  authorizationRequestId String
+
+  createdAt DateTime @default(now())
+
+  @@unique([authorizationRequestId])
+  @@index([proposalId])
+  @@index([authorizationRequestId])
   @@index([correlationId])
 }
 
@@ -728,6 +776,12 @@ enum AuditObjectType {
   DELEGATION
   AUTHORIZATION_REQUEST
   EMERGENCY_STOP
+  // B24 Lot A (14/09/2026) : ajout schéma-only pour la future traçabilité
+  // B21 → B22 (design verrouillé B24 Phase 2.2, section 7 — Option B
+  // recommandée, usage natif du mécanisme polymorphe objectType/objectId
+  // déjà prévu par ce schéma). Aucun code n'émet encore cet objectType dans
+  // ce lot — valeur ajoutée seule, aucun comportement nouveau.
+  STRATEGIC_ACTION_PROPOSAL
 }
 
 // Le problème décisionnel. Ne possède AUCUN droit d'action — une
