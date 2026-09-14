@@ -32,6 +32,21 @@ const DUREE_EXPIRATION_MS = 72 * 60 * 60 * 1000;
 // documentée que StrategicProposalStatut.AUTORISATION_DEMANDEE en B21
 // (état déclaré, jamais atteint dans ce lot). Signalé explicitement plutôt
 // que silencieusement laissé sans mention.
+//
+// B24-FIX0 (audit B24 Phase 1, P0-1) : la permission COMPANY ATLAS est
+// agentId+action+SCOPE+ACTIVE (B20) — les deux vérifications de permission
+// de ce module (creerDemandeAutorisation à la création, approuverDemande à
+// la revalidation) utilisaient jusqu'ici possedePermissionActive() sans
+// scope (3 arguments), laissant une AgentPermission ACTIVE sur un AUTRE
+// scope masquer l'absence réelle de permission pour le scope demandé —
+// exactement le bug déjà corrigé par B23-FIX1 dans estDelegationCouvrante
+// et calculerPlafondAutonomie, mais jamais propagé ici, l'autorité
+// d'autorisation réelle. Corrigé par le 4e argument scope désormais
+// systématique aux deux points de contrôle. Ne modifie ni ne réintroduit
+// la distinction B22-FIX2 (délégation insuffisante en montant/risque ≠
+// permission/scope invalide) : DELEGATION reste géré séparément ci-dessous,
+// jamais bloquant par lui-même — seule la correspondance agentId+action+
+// scope+ACTIVE de l'AgentPermission elle-même est concernée par ce correctif.
 
 export async function creerDemandeAutorisation(params: {
   correlationId: string;
@@ -58,7 +73,14 @@ export async function creerDemandeAutorisation(params: {
   const actionClass = classifierAction(params.action);
 
   const permissions = await listerPermissionsAgent();
-  const permissionActive = possedePermissionActive(permissions, params.agentId, params.action);
+  // B24-FIX0 (audit B24 Phase 1, P0-1) : la permission COMPANY ATLAS est
+  // agentId+action+SCOPE+ACTIVE (B20) — vérifiée ici en scope exact via le
+  // 4e argument de possedePermissionActive (B23-FIX1), jamais seulement
+  // agentId+action. Sans ce scope, une AgentPermission ACTIVE pour ce même
+  // agent/action mais un AUTRE scope aurait pu faire croire à tort que la
+  // demande est couverte (ex. PROPOSE/TALENT masquant l'absence réelle de
+  // PROPOSE/SECURITY).
+  const permissionActive = possedePermissionActive(permissions, params.agentId, params.action, params.scope);
 
   const arretUrgence = await estArreteUrgenceActif({
     agentId: params.agentId,
@@ -236,10 +258,15 @@ export async function approuverDemande(params: {
     }
 
     const permissionsActuelles = await listerPermissionsAgent();
-    if (!possedePermissionActive(permissionsActuelles, demande.agentId, demande.action)) {
+    // B24-FIX0 (audit B24 Phase 1, P0-1) : même correctif qu'à la création
+    // — revalidation en scope exact (demande.scope), jamais seulement
+    // agentId+action. Une permission désactivée sur le scope réellement
+    // demandé mais encore active sur un AUTRE scope ne doit jamais laisser
+    // passer une approbation humaine ALLOW.
+    if (!possedePermissionActive(permissionsActuelles, demande.agentId, demande.action, demande.scope)) {
       return {
         ok: false,
-        erreur: "Aucune AgentPermission ACTIVE ne correspond plus à cet agent/action — revalidée au moment de l'approbation, autorisation refusée.",
+        erreur: "Aucune AgentPermission ACTIVE ne correspond plus à cet agent/action/scope — revalidée au moment de l'approbation, autorisation refusée.",
         code: 409,
       };
     }
