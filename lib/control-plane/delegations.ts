@@ -139,8 +139,14 @@ export function estDelegationCouvrante(
   if (delegation.action !== contexte.action || delegation.scope !== contexte.scope) {
     return { couvre: false, montantDepasse: false, risqueDepasse: false, raison: "Delegation hors scope/action demandés." };
   }
-  if (!possedePermissionActive(permissions, agentId, delegation.action)) {
-    return { couvre: false, montantDepasse: false, risqueDepasse: false, raison: "AgentPermission sous-jacente désactivée depuis l'octroi." };
+  // B23-FIX1 (audit humain PR #9) : revalidation SCOPE-EXACTE, pas
+  // seulement agentId+action — une permission ACTIVE pour ce même agent
+  // et cette même action mais un AUTRE scope ne doit jamais faire croire
+  // qu'une délégation reste couverte. Sans le 4e argument `scope`, une
+  // permission PROPOSE/SECURITY encore active aurait pu masquer la
+  // désactivation réelle de PROPOSE/TALENT pour une Delegation TALENT.
+  if (!possedePermissionActive(permissions, agentId, delegation.action, delegation.scope)) {
+    return { couvre: false, montantDepasse: false, risqueDepasse: false, raison: "AgentPermission sous-jacente désactivée depuis l'octroi (agentId+action+scope)." };
   }
 
   // NULL != illimité : une dimension déclarée dans la requête mais absente

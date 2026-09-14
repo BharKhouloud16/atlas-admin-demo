@@ -2,6 +2,7 @@ import { estAgentActif, type AgentIdentity } from "@/lib/agents/identity";
 import {
   possedePermissionActive,
   estAgentPermissionActionValide,
+  estAgentPermissionScopeValide,
   type AgentPermission,
   type AgentPermissionActionValeur,
   type AgentPermissionScopeValeur,
@@ -63,6 +64,18 @@ import type { Delegation } from "@prisma/client";
 // consommant des données pré-chargées, jamais des fonctions qui vont
 // chercher elles-mêmes ces données.
 //
+// B23-FIX1 (audit humain PR #9) : la permission COMPANY ATLAS est
+// agentId+action+SCOPE+ACTIVE, jamais seulement agentId+action+ACTIVE —
+// vérifié désormais exactement, via possedePermissionActive() étendue en
+// B20 d'un 4e paramètre `scope` optionnel (rétrocompatible, aucun
+// appelant existant affecté), et propagé à estDelegationCouvrante (B22).
+// De plus, une valeur runtime EXPLICITEMENT fournie mais INVALIDE
+// (riskLevel/evidenceQuality/scope hors du vocabulaire fermé — donnée
+// malformée possible depuis une API externe, TypeScript ne protégeant
+// que la compilation) n'est JAMAIS traitée comme une absence de valeur :
+// elle obtient toujours le plafond le plus restrictif, jamais L4 par
+// défaut (voir PLAFOND_RUNTIME_INVALIDE ci-dessous).
+//
 // DÉLÉGATION INSUFFISANTE ≠ DÉCISION HUMAINE IMPOSSIBLE (B22-FIX2) :
 // une Delegation absente, expirée, révoquée ou insuffisante en montant/
 // risque réduit uniquement le plafond d'autonomie AUTOMATIQUE calculé
@@ -121,6 +134,18 @@ const PLAFOND_PAR_ACTION_CLASS: Record<ActionClassValeur, AutonomyLevelValeur> =
 // l'exécution automatique est écartée.
 const PLAFOND_DELEGATION_INSUFFISANTE: AutonomyLevelValeur = "L1_ANALYZE";
 
+// B23-FIX1 (audit humain PR #9, correction P1 — runtime fail-closed) :
+// une valeur runtime EXPLICITEMENT fournie mais hors du vocabulaire fermé
+// (riskLevel/evidenceQuality malformés, ex. depuis une API externe) ne
+// doit JAMAIS être traitée comme une absence de valeur — TypeScript ne
+// protège que la compilation, pas une donnée réellement reçue à
+// l'exécution. Distincte de PLAFOND_GOUVERNANCE (neutre, utilisé
+// uniquement en l'absence RÉELLE de valeur) : une valeur invalide obtient
+// toujours le plafond le plus restrictif de la table concernée, jamais
+// L4 par défaut. Réutilise le même plafond que UNKNOWN/CRITICAL plutôt
+// que d'inventer une nouvelle valeur/enum non nécessaire.
+const PLAFOND_RUNTIME_INVALIDE: AutonomyLevelValeur = "L1_ANALYZE";
+
 function minimum(...niveaux: AutonomyLevelValeur[]): AutonomyLevelValeur {
   return niveaux.reduce((plusRestrictif, courant) =>
     AUTONOMY_RANKS[courant] < AUTONOMY_RANKS[plusRestrictif] ? courant : plusRestrictif
@@ -176,7 +201,12 @@ export type ParametresPlafondAutonomie = {
   // classifierAction(action: unknown), le fail-closed doit s'appliquer
   // même à une entrée malformée.
   action: unknown;
-  scope: AgentPermissionScopeValeur;
+  // Valeur brute, jamais présupposée valide — même discipline que
+  // `action` ci-dessus (B23-FIX1, correction P1) : TypeScript ne protège
+  // pas contre une donnée malformée reçue à l'exécution (API, couche
+  // externe). Un scope invalide ne doit jamais être considéré comme une
+  // permission valide.
+  scope: unknown;
   // Déjà relues par l'appelant (ex. listerPermissionsAgent()) — jamais
   // une requête faite par cette fonction.
   permissions: Pick<AgentPermission, "agentId" | "action" | "scope" | "statut">[];
@@ -210,22 +240,36 @@ export function calculerPlafondAutonomie(params: ParametresPlafondAutonomie): Ev
         }
   );
 
-  // ACTION / PERMISSION — estAgentPermissionActionValide() +
-  // possedePermissionActive() réutilisées telles quelles (B20). Une
-  // action invalide/inconnue ne peut structurellement correspondre à
-  // aucune permission : fail-closed automatique, pas de cas particulier.
+  // ACTION / SCOPE / PERMISSION — estAgentPermissionActionValide()/
+  // estAgentPermissionScopeValide()/possedePermissionActive() réutilisées
+  // telles quelles (B20). Une action OU un scope invalide/inconnu ne peut
+  // structurellement correspondre à aucune permission réelle : fail-closed
+  // automatique, pas de cas particulier. B23-FIX1 (audit humain PR #9,
+  // correction P0) : la permission COMPANY ATLAS est définie par
+  // agentId+action+scope+ACTIVE — le scope est désormais vérifié
+  // EXACTEMENT (4e argument de possedePermissionActive, B20), jamais
+  // seulement agentId+action.
   const actionTypee: AgentPermissionActionValeur | null = estAgentPermissionActionValide(params.action)
     ? params.action
     : null;
-  const permissionActive = actionTypee !== null && possedePermissionActive(params.permissions, params.agentId, actionTypee);
+  const scopeTypee: AgentPermissionScopeValeur | null = estAgentPermissionScopeValide(params.scope)
+    ? params.scope
+    : null;
+  const permissionActive =
+    actionTypee !== null &&
+    scopeTypee !== null &&
+    possedePermissionActive(params.permissions, params.agentId, actionTypee, scopeTypee);
   reasons.push(
     permissionActive
-      ? { dimension: "PERMISSION", plafond: PLAFOND_GOUVERNANCE, bloquant: false, detail: "AgentPermission ACTIVE pour cet agent/action (B20)." }
+      ? { dimension: "PERMISSION", plafond: PLAFOND_GOUVERNANCE, bloquant: false, detail: "AgentPermission ACTIVE pour cet agent/action/scope exacts (B20)." }
       : {
           dimension: "PERMISSION",
           plafond: null,
           bloquant: true,
-          detail: "Aucune AgentPermission ACTIVE pour cet agent/action (B20).",
+          detail:
+            scopeTypee === null
+              ? "scope invalide/inconnu — ne peut jamais correspondre à une AgentPermission valide (fail-closed)."
+              : "Aucune AgentPermission ACTIVE pour cet agent/action/scope exacts (B20).",
         }
   );
 
@@ -260,8 +304,17 @@ export function calculerPlafondAutonomie(params: ParametresPlafondAutonomie): Ev
     detail: `Action classée ${actionClass} par classifierAction() — un COMMITMENT ne devient jamais une autonomie libre d'exécution.`,
   });
 
-  // RISK — table fermée, jamais recalculée.
-  if (params.riskLevel !== undefined && params.riskLevel !== null && estRiskLevelValide(params.riskLevel)) {
+  // RISK — table fermée, jamais recalculée. B23-FIX1 (correction P1,
+  // runtime fail-closed) : une valeur ABSENTE (undefined/null, aucun
+  // risque déclaré) et une valeur PRÉSENTE MAIS INVALIDE (hors du
+  // vocabulaire fermé — donnée malformée possible depuis une API/couche
+  // externe) sont désormais distinguées explicitement : seule l'absence
+  // réelle reste neutre (PLAFOND_GOUVERNANCE) ; une valeur fournie mais
+  // invalide n'est JAMAIS traitée comme une absence — elle obtient
+  // PLAFOND_RUNTIME_INVALIDE (fail-closed), jamais L4 par défaut.
+  if (params.riskLevel === undefined || params.riskLevel === null) {
+    reasons.push({ dimension: "RISK", plafond: PLAFOND_GOUVERNANCE, bloquant: false, detail: "Aucun risque déclaré." });
+  } else if (estRiskLevelValide(params.riskLevel)) {
     reasons.push({
       dimension: "RISK",
       plafond: PLAFOND_PAR_RISQUE[params.riskLevel],
@@ -269,11 +322,19 @@ export function calculerPlafondAutonomie(params: ParametresPlafondAutonomie): Ev
       detail: `Risque déclaré ${params.riskLevel} — jamais recalculé, table fermée.`,
     });
   } else {
-    reasons.push({ dimension: "RISK", plafond: PLAFOND_GOUVERNANCE, bloquant: false, detail: "Aucun risque déclaré." });
+    reasons.push({
+      dimension: "RISK",
+      plafond: PLAFOND_RUNTIME_INVALIDE,
+      bloquant: false,
+      detail: "riskLevel fourni mais hors du vocabulaire fermé (valeur runtime invalide) — jamais traité comme une absence de risque, fail-closed.",
+    });
   }
 
-  // EVIDENCE — UNKNOWN jamais transformé en certitude.
-  if (params.evidenceQuality !== undefined && params.evidenceQuality !== null && estEvidenceQualityValide(params.evidenceQuality)) {
+  // EVIDENCE — UNKNOWN jamais transformé en certitude. Même distinction
+  // absence/invalide que RISK ci-dessus (B23-FIX1, correction P1).
+  if (params.evidenceQuality === undefined || params.evidenceQuality === null) {
+    reasons.push({ dimension: "EVIDENCE", plafond: PLAFOND_GOUVERNANCE, bloquant: false, detail: "Aucune qualité de preuve déclarée." });
+  } else if (estEvidenceQualityValide(params.evidenceQuality)) {
     reasons.push({
       dimension: "EVIDENCE",
       plafond: PLAFOND_PAR_EVIDENCE[params.evidenceQuality],
@@ -281,7 +342,12 @@ export function calculerPlafondAutonomie(params: ParametresPlafondAutonomie): Ev
       detail: `Qualité de preuve ${params.evidenceQuality} — UNKNOWN n'est jamais traité comme une preuve suffisante.`,
     });
   } else {
-    reasons.push({ dimension: "EVIDENCE", plafond: PLAFOND_GOUVERNANCE, bloquant: false, detail: "Aucune qualité de preuve déclarée." });
+    reasons.push({
+      dimension: "EVIDENCE",
+      plafond: PLAFOND_RUNTIME_INVALIDE,
+      bloquant: false,
+      detail: "evidenceQuality fourni mais hors du vocabulaire fermé (valeur runtime invalide) — jamais traité comme une absence de preuve, fail-closed.",
+    });
   }
 
   // DELEGATION — estDelegationCouvrante() réutilisée telle quelle. Une
@@ -300,10 +366,10 @@ export function calculerPlafondAutonomie(params: ParametresPlafondAutonomie): Ev
   let montantDepasse = false;
   let risqueDepasseFlag = false;
 
-  if (actionTypee !== null && delegationDeCetAgent) {
+  if (actionTypee !== null && scopeTypee !== null && delegationDeCetAgent) {
     const couverture = estDelegationCouvrante(delegationDeCetAgent, params.permissions, params.agentId, {
       action: actionTypee,
-      scope: params.scope,
+      scope: scopeTypee,
       montantDemande: params.montantDemande ?? null,
       risqueDemande: params.riskLevel ?? null,
     });

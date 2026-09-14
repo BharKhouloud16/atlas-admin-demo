@@ -367,4 +367,159 @@ test.describe("COMPANY ATLAS B23 Lot 1 — Autonomy Ceiling (calculerPlafondAuto
     );
     expect(resultat.humanNecessity).toBe("H4");
   });
+
+  // ==========================================================================
+  // B23-FIX1 (audit humain PR #9) — Correction P0 : Permission + scope
+  // exacts (agentId + action + scope + ACTIVE), jamais seulement
+  // agentId + action.
+
+  test("B23-FIX1 P0 : agent PROPOSE+TALENT ACTIVE demandant PROPOSE+TALENT -> accepté, PERMISSION non bloquante", () => {
+    const resultat = calculerPlafondAutonomie(
+      paramsBase({ action: "PROPOSE", scope: "TALENT", permissions: permissionsAgentActif("agent-1", "TALENT") })
+    );
+    expect(resultat.blocked).toBe(false);
+    const raison = resultat.reasons.find((r) => r.dimension === "PERMISSION");
+    expect(raison?.bloquant).toBe(false);
+    expect(raison?.plafond).toBe("L4_EXECUTE_WITH_APPROVAL");
+  });
+
+  test("B23-FIX1 P0 : même agent (permission ACTIVE seulement en scope TALENT) demandant PROPOSE+SECURITY -> blocked (permission insuffisante, hors scope)", () => {
+    const resultat = calculerPlafondAutonomie(
+      paramsBase({ action: "PROPOSE", scope: "SECURITY", permissions: permissionsAgentActif("agent-1", "TALENT") })
+    );
+    expect(resultat.blocked).toBe(true);
+    expect(resultat.allowedForEvaluation).toBe(false);
+    expect(resultat.autonomyCeiling).toBe("L0_OBSERVE");
+    const raison = resultat.reasons.find((r) => r.dimension === "PERMISSION");
+    expect(raison?.bloquant).toBe(true);
+    expect(raison?.plafond).toBeNull();
+  });
+
+  test("B23-FIX1 P0 : permission DISABLED pour cet agent/action/scope exacts -> jamais considérée active, blocked", () => {
+    const resultat = calculerPlafondAutonomie(
+      paramsBase({
+        action: "PROPOSE",
+        scope: "TALENT",
+        permissions: [{ agentId: "agent-1", action: "PROPOSE", scope: "TALENT", statut: "DISABLED" }],
+      })
+    );
+    expect(resultat.blocked).toBe(true);
+    expect(resultat.reasons.find((r) => r.dimension === "PERMISSION")?.bloquant).toBe(true);
+  });
+
+  test("B23-FIX1 P0 : scope invalide/inconnu -> jamais une autorisation implicite, blocked (fail-closed, jamais une correspondance par défaut)", () => {
+    const resultat = calculerPlafondAutonomie(paramsBase({ scope: "SUPER_GLOBAL_SCOPE" }));
+    expect(resultat.blocked).toBe(true);
+    const raison = resultat.reasons.find((r) => r.dimension === "PERMISSION");
+    expect(raison?.bloquant).toBe(true);
+    expect(raison?.detail).toContain("scope invalide");
+  });
+
+  test("B23-FIX1 P0 : scope valide et correspondant -> aucune restriction implicite liée au scope lui-même", () => {
+    const resultat = calculerPlafondAutonomie(paramsBase({ action: "READ", scope: "TALENT" }));
+    expect(resultat.blocked).toBe(false);
+    expect(resultat.reasons.find((r) => r.dimension === "PERMISSION")?.bloquant).toBe(false);
+  });
+
+  test("B23-FIX1 P0 : Delegation SECURITY non couverte quand l'agent ne détient que la permission TALENT (scope exact requis, estDelegationCouvrante)", () => {
+    const resultat = calculerPlafondAutonomie(
+      paramsBase({
+        action: "PROPOSE",
+        scope: "SECURITY",
+        permissions: permissionsAgentActif("agent-1", "TALENT"),
+        delegation: delegationFixture({ scope: "SECURITY", maxAmount: 5000, maxRiskLevel: "HIGH" }),
+        montantDemande: 100,
+      })
+    );
+    // La permission SECURITY est absente -> bloqué au niveau PERMISSION.
+    expect(resultat.blocked).toBe(true);
+    // Et la dimension DELEGATION elle-même ne considère jamais cette
+    // Delegation comme couvrante : la permission sous-jacente exacte
+    // (agentId+action+SECURITY+ACTIVE) est absente.
+    const raisonDelegation = resultat.reasons.find((r) => r.dimension === "DELEGATION");
+    expect(raisonDelegation?.plafond).toBe("L1_ANALYZE");
+    expect(raisonDelegation?.detail).toContain("désactivée");
+  });
+
+  test("B23-FIX1 P0 : délégation insuffisante (montant dépassé) reste jamais bloquante quand Identity/Permission/Emergency Stop sont valides (B22-FIX2 non réintroduit)", () => {
+    const resultat = calculerPlafondAutonomie(
+      paramsBase({
+        action: "PROPOSE",
+        scope: "TALENT",
+        permissions: permissionsAgentActif("agent-1", "TALENT"),
+        delegation: delegationFixture({ scope: "TALENT", maxAmount: 10 }),
+        montantDemande: 999999,
+      })
+    );
+    expect(resultat.blocked).toBe(false);
+    expect(resultat.allowedForEvaluation).toBe(true);
+    const raisonDelegation = resultat.reasons.find((r) => r.dimension === "DELEGATION");
+    expect(raisonDelegation?.bloquant).toBe(false);
+    expect(raisonDelegation?.plafond).toBe("L1_ANALYZE");
+  });
+
+  // ==========================================================================
+  // B23-FIX1 (audit humain PR #9) — Correction P1 : runtime fail-closed.
+  // Une valeur EXPLICITEMENT fournie mais hors du vocabulaire fermé ne
+  // doit jamais être traitée comme une absence de valeur (jamais L4 par
+  // défaut) — comportement distinct de l'absence réelle (undefined/null).
+
+  test("B23-FIX1 P1 : riskLevel LOW/MEDIUM/HIGH/CRITICAL -> comportement inchangé (non-régression)", () => {
+    const attendus: Record<string, string> = {
+      LOW: "L4_EXECUTE_WITH_APPROVAL",
+      MEDIUM: "L3_PREPARE",
+      HIGH: "L2_RECOMMEND",
+      CRITICAL: "L1_ANALYZE",
+    };
+    for (const [risque, plafondAttendu] of Object.entries(attendus)) {
+      const resultat = calculerPlafondAutonomie(paramsBase({ action: "READ", riskLevel: risque as never }));
+      expect(resultat.reasons.find((r) => r.dimension === "RISK")?.plafond).toBe(plafondAttendu);
+    }
+  });
+
+  test("B23-FIX1 P1 : riskLevel invalide (hors vocabulaire fermé) -> fail-closed, jamais L4 par défaut, jamais bloquant", () => {
+    const resultat = calculerPlafondAutonomie(paramsBase({ action: "READ", riskLevel: "SUPER_DANGEROUS" as never }));
+    const raison = resultat.reasons.find((r) => r.dimension === "RISK");
+    expect(raison?.plafond).toBe("L1_ANALYZE");
+    expect(raison?.plafond).not.toBe("L4_EXECUTE_WITH_APPROVAL");
+    expect(raison?.bloquant).toBe(false);
+    expect(resultat.autonomyCeiling).toBe("L1_ANALYZE");
+    expect(resultat.blocked).toBe(false);
+  });
+
+  test("B23-FIX1 P1 : evidenceQuality VERIFIED/UNKNOWN -> comportement inchangé (non-régression)", () => {
+    const resultatVerifie = calculerPlafondAutonomie(paramsBase({ action: "READ", evidenceQuality: "VERIFIED" }));
+    expect(resultatVerifie.reasons.find((r) => r.dimension === "EVIDENCE")?.plafond).toBe("L4_EXECUTE_WITH_APPROVAL");
+
+    const resultatInconnu = calculerPlafondAutonomie(paramsBase({ action: "READ", evidenceQuality: "UNKNOWN" }));
+    expect(resultatInconnu.reasons.find((r) => r.dimension === "EVIDENCE")?.plafond).toBe("L1_ANALYZE");
+  });
+
+  test("B23-FIX1 P1 : evidenceQuality invalide (hors vocabulaire fermé) -> fail-closed, jamais L4 par défaut, jamais bloquant", () => {
+    const resultat = calculerPlafondAutonomie(paramsBase({ action: "READ", evidenceQuality: "TOTALLY_SURE" as never }));
+    const raison = resultat.reasons.find((r) => r.dimension === "EVIDENCE");
+    expect(raison?.plafond).toBe("L1_ANALYZE");
+    expect(raison?.plafond).not.toBe("L4_EXECUTE_WITH_APPROVAL");
+    expect(raison?.bloquant).toBe(false);
+    expect(resultat.autonomyCeiling).toBe("L1_ANALYZE");
+    expect(resultat.blocked).toBe(false);
+  });
+
+  test("B23-FIX1 P1 : riskLevel/evidenceQuality réellement absents (undefined) restent neutres — jamais confondus avec une valeur invalide", () => {
+    const resultat = calculerPlafondAutonomie(
+      paramsBase({ action: "READ", riskLevel: undefined, evidenceQuality: undefined })
+    );
+    expect(resultat.reasons.find((r) => r.dimension === "RISK")?.plafond).toBe("L4_EXECUTE_WITH_APPROVAL");
+    expect(resultat.reasons.find((r) => r.dimension === "EVIDENCE")?.plafond).toBe("L4_EXECUTE_WITH_APPROVAL");
+  });
+
+  test("B23-FIX1 : combinaison riskLevel invalide + scope invalide -> le résultat reste le plus restrictif applicable (MIN strict), jamais L4", () => {
+    const resultat = calculerPlafondAutonomie(
+      paramsBase({ action: "READ", scope: "NOT_A_REAL_SCOPE", riskLevel: "MEGA_RISK" as never })
+    );
+    expect(resultat.blocked).toBe(true);
+    expect(resultat.autonomyCeiling).toBe("L0_OBSERVE");
+    expect(resultat.reasons.find((r) => r.dimension === "PERMISSION")?.bloquant).toBe(true);
+    expect(resultat.reasons.find((r) => r.dimension === "RISK")?.plafond).toBe("L1_ANALYZE");
+  });
 });

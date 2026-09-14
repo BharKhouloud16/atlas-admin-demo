@@ -84,4 +84,25 @@ test.describe("COMPANY ATLAS B20 — Permission Registry (fonctions pures)", () 
     const permissions = [{ agentId: "agent-atlas-talent", action: "READ" as const, statut: "ACTIVE" as const }];
     expect(possedePermissionActive(permissions, "agent-atlas-talent", "PROPOSE")).toBe(false);
   });
+
+  // B23-FIX1 (audit humain PR #9, correction P0) : le modèle COMPANY ATLAS
+  // est agentId+action+SCOPE+ACTIVE — le 4e argument optionnel `scope`
+  // rend cette correspondance stricte. Sans lui (3 arguments), le
+  // comportement ci-dessus reste inchangé (rétrocompatibilité vérifiée par
+  // les tests précédents) ; avec lui, une permission active pour un AUTRE
+  // scope ne doit jamais être considérée comme une autorisation.
+  test("possedePermissionActive (4e argument scope) : PROPOSE+TALENT ACTIVE n'autorise jamais PROPOSE+SECURITY", () => {
+    const permissions = [
+      { agentId: "agent-atlas-talent", action: "PROPOSE" as const, scope: "TALENT" as const, statut: "ACTIVE" as const },
+    ];
+    expect(possedePermissionActive(permissions, "agent-atlas-talent", "PROPOSE", "TALENT")).toBe(true);
+    expect(possedePermissionActive(permissions, "agent-atlas-talent", "PROPOSE", "SECURITY")).toBe(false);
+  });
+
+  test("possedePermissionActive (4e argument scope) : refuse une permission DISABLED même avec un scope exact", () => {
+    const permissions = [
+      { agentId: "agent-atlas-talent", action: "PROPOSE" as const, scope: "TALENT" as const, statut: "DISABLED" as const },
+    ];
+    expect(possedePermissionActive(permissions, "agent-atlas-talent", "PROPOSE", "TALENT")).toBe(false);
+  });
 });

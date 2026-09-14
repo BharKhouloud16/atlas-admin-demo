@@ -94,10 +94,45 @@ export async function listerPermissionsAgent(): Promise<AgentPermission[]> {
 // Utilise par lib/strategic/propositions.ts pour verifier qu'un agent
 // possede la permission PROPOSE avant de creer une StrategicActionProposal
 // en son nom — sans jamais contourner AgentPermission.
+//
+// B23-FIX1 (audit humain PR #9) : le modele COMPANY ATLAS definit une
+// permission par agentId + action + scope + statut ACTIVE — un appel a 3
+// arguments (sans scope) ne verifiait jusque-la que agentId + action +
+// statut, ce qui est insuffisant partout ou le scope compte reellement
+// (B23, et estDelegationCouvrante en B22). Corrige par un 4e parametre
+// OPTIONNEL plutot qu'une nouvelle fonction ou une nouvelle source de
+// verite : quand `scope` est fourni, la correspondance devient stricte
+// (agentId + action + scope + ACTIVE) ; quand il est omis, le
+// comportement reste EXACTEMENT celui d'avant (agentId + action + ACTIVE)
+// — aucun appelant existant (B21.1 lib/strategic/propositions.ts, B22
+// lib/control-plane/authorization.ts, creerDelegation) n'est affecte.
+// Deux signatures (surcharges) plutot qu'un cast non-verifie : un appelant
+// qui fournit `scope` doit statiquement fournir des AgentPermission qui le
+// portent, un appelant qui ne le fournit pas garde le typage minimal
+// existant (utilise notamment par tests/unit/agent-permissions.spec.ts,
+// dont les fixtures ne portent pas de scope).
 export function possedePermissionActive(
   permissions: Pick<AgentPermission, "agentId" | "action" | "statut">[],
   agentId: string,
   action: AgentPermissionActionValeur
+): boolean;
+export function possedePermissionActive(
+  permissions: Pick<AgentPermission, "agentId" | "action" | "scope" | "statut">[],
+  agentId: string,
+  action: AgentPermissionActionValeur,
+  scope: AgentPermissionScopeValeur
+): boolean;
+export function possedePermissionActive(
+  permissions:
+    | Pick<AgentPermission, "agentId" | "action" | "statut">[]
+    | Pick<AgentPermission, "agentId" | "action" | "scope" | "statut">[],
+  agentId: string,
+  action: AgentPermissionActionValeur,
+  scope?: AgentPermissionScopeValeur
 ): boolean {
-  return permissions.some((p) => p.agentId === agentId && p.action === action && estPermissionActive(p));
+  return permissions.some((p) => {
+    if (!(p.agentId === agentId && p.action === action && estPermissionActive(p))) return false;
+    if (scope === undefined) return true;
+    return "scope" in p && p.scope === scope;
+  });
 }
