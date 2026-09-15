@@ -1,305 +1,165 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { bleu } from "@/lib/theme";
-import { libelleMois, type StatutCra } from "@/lib/feuilles-de-temps";
-import type { Realisation } from "@/app/api/ingenieur/realisations/route";
-import type { BadgeConfiance } from "@/lib/scoring";
+import Link from "next/link";
+import { grisTexte, bleu } from "@/lib/theme";
+import { Card, Section, EmptyState, Badge } from "@/components/client/primitives";
+import type { FeuilleClient } from "@/components/client/FeuillesATraiter";
+import type { MissionEvaluable } from "@/components/client/EvaluationsAFaire";
 
-type ProfilVitrine = {
-  id: string;
-  nom: string;
-  prenom: string | null;
-  realisations: Realisation[] | null;
-  badge: BadgeConfiance;
-  aVideo: boolean;
-};
+// COMPANY ATLAS — LOT 1 : Client Workspace Foundation (15/09/2026).
+//
+// Remplace l'ancien dashboard (4 listes empilées sans hiérarchie) par une
+// véritable Vue d'ensemble : les mêmes données déjà servies par les mêmes
+// routes existantes (GET /api/client/missions, /api/client/documents,
+// /api/feuilles-de-temps, /api/evaluations, /api/talent/demandes — AUCUNE
+// nouvelle route), réorganisées par priorité (directive de l'ordre, section
+// 4) : 1. Actions requises, 2. En cours, 3. Activité récente, 4. Documents
+// importants, 5. Résultats (teaser). Aucun agrégat calculé n'est présenté
+// comme une métrique officielle — seulement des comptages directs des
+// mêmes listes.
 
-type Mission = {
-  id: string;
-  repere: string | null;
-  statut: string;
-  nbJours: number;
-  createdAt: string;
-  profil: ProfilVitrine;
-};
+type Mission = { id: string; repere: string | null; statut: string; nbJours: number; createdAt: string; profil: { nom: string } };
+type DocumentClient = { id: string; titre: string; type: string; createdAt: string };
+type DemandeTalent = { id: string; titre: string | null; description: string; statut: string; createdAt: string };
 
-type Document = {
-  id: string;
-  titre: string;
-  type: string;
-  fileUrl: string;
-  createdAt: string;
-};
+type ActiviteItem = { id: string; date: string; label: string; href: string };
 
-type FeuilleClient = {
-  id: string;
-  mois: string;
-  joursTravailles: number;
-  heuresSupplementaires: number;
-  statut: StatutCra;
-  mission: { id: string; repere: string | null; profil: { nom: string } };
-};
-
-type MissionEvaluable = {
-  id: string;
-  repere: string | null;
-  profil: { nom: string };
-  evaluation: { note: number; commentaire: string | null } | null;
-};
-
-export default function ClientDashboard() {
+export default function VueDEnsembleClient() {
   const [missions, setMissions] = useState<Mission[]>([]);
-  const [documents, setDocuments] = useState<Document[]>([]);
+  const [documents, setDocuments] = useState<DocumentClient[]>([]);
   const [feuilles, setFeuilles] = useState<FeuilleClient[]>([]);
-  const [missionsEvaluables, setMissionsEvaluables] = useState<MissionEvaluable[]>([]);
-  const [ouvertes, setOuvertes] = useState<Set<string>>(new Set());
-
-  function basculer(id: string) {
-    setOuvertes((prev) => {
-      const suivant = new Set(prev);
-      if (suivant.has(id)) suivant.delete(id);
-      else suivant.add(id);
-      return suivant;
-    });
-  }
-
-  function rechargerFeuilles() {
-    fetch("/api/feuilles-de-temps").then((r) => r.json()).then((d) => setFeuilles(d.feuilles ?? []));
-  }
-  function rechargerEvaluations() {
-    fetch("/api/evaluations").then((r) => r.json()).then((d) => setMissionsEvaluables(d.missions ?? []));
-  }
+  const [evaluables, setEvaluables] = useState<MissionEvaluable[]>([]);
+  const [demandes, setDemandes] = useState<DemandeTalent[]>([]);
+  const [chargement, setChargement] = useState(true);
 
   useEffect(() => {
-    fetch("/api/client/missions").then((r) => r.json()).then(setMissions);
-    fetch("/api/client/documents").then((r) => r.json()).then(setDocuments);
-    rechargerFeuilles();
-    rechargerEvaluations();
+    Promise.all([
+      fetch("/api/client/missions").then((r) => r.json()),
+      fetch("/api/client/documents").then((r) => r.json()),
+      fetch("/api/feuilles-de-temps").then((r) => r.json()),
+      fetch("/api/evaluations").then((r) => r.json()),
+      fetch("/api/talent/demandes").then((r) => r.json()),
+    ]).then(([m, d, f, ev, dem]) => {
+      setMissions(m ?? []);
+      setDocuments(Array.isArray(d) ? d : []);
+      setFeuilles(f.feuilles ?? []);
+      setEvaluables(ev.missions ?? []);
+      setDemandes(Array.isArray(dem) ? dem : []);
+      setChargement(false);
+    });
   }, []);
 
   const feuillesAValider = feuilles.filter((f) => f.statut === "ValideeAdmin");
+  const missionsAEvaluer = evaluables.filter((m) => !m.evaluation);
+  const totalActions = feuillesAValider.length + missionsAEvaluer.length;
+
+  const missionsEnCours = missions.filter((m) => m.statut === "En cours");
+  const demandesEnCours = demandes.filter((d) => d.statut !== "CLOTUREE");
+
+  const activite: ActiviteItem[] = [
+    ...missions.map((m) => ({ id: `m-${m.id}`, date: m.createdAt, label: `Mission démarrée — ${m.repere ?? m.profil.nom}`, href: "/client/missions" })),
+    ...documents.map((d) => ({ id: `d-${d.id}`, date: d.createdAt, label: `Nouveau document — ${d.titre}`, href: "/client/documents" })),
+    ...demandes.map((d) => ({ id: `t-${d.id}`, date: d.createdAt, label: `Demande talent — ${d.titre ?? d.description.slice(0, 40)}`, href: "/client/talent" })),
+  ]
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 5);
+
+  if (chargement) return <EmptyState message="Chargement…" />;
 
   return (
     <div>
-      <FeuillesATraiter feuilles={feuillesAValider} recharger={rechargerFeuilles} />
-      <EvaluationsAFaire missions={missionsEvaluables} recharger={rechargerEvaluations} />
-
-      <h1>Suivi de vos missions</h1>
-      {missions.length === 0 && <p style={{ color: "#888" }}>Aucune mission pour l'instant.</p>}
-      <ul style={{ listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-        {missions.map((m) => {
-          const ouverte = ouvertes.has(m.id);
-          const aVitrine = (m.profil.realisations?.length ?? 0) > 0 || m.profil.badge || m.profil.aVideo;
-          return (
-            <li key={m.id} style={{ border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-                <div>
-                  <p style={{ margin: 0, fontWeight: 600 }}>{m.repere ?? m.profil.nom}</p>
-                  <p style={{ margin: 0, fontSize: 13, color: "#666" }}>
-                    Statut : {m.statut} · {m.nbJours} jour(s) · démarrée le {new Date(m.createdAt).toLocaleDateString("fr-FR")}
-                  </p>
-                  {m.profil.badge && (
-                    <span
-                      title={m.profil.badge.explication}
-                      style={{ display: "inline-block", marginTop: 6, fontSize: 11, padding: "2px 8px", borderRadius: 999, border: `1px solid ${m.profil.badge.couleur}`, color: m.profil.badge.couleur }}
-                    >
-                      {m.profil.badge.niveau === "confirme" ? "★ " : ""}
-                      {m.profil.badge.label}
-                    </span>
-                  )}
-                </div>
-                {aVitrine && (
-                  <button
-                    onClick={() => basculer(m.id)}
-                    style={{ fontSize: 12, padding: "5px 10px", background: "none", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer" }}
-                  >
-                    {ouverte ? "Masquer le profil" : "Voir le profil"}
-                  </button>
-                )}
-              </div>
-              {ouverte && <ProfilVitrineDetail profil={m.profil} />}
-            </li>
-          );
-        })}
-      </ul>
-
-      <h1 style={{ marginTop: 32 }}>Vos documents</h1>
-      {documents.length === 0 && <p style={{ color: "#888" }}>Aucun document disponible pour l'instant.</p>}
-      <ul style={{ listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-        {documents.map((d) => (
-          <li key={d.id} style={{ border: "1px solid #eee", borderRadius: 8, padding: 12, display: "flex", justifyContent: "space-between" }}>
-            <div>
-              <p style={{ margin: 0, fontWeight: 600 }}>{d.titre}</p>
-              <p style={{ margin: 0, fontSize: 13, color: "#666" }}>{d.type} · {new Date(d.createdAt).toLocaleDateString("fr-FR")}</p>
-            </div>
-            <a href={d.fileUrl} target="_blank" rel="noopener noreferrer">Télécharger</a>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-// Aperçu "vitrine" du profil de l'ingénieur, côté client : portfolio de
-// réalisations et vidéo de présentation, en lecture seule — jamais de score
-// de matching ni de TJM (réservés à l'Admin, voir /api/client/missions).
-function ProfilVitrineDetail({ profil }: { profil: ProfilVitrine }) {
-  const realisations = profil.realisations ?? [];
-
-  return (
-    <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #eee", display: "flex", flexDirection: "column", gap: 12 }}>
-      {profil.aVideo && (
-        <div>
-          <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 6px" }}>
-            Vidéo de présentation
-          </p>
-          <video
-            src={`/api/ingenieur/video/fichier?profilId=${profil.id}`}
-            controls
-            style={{ maxWidth: 320, borderRadius: 8, border: "1px solid #eee" }}
-          />
-        </div>
-      )}
-      <div>
-        <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 6px" }}>
-          Réalisations
-        </p>
-        {realisations.length === 0 ? (
-          <p style={{ fontSize: 12, color: "#aaa", margin: 0 }}>Aucune réalisation renseignée pour l&apos;instant.</p>
+      <Section title="Actions requises">
+        {totalActions === 0 ? (
+          <EmptyState message="Rien ne requiert votre attention pour l'instant." />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {realisations.map((r) => (
-              <div key={r.id} style={{ border: "1px solid #eee", borderRadius: 6, padding: 8 }}>
-                <p style={{ margin: 0, fontSize: 12, fontWeight: 600 }}>{r.titre}</p>
-                {r.description && <p style={{ margin: "3px 0 0", fontSize: 12, color: "#666" }}>{r.description}</p>}
-                {r.lien && (
-                  <a href={r.lien} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>
-                    {r.lien}
-                  </a>
-                )}
-              </div>
+            {feuillesAValider.length > 0 && (
+              <Link href="/client/finance" style={{ textDecoration: "none" }}>
+                <Card style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <p style={{ margin: 0, fontWeight: 600, color: "#111" }}>
+                    {feuillesAValider.length} feuille{feuillesAValider.length > 1 ? "s" : ""} de temps à valider
+                  </p>
+                  <Badge variant="warning">À traiter</Badge>
+                </Card>
+              </Link>
+            )}
+            {missionsAEvaluer.length > 0 && (
+              <Link href="/client/missions" style={{ textDecoration: "none" }}>
+                <Card style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <p style={{ margin: 0, fontWeight: 600, color: "#111" }}>
+                    {missionsAEvaluer.length} mission{missionsAEvaluer.length > 1 ? "s" : ""} terminée{missionsAEvaluer.length > 1 ? "s" : ""} à évaluer
+                  </p>
+                  <Badge variant="warning">À traiter</Badge>
+                </Card>
+              </Link>
+            )}
+          </div>
+        )}
+      </Section>
+
+      <Section title="En cours" action={<Link href="/client/missions" style={{ fontSize: 12, color: bleu, textDecoration: "none", fontWeight: 600 }}>Voir tout</Link>}>
+        {missionsEnCours.length === 0 && demandesEnCours.length === 0 ? (
+          <EmptyState message="Aucune mission ni demande en cours." />
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {missionsEnCours.slice(0, 3).map((m) => (
+              <Card key={m.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <p style={{ margin: 0, fontWeight: 600 }}>{m.repere ?? m.profil.nom}</p>
+                <Badge variant="info">{m.nbJours} j</Badge>
+              </Card>
+            ))}
+            {demandesEnCours.slice(0, 2).map((d) => (
+              <Card key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <p style={{ margin: 0, fontWeight: 600 }}>{d.titre ?? d.description.slice(0, 50)}</p>
+                <Badge variant="neutral">{d.statut}</Badge>
+              </Card>
             ))}
           </div>
         )}
-      </div>
-    </div>
-  );
-}
+      </Section>
 
-// Validation client des feuilles de temps (CRA) déjà validées par l'Admin —
-// dernière étape avant facturation, façon BoondManager (voir
-// app/api/feuilles-de-temps et /admin/feuilles-de-temps).
-function FeuillesATraiter({ feuilles, recharger }: { feuilles: FeuilleClient[]; recharger: () => void }) {
-  const [envoi, setEnvoi] = useState<string | null>(null);
-
-  async function valider(id: string) {
-    setEnvoi(id);
-    await fetch("/api/feuilles-de-temps", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, action: "validerClient" }),
-    });
-    setEnvoi(null);
-    recharger();
-  }
-
-  if (feuilles.length === 0) return null;
-
-  return (
-    <div style={{ marginBottom: 32 }}>
-      <h1>Feuilles de temps à valider ({feuilles.length})</h1>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {feuilles.map((f) => (
-          <div key={f.id} style={{ border: "1px solid #eee", borderRadius: 8, padding: 12, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-            <div>
-              <p style={{ margin: 0, fontWeight: 600, fontSize: 14 }}>
-                {f.mission.profil.nom} — {f.mission.repere ?? libelleMois(f.mois)}
-              </p>
-              <p style={{ margin: "2px 0 0", fontSize: 13, color: "#666" }}>
-                {libelleMois(f.mois)} · {f.joursTravailles} j
-                {f.heuresSupplementaires > 0 ? ` · ${f.heuresSupplementaires} h sup` : ""}
-              </p>
-            </div>
-            <button
-              onClick={() => valider(f.id)}
-              disabled={envoi === f.id}
-              style={{ fontSize: 13, padding: "6px 14px", background: bleu, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
-            >
-              {envoi === f.id ? "..." : "Valider"}
-            </button>
+      <Section title="Activité récente">
+        {activite.length === 0 ? (
+          <EmptyState message="Aucune activité récente." />
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {activite.map((a) => (
+              <Link key={a.id} href={a.href} style={{ textDecoration: "none", color: "inherit" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontSize: 13 }}>
+                  <span>{a.label}</span>
+                  <span style={{ color: grisTexte, whiteSpace: "nowrap" }}>{new Date(a.date).toLocaleDateString("fr-FR")}</span>
+                </div>
+              </Link>
+            ))}
           </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+        )}
+      </Section>
 
-// Évaluation d'une mission terminée (1 à 5, façon avis client) — voir
-// prisma/schema.prisma (Evaluation) et statistiques de l'ingénieur
-// (EspaceIngenieur.tsx).
-function EvaluationsAFaire({ missions, recharger }: { missions: MissionEvaluable[]; recharger: () => void }) {
-  const aEvaluer = missions.filter((m) => !m.evaluation);
-  if (aEvaluer.length === 0) return null;
+      <Section title="Documents importants" action={<Link href="/client/documents" style={{ fontSize: 12, color: bleu, textDecoration: "none", fontWeight: 600 }}>Voir tout</Link>}>
+        {documents.length === 0 ? (
+          <EmptyState message="Aucun document disponible pour l'instant." />
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {documents.slice(0, 3).map((d) => (
+              <Card key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <p style={{ margin: 0, fontWeight: 600 }}>{d.titre}</p>
+                <Badge variant="neutral">{d.type}</Badge>
+              </Card>
+            ))}
+          </div>
+        )}
+      </Section>
 
-  return (
-    <div style={{ marginBottom: 32 }}>
-      <h1>Évaluer une mission terminée</h1>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {aEvaluer.map((m) => (
-          <FormulaireEvaluation key={m.id} mission={m} recharger={recharger} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function FormulaireEvaluation({ mission, recharger }: { mission: MissionEvaluable; recharger: () => void }) {
-  const [note, setNote] = useState(0);
-  const [commentaire, setCommentaire] = useState("");
-  const [envoi, setEnvoi] = useState(false);
-
-  async function envoyer() {
-    if (note < 1) return;
-    setEnvoi(true);
-    await fetch("/api/evaluations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ missionId: mission.id, note, commentaire }),
-    });
-    setEnvoi(false);
-    recharger();
-  }
-
-  return (
-    <div style={{ border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
-      <p style={{ margin: "0 0 8px", fontWeight: 600, fontSize: 14 }}>{mission.repere ?? mission.profil.nom}</p>
-      <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
-        {[1, 2, 3, 4, 5].map((n) => (
-          <button
-            key={n}
-            onClick={() => setNote(n)}
-            style={{ fontSize: 18, background: "none", border: "none", cursor: "pointer", color: n <= note ? "#d97706" : "#ddd", padding: 0 }}
-            aria-label={`${n} étoile(s)`}
-          >
-            ★
-          </button>
-        ))}
-      </div>
-      <textarea
-        placeholder="Commentaire (facultatif)"
-        value={commentaire}
-        onChange={(e) => setCommentaire(e.target.value)}
-        rows={2}
-        style={{ width: "100%", padding: 6, fontFamily: "inherit", marginBottom: 8 }}
-      />
-      <button
-        onClick={envoyer}
-        disabled={note < 1 || envoi}
-        style={{ fontSize: 13, padding: "6px 14px", background: bleu, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
-      >
-        {envoi ? "..." : "Envoyer l'évaluation"}
-      </button>
+      <Section title="Résultats" action={<Link href="/client/resultats" style={{ fontSize: 12, color: bleu, textDecoration: "none", fontWeight: 600 }}>Voir tout</Link>}>
+        {evaluables.filter((m) => m.evaluation).length === 0 ? (
+          <EmptyState message="Aucune mission évaluée pour l'instant." />
+        ) : (
+          <p style={{ margin: 0, fontSize: 13, color: grisTexte }}>
+            {evaluables.filter((m) => m.evaluation).length} mission{evaluables.filter((m) => m.evaluation).length > 1 ? "s" : ""} terminée{evaluables.filter((m) => m.evaluation).length > 1 ? "s" : ""} évaluée{evaluables.filter((m) => m.evaluation).length > 1 ? "s" : ""} — détail dans la rubrique Résultats.
+          </p>
+        )}
+      </Section>
     </div>
   );
 }

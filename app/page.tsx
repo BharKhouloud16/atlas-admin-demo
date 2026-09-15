@@ -118,7 +118,7 @@ export default function RootPage() {
 
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <Bouton href="/connexion?role=ingenieur" variante="texte">Espace Ingénieur</Bouton>
-            <Bouton href="/connexion?role=client" variante="contour">Espace Partenaire</Bouton>
+            <Bouton href="/connexion?role=client" variante="contour">Espace Client</Bouton>
             <Bouton href="/connexion" variante="pleine">Connexion</Bouton>
           </div>
         </div>

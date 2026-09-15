@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { bleu, bordure, grisTexte } from "@/lib/theme";
+import { bordure, grisTexte } from "@/lib/theme";
+import { Card, Section, EmptyState, Badge, Bouton } from "@/components/client/primitives";
 
 type DemandeTalent = {
   id: string;
@@ -48,43 +49,43 @@ export default function TalentClientPage() {
 
   return (
     <div>
-      <h1>Exprimer un besoin</h1>
-      <p style={{ color: grisTexte, fontSize: 13, marginTop: -8 }}>
-        Décrivez votre besoin en quelques phrases : compétences, séniorité, budget indicatif.
-        Notre analyseur en propose une première lecture, toujours revue par notre équipe avant tout matching.
-      </p>
-      <FormulaireDemande onCree={charger} />
+      <Section title="Exprimer un besoin">
+        <p style={{ color: grisTexte, fontSize: 13, margin: "-4px 0 12px" }}>
+          Décrivez votre besoin en quelques phrases : compétences, séniorité, budget indicatif.
+          Notre analyseur en propose une première lecture, toujours revue par notre équipe avant tout matching.
+        </p>
+        <FormulaireDemande onCree={charger} />
+      </Section>
 
-      <h1 style={{ marginTop: 32 }}>Vos demandes</h1>
-      {chargement && <p style={{ color: "#888" }}>Chargement…</p>}
-      {!chargement && demandes.length === 0 && <p style={{ color: "#888" }}>Aucune demande pour l&apos;instant.</p>}
-      <ul style={{ listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-        {demandes.map((d) => (
-          <li key={d.id} style={{ border: `1px solid ${bordure}`, borderRadius: 8, padding: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-              <p style={{ margin: 0, fontWeight: 600 }}>{d.titre ?? d.description.slice(0, 60)}</p>
-              <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 999, border: `1px solid ${bleu}`, color: bleu, whiteSpace: "nowrap" }}>
-                {LABEL_STATUT[d.statut] ?? d.statut}
-              </span>
-            </div>
-            <p style={{ margin: "6px 0 0", fontSize: 13, color: grisTexte }}>{d.description}</p>
-            {d.competencesExtraites.length > 0 && (
-              <p style={{ margin: "6px 0 0", fontSize: 12, color: "#888" }}>
-                Compétences détectées : {d.competencesExtraites.join(", ")}
-                {d.senioriteSouhaitee ? ` · Séniorité : ${d.senioriteSouhaitee}` : ""}
+      <Section title="Vos demandes">
+        {chargement && <EmptyState message="Chargement…" />}
+        {!chargement && demandes.length === 0 && <EmptyState message="Aucune demande pour l'instant." />}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {demandes.map((d) => (
+            <Card key={d.id}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+                <p style={{ margin: 0, fontWeight: 600 }}>{d.titre ?? d.description.slice(0, 60)}</p>
+                <Badge variant="info">{LABEL_STATUT[d.statut] ?? d.statut}</Badge>
+              </div>
+              <p style={{ margin: "6px 0 0", fontSize: 13, color: grisTexte }}>{d.description}</p>
+              {d.competencesExtraites.length > 0 && (
+                <p style={{ margin: "6px 0 0", fontSize: 12, color: "#888" }}>
+                  Compétences détectées : {d.competencesExtraites.join(", ")}
+                  {d.senioriteSouhaitee ? ` · Séniorité : ${d.senioriteSouhaitee}` : ""}
+                </p>
+              )}
+              {d.budgetTjmMax && (
+                <p style={{ margin: "2px 0 0", fontSize: 12, color: "#888" }}>
+                  Budget max : {d.budgetTjmMax} {d.budgetDevise}/jour
+                </p>
+              )}
+              <p style={{ margin: "6px 0 0", fontSize: 11, color: "#aaa" }}>
+                Soumise le {new Date(d.createdAt).toLocaleDateString("fr-FR")}
               </p>
-            )}
-            {d.budgetTjmMax && (
-              <p style={{ margin: "2px 0 0", fontSize: 12, color: "#888" }}>
-                Budget max : {d.budgetTjmMax} {d.budgetDevise}/jour
-              </p>
-            )}
-            <p style={{ margin: "6px 0 0", fontSize: 11, color: "#aaa" }}>
-              Soumise le {new Date(d.createdAt).toLocaleDateString("fr-FR")}
-            </p>
-          </li>
-        ))}
-      </ul>
+            </Card>
+          ))}
+        </div>
+      </Section>
     </div>
   );
 }
@@ -135,13 +136,9 @@ function FormulaireDemande({ onCree }: { onCree: () => void }) {
       />
       {erreur && <p style={{ color: "#c0392b", fontSize: 13, margin: "0 0 8px" }}>{erreur}</p>}
       <div>
-        <button
-          onClick={envoyer}
-          disabled={description.trim().length < 10 || envoi}
-          style={{ fontSize: 13, padding: "8px 16px", background: bleu, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
-        >
+        <Bouton onClick={envoyer} disabled={description.trim().length < 10 || envoi}>
           {envoi ? "Envoi…" : "Soumettre la demande"}
-        </button>
+        </Bouton>
       </div>
     </div>
   );
