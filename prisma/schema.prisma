@@ -1018,6 +1018,7 @@ model Client {
   documents Document[]
   compte User? // le compte de connexion du client, une fois inscrit
   demandesTalent DemandeTalent[] // ATLAS TALENT (fondations, 06/09) — voir DemandeTalent
+  clientNeeds ClientNeed[] // Client Need Intelligence (LOT 2, 15/09) — voir ClientNeed
 }
 
 // Fiche interne d'un profil d'ingénieur. Créée automatiquement, vide de
@@ -1251,6 +1252,127 @@ model ShortlistEntree {
   createdAt DateTime @default(now())
 
   @@unique([demandeId, profilId])
+}
+
+// COMPANY ATLAS — LOT 2 : Client Need Intelligence Foundation (15/09/2026).
+//
+// Modèle générique de besoin, indépendant de DemandeTalent (non modifiée,
+// non remplacée) — voir le rapport de revue architecturale : DemandeTalent
+// est structurellement Talent-only (colonnes fixes) et ne porte qu'une
+// provenance GLOBALE (analyseProvider/analyseConfiance pour toute la
+// demande), jamais champ par champ. ClientNeed capture le besoin brut ;
+// ClientNeedFait porte CHAQUE information individuellement, avec sa propre
+// provenance — même discipline "une ligne par fait" que ProfilCompetence +
+// SkillEvidence (Skill Graph), appliquée ici au besoin plutôt qu'à une
+// compétence de profil.
+//
+// AUCUN champ de routage (Talent/ATLAS OS/Both) sur ce modèle — décision
+// architecturale explicite (revue CEO) : le routage n'est pas une propriété
+// d'entrée du besoin, seulement une hypothèse exploratoire parmi les faits
+// (voir ClientNeedFaitCle.HYPOTHESE_DOMAINE_SOLUTION ci-dessous), jamais une
+// colonne structurante qui biaiserait prématurément vers Talent (seul
+// domaine réellement câblé aujourd'hui).
+enum ClientNeedStatut {
+  BROUILLON
+  SOUMIS
+  A_CLARIFIER
+  VALIDE
+  ARCHIVE
+}
+
+enum ClientNeedCoherenceStatut {
+  COHERENT
+  INCONSISTENT
+  NEEDS_CLARIFICATION
+  UNKNOWN
+}
+
+model ClientNeed {
+  id String @id @default(cuid())
+  client Client @relation(fields: [clientId], references: [id])
+  clientId String
+  correlationId String
+  // Jamais réécrit — la saisie originale du client reste consultable même
+  // après extraction/correction (même principe que DemandeTalent.description).
+  texteOriginal String
+  titre String?
+  statut ClientNeedStatut @default(BROUILLON)
+  coherenceStatut ClientNeedCoherenceStatut @default(UNKNOWN)
+  // Liste de {regle, statut, explication} — voir lib/client-need/coherence.ts.
+  coherenceDetail Json?
+  analyseProvider String?
+  analyseeLe DateTime?
+  faits ClientNeedFait[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId])
+}
+
+// Vocabulaire FERMÉ des attributs représentables — un nouvel attribut
+// (y compris futur ATLAS OS) s'ajoute comme une nouvelle valeur d'enum,
+// jamais comme une nouvelle colonne : c'est ce qui rend ClientNeed
+// évolutif sans reconstruction (voir revue architecturale, point 2).
+enum ClientNeedFaitCle {
+  OBJECTIF
+  CONTEXTE
+  PROBLEME
+  RESULTAT_ATTENDU
+  ROLE
+  QUANTITE
+  SENIORITE
+  ANNEES_EXPERIENCE_MIN
+  COMPETENCE
+  BUDGET_MONTANT
+  BUDGET_DEVISE
+  BUDGET_TYPE
+  BUDGET_FREQUENCE
+  DUREE
+  DATE_DEBUT
+  DISPONIBILITE
+  LOCALISATION
+  REMOTE
+  CONTRAINTE
+  CRITERE_REUSSITE
+  PRIORITE
+  RISQUE
+  PREFERENCE
+  // Hypothèse exploratoire UNIQUEMENT (voir revue architecturale, point 1) —
+  // toujours écrite avec statut INFERE, jamais consommée par une décision
+  // ou une règle de cohérence dans ce lot. Le nom porte "HYPOTHESE"
+  // explicitement pour ne jamais être confondue avec une décision de
+  // routage réelle.
+  HYPOTHESE_DOMAINE_SOLUTION
+}
+
+// Une ligne par information individuelle du besoin — jamais un formulaire
+// obligatoire : un ClientNeed peut n'avoir que 2-3 ClientNeedFait si le
+// texte du client n'en dit pas plus (voir §9 du besoin incomplet).
+//
+// `statut` réutilise StatutPreuveCompetence (VERIFIE/DECLARE/INFERE/INCONNU,
+// Skill Graph, non modifié) tel quel — aucun second vocabulaire de
+// provenance créé (directive explicite de la mission).
+//
+// `composanteId` : réservé pour une future évolution multi-composantes
+// ("2 QA + 1 Lead"), TOUJOURS NULL dans ce lot — aucune logique de LOT 2 ne
+// le lit ni ne l'écrit avec une valeur non-null (voir revue architecturale,
+// point 3). Pas de contrainte d'unicité sur (needId, cle) : plusieurs clés
+// (COMPETENCE, CONTRAINTE, CRITERE_REUSSITE, PRIORITE, RISQUE, PREFERENCE)
+// sont répétables par nature — l'appliquer au niveau base figerait
+// prématurément le modèle.
+model ClientNeedFait {
+  id String @id @default(cuid())
+  need ClientNeed @relation(fields: [needId], references: [id], onDelete: Cascade)
+  needId String
+  composanteId String?
+  cle ClientNeedFaitCle
+  valeur String
+  statut StatutPreuveCompetence @default(INCONNU)
+  source String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([needId])
 }
 
 enum StatutPreuveCompetence {

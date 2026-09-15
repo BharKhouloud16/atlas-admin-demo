@@ -14,7 +14,7 @@ import { bleu, grisTexte } from "@/lib/theme";
 // comprendre que la rubrique existe et savoir où elle sera.
 const RUBRIQUES: { href: string; label: string; disponible: boolean }[] = [
   { href: "/client", label: "Vue d'ensemble", disponible: true },
-  { href: "/client/besoins", label: "Besoins", disponible: false },
+  { href: "/client/besoins", label: "Besoins", disponible: true },
   { href: "/client/talent", label: "Talents", disponible: true },
   { href: "/client/missions", label: "Missions", disponible: true },
   { href: "/client/atlas-os", label: "ATLAS OS / Services", disponible: false },
