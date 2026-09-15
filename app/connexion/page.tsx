@@ -19,7 +19,7 @@ const CONTEXTES: Record<string, { titre: string; sousTitre: string }> = {
     sousTitre: "Connectez-vous pour suivre vos missions en cours.",
   },
   client: {
-    titre: "Espace Partenaire",
+    titre: "Espace Client",
     sousTitre: "Connectez-vous pour suivre vos missions et vos livrables.",
   },
 };

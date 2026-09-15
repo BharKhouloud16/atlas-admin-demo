@@ -179,7 +179,7 @@ export default function InscriptionPage() {
       </p>
       <h1 style={{ fontSize: 20, marginBottom: 4, color: bleuFonce }}>Créer un compte</h1>
       <p style={{ fontSize: 14, color: grisTexte, marginTop: 0, marginBottom: 24 }}>
-        {role === "CLIENT" ? "Espace Partenaire" : "Espace Ingénieur"}
+        {role === "CLIENT" ? "Espace Client" : "Espace Ingénieur"}
       </p>
 
       {!roleImpose && (
