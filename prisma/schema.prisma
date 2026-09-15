@@ -1019,6 +1019,7 @@ model Client {
   compte User? // le compte de connexion du client, une fois inscrit
   demandesTalent DemandeTalent[] // ATLAS TALENT (fondations, 06/09) — voir DemandeTalent
   clientNeeds ClientNeed[] // Client Need Intelligence (LOT 2, 15/09) — voir ClientNeed
+  clientProfile ClientProfile? // Profil Client durable (LOT 4, 15/09) — voir ClientProfile
 }
 
 // Fiche interne d'un profil d'ingénieur. Créée automatiquement, vide de
@@ -1375,10 +1376,99 @@ model ClientNeedFait {
   @@index([needId])
 }
 
+// COMPANY ATLAS — LOT 4 : Profil Client Intelligence Foundation (15/09/2026).
+//
+// ClientProfile / ClientProfileFact : représentation DURABLE du client
+// ("qui est ce client et comment fonctionne-t-il"), distincte de ClientNeed
+// ("de quoi a-t-il besoin maintenant", LOT 2/3, jamais copié ici — les
+// rubriques Besoins/Résultats du Profil lisent ClientNeed/Mission
+// directement, aucune duplication). Même philosophie que ClientNeedFait :
+// historique intégralement ADDITIF, jamais d'écrasement.
+//
+// Différence structurante avec ClientNeedFait (LOT 3) : la quasi-totalité
+// des clés du Profil sont RÉPÉTABLES (plusieurs contraintes/objectifs
+// valides simultanément) — "dernière valeur par clé gagne"
+// (lib/client-need/faits.ts) ne s'applique donc PAS ici, sauf pour l'unique
+// clé singleton CONTEXTE_ACTIVITE. Pour les clés répétables, l'état actif
+// est déterminé par SUPERSESSION LOGIQUE via `confirmeDepuis` (voir
+// lib/client-profile/faits.ts, instancesActivesParCle) : une ligne
+// confirmée devient logiquement inactive dès qu'une ligne ultérieure la
+// référence par `confirmeDepuis`, sans jamais être supprimée ni modifiée.
+model ClientProfile {
+  id String @id @default(cuid())
+  client Client @relation(fields: [clientId], references: [id])
+  clientId String @unique
+  faits ClientProfileFact[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Vocabulaire FERMÉ — un nouvel attribut s'ajoute comme une nouvelle valeur
+// d'enum, jamais une nouvelle colonne (même principe que ClientNeedFaitCle).
+// CONTEXTE_ACTIVITE est la seule clé singleton ; les 8 autres sont
+// répétables par nature.
+enum ClientProfileFaitCle {
+  CONTEXTE_ACTIVITE
+  ENJEU
+  OBJECTIF_DURABLE
+  PRIORITE_DURABLE
+  CONTRAINTE_DURABLE
+  PREFERENCE_DURABLE
+  CRITERE_REUSSITE_DURABLE
+  RISQUE_DURABLE
+  BESOIN_RECURRENT_CONFIRME
+}
+
+// Une ligne par information individuelle du profil — jamais un formulaire
+// obligatoire. `statut` réutilise StatutPreuveCompetence tel quel (aucun
+// second vocabulaire de provenance créé). `confirmeDepuis` : id de la ligne
+// que CETTE ligne confirme/supersède (nullable, auto-référence) — c'est le
+// seul mécanisme nécessaire pour déterminer la supersession logique (voir
+// commentaire du modèle ci-dessus) ; aucune colonne de suppression/statut
+// "actif" séparée. Pas de contrainte d'unicité sur (profileId, cle) :
+// plusieurs instances valides simultanément pour les clés répétables.
+model ClientProfileFact {
+  id String @id @default(cuid())
+  profile ClientProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  profileId String
+  cle ClientProfileFaitCle
+  valeur String
+  statut StatutProfilFait @default(INCONNU)
+  source String?
+  confirmeDepuis String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([profileId])
+}
+
 enum StatutPreuveCompetence {
   VERIFIE
   DECLARE
   INFERE
+  INCONNU
+}
+
+// COMPANY ATLAS — LOT 4 : Profil Client Intelligence Foundation (15/09/2026).
+//
+// Vocabulaire de provenance dédié à ClientProfileFact — PAS une extension
+// de StatutPreuveCompetence. Écart documenté par rapport au plan de
+// conception (Phase 2/consolidation prévoyait d'ajouter OBSERVE à l'enum
+// partagé) : vérifié concrètement à l'implémentation (tsc) que plusieurs
+// routes Talent (app/api/profils/[id]/competences/*, .../matching*,
+// .../recommandations, .../talent-intelligence, .../talent-trust)
+// transmettent le type Prisma de StatutPreuveCompetence à des fonctions de
+// lib/talent/skill-graph.ts typées avec un alias LOCAL à 4 valeurs — un
+// ajout d'OBSERVE au type partagé casse leur compilation. Plutôt que de
+// modifier des fichiers du Matching Engine Talent (hors périmètre de ce
+// lot, jamais touché sans nécessité absolue), un vocabulaire séparé isole
+// entièrement ce lot : zéro fichier Talent modifié, zéro risque de
+// régression sur le Matching Engine/Skill Graph.
+enum StatutProfilFait {
+  VERIFIE
+  DECLARE
+  INFERE
+  OBSERVE
   INCONNU
 }
 
