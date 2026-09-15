@@ -1,5 +1,7 @@
 import { test, expect, APIRequestContext } from "@playwright/test";
 import { prisma } from "@/lib/prisma";
+import { STATUTS_PROPOSAL_TERMINAUX } from "@/lib/strategic/authorization-request";
+import { creerAdaptateurExecutionProposition } from "@/lib/strategic/execution-adapter";
 
 // COMPANY ATLAS — B27 (14/09/2026) : PREMIER PARCOURS D'EXÉCUTION RÉEL
 // END-TO-END — StrategicActionProposal -> B22 Authorization -> B25 Guard ->
@@ -314,5 +316,52 @@ test.describe("COMPANY ATLAS B27 — Premier ActionAdapter réel (StrategicActio
 
     const propositionApresRetry = await prisma.strategicActionProposal.findUnique({ where: { id: proposalId } });
     expect(propositionApresRetry?.statut).toBe("EXECUTEE");
+  });
+
+  // ---- AUDIT (mandat de consolidation pré-merge) ---------------------------
+
+  test("AUDIT — cohérence des statuts terminaux entre l'écriture SQL brute de l'adaptateur et STATUTS_PROPOSAL_TERMINAUX (référence canonique)", async () => {
+    // La liste littérale dans le UPDATE ... WHERE "statut" NOT IN (...) de
+    // lib/strategic/execution-adapter.ts DOIT rester synchronisée avec
+    // STATUTS_PROPOSAL_TERMINAUX — jamais silencieusement supposée (voir la
+    // note de cohérence en tête de execution-adapter.ts).
+    const statutsSQL = new Set(["AUTORISEE", "REFUSEE", "EXECUTEE", "CONTROLEE"]);
+    expect(Array.from(statutsSQL).sort()).toEqual(Array.from(STATUTS_PROPOSAL_TERMINAUX).sort());
+  });
+
+  test("SÉCURITÉ (défense en profondeur) — l'ActionAdapter refuse lui-même la transition si un Emergency Stop est actif, même invoqué directement en contournant le Guard", async ({
+    request,
+  }) => {
+    await connecter(request, "admin-demo@example.com");
+    const agentId = await idAgent(request, "ATLAS_TALENT");
+    const { proposalId, authorizationRequestId } = await propositionApprouveeAutomatiquement(request, agentId);
+
+    const arretRes = await request.post("/api/control-plane/emergency-stops", {
+      data: { scope: "GLOBAL", reason: "Test B27 — défense en profondeur adaptateur direct" },
+    });
+    expect(arretRes.status(), await arretRes.text()).toBe(201);
+    const { id: arretId } = await arretRes.json();
+
+    try {
+      // Appel DIRECT de l'adaptateur, en contournant entièrement guardExecution()
+      // (B25) — prouve que la fermeture atomique Emergency Stop de la requête
+      // SQL brute (RE-AUDIT, execution-adapter.ts) fonctionne même hors du
+      // chemin normal, pas seulement grâce au Guard en amont.
+      const adapter = creerAdaptateurExecutionProposition(proposalId);
+      const resultat = await adapter({
+        agentId,
+        action: "PROPOSE",
+        scope: "TALENT",
+        authorizationRequestId,
+        correlationId: `b27-direct-emergency-stop-${Date.now()}`,
+      });
+      expect(resultat.ok).toBe(false);
+      expect(resultat.detail).toContain("Emergency Stop");
+
+      const proposition = await prisma.strategicActionProposal.findUnique({ where: { id: proposalId } });
+      expect(proposition?.statut).toBe("PROPOSEE");
+    } finally {
+      await request.fetch(`/api/control-plane/emergency-stops/${arretId}/lift`, { method: "PATCH", data: {} });
+    }
   });
 });
