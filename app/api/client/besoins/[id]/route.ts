@@ -17,7 +17,10 @@ import type { ClientNeedStatut } from "@prisma/client";
 // VERIFIE, correction de valeur) est explicitement HORS PÉRIMÈTRE de ce
 // lot (directive CEO, autorisation d'implémentation LOT 2).
 
-const STATUTS_MODIFIABLES_PAR_CLIENT = new Set(["SOUMIS", "A_CLARIFIER", "VALIDE", "ARCHIVE"]);
+// A_CLARIFIER volontairement absent : ce statut est exclusivement piloté
+// par le serveur (lib/client-need/clarification.ts, LOT 3) — le client ne
+// doit jamais pouvoir le forcer directement (décision CEO LOT 3).
+const STATUTS_MODIFIABLES_PAR_CLIENT = new Set(["SOUMIS", "VALIDE", "ARCHIVE"]);
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getSession();
@@ -60,7 +63,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (body?.statut !== undefined) {
     if (typeof body.statut !== "string" || !STATUTS_MODIFIABLES_PAR_CLIENT.has(body.statut)) {
       return NextResponse.json(
-        { error: "statut invalide. Un client ne peut jamais remettre un besoin en BROUILLON." },
+        { error: "statut invalide. BROUILLON et A_CLARIFIER ne sont jamais modifiables directement par le client." },
         { status: 400 }
       );
     }
