@@ -1,6 +1,10 @@
 import type { ReactNode, CSSProperties, ButtonHTMLAttributes } from "react";
 import { bleu, bleuFonce, bordure, grisTexte, vert, orange, rouge } from "@/lib/theme";
 
+// LOT 4 — Profil Client (15/09/2026) : deux ajouts minimaux au design
+// system existant, aucun autre composant créé (Tabs et bouton tertiary —
+// les seuls manquants identifiés par l'audit, voir rapport Phase 2 §24).
+
 // COMPANY ATLAS — LOT 1 : Client Workspace Foundation (15/09/2026).
 //
 // Primitives minimales pour l'Espace Client uniquement — pas un design
@@ -114,16 +118,21 @@ export function Badge({ children, variant = "neutral" }: { children: ReactNode; 
   );
 }
 
-type BoutonProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" };
+type BoutonProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" | "tertiary" };
 
 // Reprend exactement les deux styles de bouton déjà en usage (primaire bleu
 // plein, secondaire contour gris) dans app/client/page.tsx et
-// app/client/talent/page.tsx.
+// app/client/talent/page.tsx. `tertiary` (LOT 4) : action discrète, texte
+// seul sans fond ni bordure — pour une action secondaire dans un header
+// (ex. "Corriger mes informations") sans concurrencer visuellement l'action
+// principale.
 export function Bouton({ variant = "primary", style, ...props }: BoutonProps) {
   const base: CSSProperties =
     variant === "primary"
       ? { background: bleu, color: "#fff", border: "none" }
-      : { background: "#fff", color: grisTexte, border: `1px solid ${bordure}` };
+      : variant === "secondary"
+        ? { background: "#fff", color: grisTexte, border: `1px solid ${bordure}` }
+        : { background: "transparent", color: bleu, border: "none", padding: "7px 4px" };
   return (
     <button
       {...props}
@@ -138,5 +147,63 @@ export function Bouton({ variant = "primary", style, ...props }: BoutonProps) {
         ...style,
       }}
     />
+  );
+}
+
+// LOT 4 — Profil Client : onglets internes (première utilisation d'un
+// composant Tabs dans l'Espace Client — aucun équivalent existant, voir
+// audit design system). Scroll horizontal en dessous de la largeur
+// nécessaire (mobile), jamais de retour à la ligne qui casserait la
+// hiérarchie visuelle.
+export function Tabs({
+  tabs,
+  actif,
+  onChange,
+}: {
+  tabs: { id: string; label: string; badge?: number }[];
+  actif: string;
+  onChange: (id: string) => void;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Sections du profil"
+      style={{
+        display: "flex",
+        gap: 4,
+        overflowX: "auto",
+        borderBottom: `1px solid ${bordure}`,
+        marginBottom: 20,
+      }}
+    >
+      {tabs.map((t) => {
+        const estActif = t.id === actif;
+        return (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={estActif}
+            onClick={() => onChange(t.id)}
+            style={{
+              fontSize: 13,
+              fontWeight: estActif ? 700 : 500,
+              color: estActif ? bleu : grisTexte,
+              background: "none",
+              border: "none",
+              borderBottom: estActif ? `2px solid ${bleu}` : "2px solid transparent",
+              padding: "8px 12px",
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            {t.label}
+            {typeof t.badge === "number" && t.badge > 0 && <Badge variant="warning">{t.badge}</Badge>}
+          </button>
+        );
+      })}
+    </div>
   );
 }
