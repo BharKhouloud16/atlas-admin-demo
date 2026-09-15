@@ -101,6 +101,13 @@ export const criteresTalentSchema = z.object({
   budgetDevise: z.string().trim().toUpperCase().length(3).optional(),
 });
 
+// LOT 5 — Client Intelligence → Talent Bridge (15/09/2026) : composition des
+// deux schémas ci-dessus (jamais une redéfinition des mêmes bornes) pour
+// POST /api/talent/besoins/[id]/creer-demande — l'Admin y soumet les MÊMES
+// champs qu'une création directe (demandeTalentSchema) et qu'une révision
+// de critères (criteresTalentSchema), jamais un troisième vocabulaire.
+export const demandeDepuisBesoinSchema = demandeTalentSchema.merge(criteresTalentSchema);
+
 // ATLAS SKILL GRAPH V1 — correction explicite d'une ProfilCompetence par un
 // Admin (voir PATCH /api/profils/[id]/competences/[competenceId]). C'est la
 // SEULE voie légitime pour fixer un niveau (1-5) ou passer une compétence en

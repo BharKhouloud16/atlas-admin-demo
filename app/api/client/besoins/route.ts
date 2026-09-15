@@ -27,11 +27,20 @@ export async function GET() {
 
   const besoins = await prisma.clientNeed.findMany({
     where: { clientId: session.clientId },
-    include: { faits: true },
+    include: { faits: true, demandeTalentCreee: { select: { id: true } } },
     orderBy: { createdAt: "desc" },
   });
 
-  return NextResponse.json({ besoins });
+  // LOT 5 : dérivé de la relation sourceNeedId (jamais un nouveau statut
+  // persisté) — indique uniquement qu'une démarche Talent a été engagée,
+  // jamais les données internes de la DemandeTalent elle-même (budget,
+  // scores, notes Admin — minimisation des données, directive LOT 5).
+  return NextResponse.json({
+    besoins: besoins.map(({ demandeTalentCreee, ...besoin }) => ({
+      ...besoin,
+      demarcheTalentEngagee: demandeTalentCreee !== null,
+    })),
+  });
 }
 
 export async function POST(req: NextRequest) {

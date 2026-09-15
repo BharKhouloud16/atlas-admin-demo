@@ -31,6 +31,11 @@ type Besoin = {
   coherenceDetail: ReglesCoherence | null;
   createdAt: string;
   faits: Fait[];
+  // LOT 5 (15/09/2026) : dérivé côté serveur (relation DemandeTalent →
+  // ClientNeed), jamais un nouveau statut de besoin — indique uniquement
+  // qu'une démarche Talent a été engagée par notre équipe, jamais aucun
+  // détail interne de la demande elle-même.
+  demarcheTalentEngagee: boolean;
 };
 
 const LABEL_CLE: Record<string, string> = {
@@ -238,6 +243,7 @@ function CarteBesoin({
         <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
           <Badge variant="info">{LABEL_STATUT_BESOIN[besoin.statut]}</Badge>
           <Badge variant={VARIANT_COHERENCE[besoin.coherenceStatut]}>{LABEL_COHERENCE[besoin.coherenceStatut]}</Badge>
+          {besoin.demarcheTalentEngagee && <Badge variant="success">Démarche Talent engagée</Badge>}
         </div>
       </div>
 
