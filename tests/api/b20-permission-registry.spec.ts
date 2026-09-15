@@ -17,7 +17,7 @@ const ACTIONS_VALIDES = ["READ", "WRITE", "EXECUTE", "PROPOSE", "REPORT", "ANALY
 const SCOPES_VALIDES = ["TALENT", "SECURITY", "COMPANY_OS", "PRINCIPAL"];
 
 test.describe("COMPANY ATLAS B20 — Permission Registry (API)", () => {
-  test("le registre contient exactement les 4 permissions justifiées (2 B20 + 2 PROPOSE B21.1/M1), aucune implicite pour PRINCIPAL ni COMPANY_OS", async ({
+  test("le registre contient exactement les 5 permissions justifiées (2 B20 + 2 PROPOSE B21.1/M1 + 1 WRITE B32-PERM), aucune implicite pour PRINCIPAL ni COMPANY_OS", async ({
     request,
   }) => {
     await connecter(request, "admin-demo@example.com");
@@ -25,11 +25,13 @@ test.describe("COMPANY ATLAS B20 — Permission Registry (API)", () => {
     expect(reponse.ok(), await reponse.text()).toBeTruthy();
     const { permissions } = await reponse.json();
     // B21.1 (M1) a ajouté 2 permissions PROPOSE (ATLAS_TALENT, ATLAS_OS_SERVICES)
-    // aux 2 permissions B20 d'origine — voir prisma/migrations/
-    // 20260913010000_b21_1_strategic_hardening. .find() par agentId seul ne
-    // suffit plus (un agent peut désormais porter plusieurs permissions) :
-    // chaque recherche ci-dessous précise aussi l'action.
-    expect(permissions.length).toBe(4);
+    // aux 2 permissions B20 d'origine, puis B32-PERM a ajouté 1 permission
+    // WRITE (ATLAS_TALENT uniquement) — voir prisma/migrations/
+    // 20260913010000_b21_1_strategic_hardening et
+    // 20260915050000_b32_perm_atlas_talent_write_talent. .find() par agentId
+    // seul ne suffit plus (un agent peut désormais porter plusieurs
+    // permissions) : chaque recherche ci-dessous précise aussi l'action.
+    expect(permissions.length).toBe(5);
 
     const agents = await (await request.get("/api/security/agents")).json();
     const idParAgent: Record<string, string> = {};
@@ -63,9 +65,28 @@ test.describe("COMPANY ATLAS B20 — Permission Registry (API)", () => {
     expect(securityPropose.scope).toBe("SECURITY");
     expect(securityPropose.statut).toBe("ACTIVE");
 
+    // B32-PERM — seule nouvelle permission de ce lot : ATLAS_TALENT/WRITE/
+    // TALENT, ACTIVE (justifiée par l'audit B32, Matching Engine Controlled
+    // Execution — voir prisma/migrations/
+    // 20260915050000_b32_perm_atlas_talent_write_talent).
+    const talentWrite = permissions.find(
+      (p: { agentId: string; action: string }) => p.agentId === idParAgent["ATLAS_TALENT"] && p.action === "WRITE"
+    );
+    expect(talentWrite).toBeTruthy();
+    expect(talentWrite.scope).toBe("TALENT");
+    expect(talentWrite.statut).toBe("ACTIVE");
+
+    // Aucune AUTRE permission WRITE nulle part dans le registre — ni pour
+    // ATLAS_OS_SERVICES, ni COMPANY_OS, ni PRINCIPAL (directive B32-PERM,
+    // section 5/7 : moindre privilège strictement respecté, une seule ligne
+    // ajoutée par ce lot).
+    const toutesLesWrite = permissions.filter((p: { action: string }) => p.action === "WRITE");
+    expect(toutesLesWrite.length).toBe(1);
+    expect(toutesLesWrite[0].agentId).toBe(idParAgent["ATLAS_TALENT"]);
+
     // Aucune permission implicite : ni PRINCIPAL ni COMPANY_OS ne reçoivent
-    // de ligne, ni dans le seed B20 ni dans l'ajout B21.1 (directive B20,
-    // règles 7 et 8).
+    // de ligne, ni dans le seed B20, ni dans l'ajout B21.1, ni dans l'ajout
+    // B32-PERM (directive B20, règles 7 et 8 — toujours en vigueur).
     expect(permissions.some((p: { agentId: string }) => p.agentId === idParAgent["PRINCIPAL"])).toBe(false);
     expect(permissions.some((p: { agentId: string }) => p.agentId === idParAgent["COMPANY_OS"])).toBe(false);
   });

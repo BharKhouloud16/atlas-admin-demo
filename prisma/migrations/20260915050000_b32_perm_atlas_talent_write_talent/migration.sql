@@ -1,0 +1,33 @@
+-- COMPANY ATLAS — B32-PERM (15/09/2026) : Permission Registry — extension
+-- minimale, justifiée par un besoin réel identifié lors de l'audit B32
+-- (Matching Engine Controlled Execution).
+--
+-- Aucune modification de schéma (table/enum AgentPermission déjà en place
+-- depuis B20 — voir 20260909000000_permission_registry) : ce fichier ne
+-- contient qu'un INSERT additif, exactement le même mécanisme déjà utilisé
+-- par B21.1 pour ajouter PROPOSE/TALENT et PROPOSE/SECURITY (voir
+-- 20260913010000_b21_1_strategic_hardening) — jamais une deuxième façon de
+-- seeder des permissions.
+--
+-- Justification (moindre privilège, même discipline que le seed B20
+-- d'origine — "chaque permission initiale doit être justifiée par le
+-- périmètre réel de l'agent") : ATLAS_TALENT possède déjà READ/TALENT
+-- (lecture de la plateforme métier Talent, B20) et PROPOSE/TALENT (B21.1).
+-- L'audit B32 a confirmé que le Matching Engine (lib/talent/matching.ts,
+-- déjà existant, non modifié) écrit réellement des ShortlistEntree via
+-- POST /api/talent/demandes/[id]/matching (déjà existant, non modifié) —
+-- une action classée WRITE -> INTERNAL_ACTION par le Commitment Lock
+-- existant (lib/control-plane/commitment.ts, non modifié). Sans cette
+-- permission, guardExecution() (B25) refuserait systématiquement
+-- (fail-closed) toute tentative de faire passer cette écriture par le
+-- Control Plane — exactement le comportement attendu du système, mais qui
+-- rend une exécution contrôlée du Matching Engine impossible tant que
+-- cette permission n'existe pas.
+--
+-- Strictement UNE seule ligne ajoutée : ATLAS_TALENT + WRITE + TALENT.
+-- Aucun autre agent, aucun autre scope, aucune autre action, aucune
+-- modification/suppression d'une ligne existante. PRINCIPAL et
+-- COMPANY_OS restent sans aucune permission (moindre privilège inchangé,
+-- directive B20 toujours en vigueur).
+INSERT INTO "AgentPermission" ("id", "agentId", "action", "scope", "statut", "description", "createdAt", "updatedAt") VALUES
+('perm-atlas-talent-write-talent', 'agent-atlas-talent', 'WRITE', 'TALENT', 'ACTIVE', 'B32-PERM — autorise les écritures métier contrôlées dans le domaine TALENT (ex. persistance de ShortlistEntree par le Matching Engine, lib/talent/matching.ts) dans le périmètre déjà établi (READ+PROPOSE/TALENT, B20/B21.1). Ne couvre aucune autre écriture hors de ce périmètre.', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
