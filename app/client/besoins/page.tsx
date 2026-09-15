@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { grisTexte } from "@/lib/theme";
 import { Card, Section, EmptyState, Badge, Bouton, type BadgeVariant } from "@/components/client/primitives";
+import { dernierFaitParCle } from "@/lib/client-need/faits";
+import { prioriserClarifications, type Clarification } from "@/lib/client-need/clarification";
 
 // COMPANY ATLAS — LOT 2 : Client Need Intelligence Foundation (15/09/2026).
 // Remplace le "Bientôt disponible" du LOT 1 — premier point d'entrée réel
@@ -11,8 +13,14 @@ import { Card, Section, EmptyState, Badge, Bouton, type BadgeVariant } from "@/c
 // provenance (VERIFIE/DECLARE/INFERE/INCONNU) et son statut de cohérence.
 // Aucune décision de routage Talent/ATLAS OS affichée comme un fait acquis
 // (HYPOTHESE_DOMAINE_SOLUTION reste étiquetée comme hypothèse).
+//
+// LOT 3 (15/09/2026) : l'historique complet des ClientNeedFait reste
+// additif côté données (jamais affiché tel quel ici) — seule la DERNIÈRE
+// valeur par clé (dernierFaitParCle) est présentée, avec une section
+// "Questions à préciser" permettant de confirmer/corriger sans jamais
+// réécrire l'historique.
 
-type Fait = { id: string; cle: string; valeur: string; statut: "VERIFIE" | "DECLARE" | "INFERE" | "INCONNU"; source: string | null };
+type Fait = { id: string; cle: string; valeur: string; statut: "VERIFIE" | "DECLARE" | "INFERE" | "INCONNU"; source: string | null; createdAt: string };
 type ReglesCoherence = { regle: string; statut: string; explication: string }[];
 type Besoin = {
   id: string;
@@ -83,6 +91,27 @@ const LABEL_PROVENANCE: Record<string, string> = {
   DECLARE: "Déclaré par vous",
   INFERE: "Déduit par ATLAS",
   INCONNU: "Inconnu",
+};
+
+// LOT 3 — distingue confirmation et correction explicites du client
+// (statut VERIFIE dans les deux cas) via le champ `source`, plutôt qu'un
+// simple "Vérifié" générique — voir directive CEO LOT 3 §6.
+function libelleProvenance(fait: Pick<Fait, "statut" | "source">): string {
+  if (fait.statut === "VERIFIE" && fait.source === "client_confirmation") return "Confirmé par vous";
+  if (fait.statut === "VERIFIE" && fait.source === "client_correction") return "Corrigé par vous";
+  return LABEL_PROVENANCE[fait.statut] ?? fait.statut;
+}
+
+const LABEL_PRIORITE_CLARIFICATION: Record<Clarification["priorite"], string> = {
+  CONTRADICTION: "Contradiction à résoudre",
+  A_PRECISER: "À préciser",
+  MANQUANT: "Information manquante",
+};
+
+const VARIANT_PRIORITE_CLARIFICATION: Record<Clarification["priorite"], BadgeVariant> = {
+  CONTRADICTION: "error",
+  A_PRECISER: "warning",
+  MANQUANT: "neutral",
 };
 
 export default function BesoinsClientPage() {
@@ -186,9 +215,18 @@ function CarteBesoin({
   basculer: () => void;
   recharger: () => void;
 }) {
-  const faitsConnus = besoin.faits.filter((f) => f.statut !== "INCONNU" && f.cle !== "HYPOTHESE_DOMAINE_SOLUTION");
-  const faitsManquants = besoin.faits.filter((f) => f.statut === "INCONNU");
-  const hypothese = besoin.faits.find((f) => f.cle === "HYPOTHESE_DOMAINE_SOLUTION");
+  // LOT 3 : seule la DERNIÈRE valeur par clé est affichée — l'historique
+  // complet (additif, jamais écrasé) reste disponible côté données/audit
+  // mais n'est jamais montré tel quel dans l'Espace Client.
+  const dernierParCle = dernierFaitParCle(besoin.faits);
+  const faitsActuels = [...dernierParCle.values()];
+  const faitsConnus = faitsActuels.filter((f) => f.statut !== "INCONNU" && f.cle !== "HYPOTHESE_DOMAINE_SOLUTION");
+  const hypothese = dernierParCle.get("HYPOTHESE_DOMAINE_SOLUTION");
+
+  const clarifications = prioriserClarifications(
+    new Map(faitsActuels.map((f) => [f.cle, { valeur: f.valeur, statut: f.statut }])),
+    besoin.coherenceDetail ?? []
+  );
 
   return (
     <Card>
@@ -214,19 +252,21 @@ function CarteBesoin({
                     <span>
                       {LABEL_CLE[f.cle] ?? f.cle} : <strong>{f.valeur}</strong>
                     </span>
-                    <Badge variant={VARIANT_PROVENANCE[f.statut]}>{LABEL_PROVENANCE[f.statut]}</Badge>
+                    <Badge variant={VARIANT_PROVENANCE[f.statut]}>{libelleProvenance(f)}</Badge>
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {faitsManquants.length > 0 && (
+          {clarifications.length > 0 && (
             <div>
-              <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 6px" }}>Informations à préciser</p>
-              <p style={{ margin: 0, fontSize: 13, color: grisTexte }}>
-                {faitsManquants.map((f) => LABEL_CLE[f.cle] ?? f.cle).join(" · ")}
-              </p>
+              <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 6px" }}>Questions à préciser</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {clarifications.map((c) => (
+                  <QuestionClarification key={c.cle} besoinId={besoin.id} clarification={c} recharger={recharger} />
+                ))}
+              </div>
             </div>
           )}
 
@@ -257,6 +297,96 @@ function CarteBesoin({
         </div>
       )}
     </Card>
+  );
+}
+
+// LOT 3 : une question par clé clarifiable — Confirmer (garde la valeur
+// actuelle, statut VERIFIE, source client_confirmation) ou Corriger (nouvelle
+// valeur, statut VERIFIE, source client_correction). Jamais de mutation en
+// place : chaque réponse crée une nouvelle ClientNeedFait côté serveur.
+function QuestionClarification({
+  besoinId,
+  clarification,
+  recharger,
+}: {
+  besoinId: string;
+  clarification: Clarification;
+  recharger: () => void;
+}) {
+  const [correction, setCorrection] = useState(false);
+  const [valeur, setValeur] = useState("");
+  const [envoi, setEnvoi] = useState(false);
+  const [erreur, setErreur] = useState<string | null>(null);
+
+  async function repondre(action: "CONFIRMER" | "CORRIGER") {
+    setErreur(null);
+    setEnvoi(true);
+    const reponse = await fetch(`/api/client/besoins/${besoinId}/faits`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cle: clarification.cle, action, valeur: action === "CORRIGER" ? valeur : undefined }),
+    });
+    setEnvoi(false);
+    if (!reponse.ok) {
+      const data = await reponse.json().catch(() => ({}));
+      setErreur(data.error ?? "Une erreur est survenue.");
+      return;
+    }
+    setValeur("");
+    setCorrection(false);
+    recharger();
+  }
+
+  return (
+    <div style={{ border: "1px solid #eee", borderRadius: 6, padding: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+        <div>
+          <p style={{ margin: 0, fontSize: 13, fontWeight: 600 }}>{LABEL_CLE[clarification.cle] ?? clarification.cle}</p>
+          {clarification.explication && (
+            <p style={{ margin: "2px 0 0", fontSize: 12, color: grisTexte }}>{clarification.explication}</p>
+          )}
+          {clarification.valeurActuelle && (
+            <p style={{ margin: "2px 0 0", fontSize: 12, color: grisTexte }}>
+              Valeur actuelle : <strong>{clarification.valeurActuelle}</strong>
+            </p>
+          )}
+        </div>
+        <Badge variant={VARIANT_PRIORITE_CLARIFICATION[clarification.priorite]}>
+          {LABEL_PRIORITE_CLARIFICATION[clarification.priorite]}
+        </Badge>
+      </div>
+
+      {erreur && <p style={{ color: "#c0392b", fontSize: 12, margin: "6px 0 0" }}>{erreur}</p>}
+
+      <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+        {clarification.valeurActuelle && !correction && (
+          <Bouton variant="secondary" onClick={() => repondre("CONFIRMER")} disabled={envoi}>
+            Confirmer
+          </Bouton>
+        )}
+        {!correction && (
+          <Bouton variant="secondary" onClick={() => setCorrection(true)} disabled={envoi}>
+            Corriger
+          </Bouton>
+        )}
+        {correction && (
+          <>
+            <input
+              value={valeur}
+              onChange={(e) => setValeur(e.target.value)}
+              placeholder="Nouvelle valeur"
+              style={{ padding: 6, borderRadius: 6, fontFamily: "inherit", fontSize: 13 }}
+            />
+            <Bouton onClick={() => repondre("CORRIGER")} disabled={envoi || valeur.trim().length === 0}>
+              Envoyer
+            </Bouton>
+            <Bouton variant="secondary" onClick={() => setCorrection(false)} disabled={envoi}>
+              Annuler
+            </Bouton>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
