@@ -1020,6 +1020,7 @@ model Client {
   demandesTalent DemandeTalent[] // ATLAS TALENT (fondations, 06/09) — voir DemandeTalent
   clientNeeds ClientNeed[] // Client Need Intelligence (LOT 2, 15/09) — voir ClientNeed
   clientProfile ClientProfile? // Profil Client durable (LOT 4, 15/09) — voir ClientProfile
+  messages Message[] // CLIENT COMPLETION PROGRAM — C8 (16/09/2026) — voir Message
 }
 
 // Fiche interne d'un profil d'ingénieur. Créée automatiquement, vide de
@@ -1194,6 +1195,32 @@ model Document {
   client Client @relation(fields: [clientId], references: [id])
   clientId String
   createdAt DateTime @default(now())
+}
+
+// CLIENT COMPLETION PROGRAM — C8 : Communication (16/09/2026).
+//
+// Fil de discussion Client <-> ATLAS, scopé par client — jamais de
+// threading, jamais de destinataire individuel (audit confirmé : aucun
+// mécanisme de messagerie/notification/conversation n'existait avant ce
+// lot, seul lib/email.ts, un canal transactionnel à sens unique). auteurRole
+// est un vocabulaire fermé DÉDIÉ (jamais le Role général de User, qui inclut
+// INGENIEUR) : un Ingénieur ne peut structurellement jamais être auteur d'un
+// message — pas seulement une vérification applicative. Historique
+// intégralement additif (aucune édition, aucune suppression en V1).
+enum MessageAuteurRole {
+  CLIENT
+  ADMIN
+}
+
+model Message {
+  id String @id @default(cuid())
+  client Client @relation(fields: [clientId], references: [id])
+  clientId String
+  auteurRole MessageAuteurRole
+  contenu String
+  createdAt DateTime @default(now())
+
+  @@index([clientId])
 }
 
 model DemandeContact {
