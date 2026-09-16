@@ -4,6 +4,7 @@ import { calculerTjmCout } from "@/lib/calculs";
 import { getSession } from "@/lib/auth";
 import { adresseIp } from "@/lib/rate-limit";
 import { enregistrerEvenementSecurite, nouveauCorrelationId } from "@/lib/security/events";
+import { estModeTravailValide, suggererContexteMission } from "@/lib/mission/context-bridge";
 
 // FIX B17 (08/09/2026) — GET/POST prennent désormais `req: NextRequest`
 // (au lieu de `()` / déjà présent pour POST) pour pouvoir journaliser
@@ -35,7 +36,10 @@ export async function GET(req: NextRequest) {
   const missions = await prisma.mission.findMany({
     // INGENIEUR : uniquement les missions liées à son propre profil
     where: session.role === "INGENIEUR" && session.profilId ? { profilId: session.profilId } : {},
-    include: { client: true, profil: true },
+    // LOT 6 : sourceDemande en lecture minimale (id + titre uniquement) —
+    // jamais les critères internes de la demande, qui restent consultables
+    // exclusivement via /admin/talent/[id] (déjà réservé Admin).
+    include: { client: true, profil: true, sourceDemande: { select: { id: true, titre: true } } },
     orderBy: { createdAt: "desc" },
   });
 
@@ -43,13 +47,17 @@ export async function GET(req: NextRequest) {
 
   const enrichies = missions.map((m) => {
     // INGENIEUR : ne voit ni tarifs, ni marges, ni coûts — seulement le
-    // déroulé opérationnel de sa propre mission.
+    // déroulé opérationnel de sa propre mission (LOT 6 : dateDebut/dateFin/
+    // modeTravail en font partie ; sourceDemande reste Admin-only).
     if (session.role === "INGENIEUR") {
       return {
         id: m.id,
         repere: m.repere,
         nbJours: m.nbJours,
         statut: m.statut,
+        dateDebut: m.dateDebut,
+        dateFin: m.dateFin,
+        modeTravail: m.modeTravail,
         client: { nom: m.client.nom },
       };
     }
@@ -90,7 +98,31 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
-  if (!body.clientId || !body.profilId || !body.nbJours || !body.tjmVente) {
+
+  // LOT 6 — Mission Context Bridge (16/09/2026) : lorsqu'une sourceDemandeId
+  // est fournie, clientId est TOUJOURS dérivé de la DemandeTalent côté
+  // serveur — jamais du corps de la requête, même s'il en contient un
+  // (silencieusement ignoré). C'est la même discipline que LOT 5
+  // (ClientNeed -> DemandeTalent) : un clientId dérivable côté serveur
+  // n'est jamais accepté depuis le body (empêche structurellement tout
+  // rattachement d'une Mission au mauvais client).
+  let clientId: string = body.clientId;
+  let contexteSuggere: { dateDebut: Date | null; modeTravail: string | null } = { dateDebut: null, modeTravail: null };
+  const sourceDemandeId = typeof body.sourceDemandeId === "string" && body.sourceDemandeId.trim().length > 0 ? body.sourceDemandeId : null;
+
+  if (sourceDemandeId) {
+    const demande = await prisma.demandeTalent.findUnique({
+      where: { id: sourceDemandeId },
+      select: { clientId: true, dateDebutSouhaitee: true, mobilite: true },
+    });
+    if (!demande) {
+      return NextResponse.json({ error: "Demande Talent introuvable" }, { status: 404 });
+    }
+    clientId = demande.clientId;
+    contexteSuggere = suggererContexteMission(demande);
+  }
+
+  if (!clientId || !body.profilId || !body.nbJours || !body.tjmVente) {
     return NextResponse.json(
       { error: "clientId, profilId, nbJours et tjmVente sont requis" },
       { status: 400 }
@@ -102,15 +134,51 @@ export async function POST(req: NextRequest) {
   const deviseDemandee = typeof body.deviseVente === "string" ? body.deviseVente.trim().toUpperCase() : "";
   const deviseVente = DEVISES_ACCEPTEES.includes(deviseDemandee) ? deviseDemandee : "EUR";
 
+  // LOT 6 : dateDebut/dateFin/modeTravail toujours explicitement fournis
+  // par l'Admin l'emportent sur la suggestion dérivée de la demande —
+  // jamais l'inverse (la suggestion n'est qu'un pré-remplissage, jamais
+  // une valeur imposée). Une date fournie mais invalide est un refus
+  // explicite (400), jamais silencieusement ignorée ou devinée.
+  let dateDebut = contexteSuggere.dateDebut;
+  if (body.dateDebut !== undefined) {
+    if (body.dateDebut === null) {
+      dateDebut = null;
+    } else {
+      const parsed = new Date(body.dateDebut);
+      if (Number.isNaN(parsed.getTime())) return NextResponse.json({ error: "dateDebut invalide" }, { status: 400 });
+      dateDebut = parsed;
+    }
+  }
+  let dateFin: Date | null = null;
+  if (body.dateFin !== undefined && body.dateFin !== null) {
+    const parsed = new Date(body.dateFin);
+    if (Number.isNaN(parsed.getTime())) return NextResponse.json({ error: "dateFin invalide" }, { status: 400 });
+    dateFin = parsed;
+  }
+  let modeTravail: string | null = contexteSuggere.modeTravail;
+  if (body.modeTravail !== undefined) {
+    if (body.modeTravail === null) {
+      modeTravail = null;
+    } else if (!estModeTravailValide(body.modeTravail)) {
+      return NextResponse.json({ error: "modeTravail invalide (Remote, Hybride ou Sur site)" }, { status: 400 });
+    } else {
+      modeTravail = body.modeTravail;
+    }
+  }
+
   const mission = await prisma.mission.create({
     data: {
-      clientId: body.clientId,
+      clientId,
       profilId: body.profilId,
       repere: body.repere ?? null,
       nbJours: body.nbJours,
       margeCible: body.margeCible ?? 0.3,
       tjmVente: body.tjmVente,
       deviseVente,
+      sourceDemandeId,
+      dateDebut,
+      dateFin,
+      modeTravail,
     },
   });
   return NextResponse.json(mission, { status: 201 });
