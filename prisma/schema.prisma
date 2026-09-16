@@ -1225,6 +1225,18 @@ model DemandeTalent {
   criteresModifiesParEmail String?
   criteresModifiesLe DateTime?
 
+  // COMPANY ATLAS — LOT 5 : Client Intelligence → Talent Bridge (15/09/2026).
+  // Traçabilité UNIQUEMENT — jamais une copie des données du besoin (celles-ci
+  // restent exclusivement dans ClientNeed/ClientNeedFait, jamais dupliquées
+  // ici). @unique impose au niveau base qu'un ClientNeed ne produise jamais
+  // plus d'une DemandeTalent (protection native contre le double-clic et la
+  // création concurrente — voir app/api/talent/besoins/[id]/creer-demande).
+  // Nullable : la quasi-totalité des DemandeTalent existantes (créées
+  // directement par le client, hors ce lot) n'ont et n'auront jamais de
+  // besoin source.
+  sourceNeed ClientNeed? @relation(fields: [sourceNeedId], references: [id])
+  sourceNeedId String? @unique
+
   shortlist ShortlistEntree[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1304,6 +1316,10 @@ model ClientNeed {
   analyseProvider String?
   analyseeLe DateTime?
   faits ClientNeedFait[]
+  // LOT 5 : présent (non-null) une fois qu'un ADMIN a explicitement créé une
+  // DemandeTalent à partir de ce besoin (voir DemandeTalent.sourceNeedId).
+  // Jamais renseigné automatiquement.
+  demandeTalentCreee DemandeTalent?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

@@ -43,7 +43,15 @@ export default function TalentAdminPage() {
 
   return (
     <div>
-      <h1>Atlas Talent — demandes clients</h1>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <h1>Atlas Talent — demandes clients</h1>
+        <Link
+          href="/admin/talent/besoins"
+          style={{ fontSize: 13, fontWeight: 600, color: bleu, textDecoration: "none", padding: "8px 14px", border: `1px solid ${bleu}`, borderRadius: 6 }}
+        >
+          Besoins clients à examiner →
+        </Link>
+      </div>
       {chargement && <p style={{ color: "#888" }}>Chargement…</p>}
       {!chargement && demandes.length === 0 && <p style={{ color: "#888" }}>Aucune demande pour l&apos;instant.</p>}
       <ul style={{ listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: 8 }}>
