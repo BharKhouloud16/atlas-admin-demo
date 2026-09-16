@@ -19,6 +19,7 @@ type ShortlistEntree = {
 
 type DemandeAdmin = {
   id: string;
+  clientId: string;
   titre: string | null;
   description: string;
   statut: string;
@@ -32,9 +33,12 @@ type DemandeAdmin = {
   disponibiliteSouhaitee: string | null;
   budgetTjmMax: number | null;
   budgetDevise: string;
+  dateDebutSouhaitee: string | null;
   analyseProvider: string | null;
   criteresModifiesParEmail: string | null;
   criteresModifiesLe: string | null;
+  // LOT 6 — Mission Context Bridge (16/09/2026).
+  missions: { id: string }[];
 };
 
 const LABEL_STATUT_ENTREE: Record<string, string> = {
@@ -184,6 +188,140 @@ export default function TalentAdminDetailPage() {
           </li>
         ))}
       </ul>
+
+      <CreerMission demande={demande} shortlist={shortlist} />
+    </div>
+  );
+}
+
+const MODES_TRAVAIL = ["Remote", "Hybride", "Sur site"] as const;
+
+// COMPANY ATLAS — LOT 6 : Mission Context Bridge (16/09/2026).
+//
+// Rend visible et exploitable la continuité Besoin -> Demande -> Mission
+// directement où l'Admin prend déjà sa décision (une fois un profil
+// VALIDEE en shortlist) — sans nouvel écran, sans dupliquer le formulaire
+// de /admin/missions. dateDebut/modeTravail sont pré-remplis depuis la
+// demande (jamais imposés) ; le clientId n'est jamais envoyé par ce
+// formulaire, il est dérivé côté serveur depuis sourceDemandeId (voir
+// POST /api/missions) — aucun risque de rattachement au mauvais client.
+function CreerMission({ demande, shortlist }: { demande: DemandeAdmin; shortlist: ShortlistEntree[] }) {
+  const candidats = shortlist.filter((e) => e.statut === "VALIDEE");
+  const [profilId, setProfilId] = useState("");
+  const [repere, setRepere] = useState("");
+  const [nbJours, setNbJours] = useState("");
+  const [tjmVente, setTjmVente] = useState(demande.budgetTjmMax != null ? String(demande.budgetTjmMax) : "");
+  const [dateDebut, setDateDebut] = useState(demande.dateDebutSouhaitee ? demande.dateDebutSouhaitee.slice(0, 10) : "");
+  const [modeTravail, setModeTravail] = useState(demande.mobilite && (MODES_TRAVAIL as readonly string[]).includes(demande.mobilite) ? demande.mobilite : "");
+  const [creation, setCreation] = useState(false);
+  const [erreur, setErreur] = useState<string | null>(null);
+  const [missionCreeeId, setMissionCreeeId] = useState<string | null>(null);
+
+  if (demande.missions.length > 0 && !missionCreeeId) {
+    return (
+      <div style={{ border: `1px solid ${bleu}`, borderRadius: 8, padding: 16, margin: "16px 0", background: "#eaf0fd" }}>
+        <p style={{ margin: 0, fontSize: 13 }}>
+          {demande.missions.length === 1 ? "Une mission a déjà été créée depuis cette demande." : `${demande.missions.length} missions ont déjà été créées depuis cette demande.`}{" "}
+          <Link href="/admin/missions" style={{ color: bleu }}>Voir les missions →</Link>
+        </p>
+      </div>
+    );
+  }
+
+  if (missionCreeeId) {
+    return (
+      <div style={{ border: `1px solid #1a7f4b`, borderRadius: 8, padding: 16, margin: "16px 0", background: "#f2faf5" }}>
+        <p style={{ margin: 0, fontSize: 13 }}>
+          Mission créée. <Link href="/admin/missions" style={{ color: bleu }}>Voir les missions →</Link>
+        </p>
+      </div>
+    );
+  }
+
+  if (candidats.length === 0) return null;
+
+  async function creerMission() {
+    if (!profilId || !nbJours || !tjmVente) {
+      setErreur("Ingénieur, nombre de jours et TJM vente sont requis.");
+      return;
+    }
+    setErreur(null);
+    setCreation(true);
+    const reponse = await fetch("/api/missions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sourceDemandeId: demande.id,
+        profilId,
+        repere: repere || undefined,
+        nbJours: Number(nbJours),
+        tjmVente: Number(tjmVente),
+        dateDebut: dateDebut || undefined,
+        modeTravail: modeTravail || undefined,
+      }),
+    });
+    setCreation(false);
+    if (!reponse.ok) {
+      const data = await reponse.json().catch(() => ({}));
+      setErreur(data.error ?? "Erreur lors de la création de la mission.");
+      return;
+    }
+    const mission = await reponse.json();
+    setMissionCreeeId(mission.id);
+  }
+
+  return (
+    <div style={{ border: `1px solid ${bordure}`, borderRadius: 8, padding: 16, margin: "16px 0" }}>
+      <h2 style={{ margin: "0 0 4px", fontSize: 15 }}>Créer une mission</h2>
+      <p style={{ margin: "0 0 12px", fontSize: 12, color: "#888" }}>
+        À partir d&apos;un ingénieur validé — le contexte (période, mode de travail) est pré-rempli depuis cette demande, modifiable avant création.
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div>
+          <label style={labelStyle}>Ingénieur validé</label>
+          <select value={profilId} onChange={(e) => setProfilId(e.target.value)} style={champStyle}>
+            <option value="">Choisir…</option>
+            {candidats.map((c) => (
+              <option key={c.profilId} value={c.profilId}>
+                {c.profil.prenom ? `${c.profil.prenom} ${c.profil.nom}` : c.profil.nom}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label style={labelStyle}>Repère (optionnel)</label>
+          <input value={repere} onChange={(e) => setRepere(e.target.value)} style={champStyle} />
+        </div>
+        <div>
+          <label style={labelStyle}>Nombre de jours</label>
+          <input type="number" min={1} value={nbJours} onChange={(e) => setNbJours(e.target.value)} style={champStyle} />
+        </div>
+        <div>
+          <label style={labelStyle}>TJM vente (€)</label>
+          <input type="number" min={0} value={tjmVente} onChange={(e) => setTjmVente(e.target.value)} style={champStyle} />
+        </div>
+        <div>
+          <label style={labelStyle}>Date de début</label>
+          <input type="date" value={dateDebut} onChange={(e) => setDateDebut(e.target.value)} style={champStyle} />
+        </div>
+        <div>
+          <label style={labelStyle}>Mode de travail</label>
+          <select value={modeTravail} onChange={(e) => setModeTravail(e.target.value)} style={champStyle}>
+            <option value="">—</option>
+            {MODES_TRAVAIL.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+      {erreur && <p style={{ color: "#c0392b", fontSize: 13, margin: "12px 0 0" }}>{erreur}</p>}
+      <button
+        onClick={creerMission}
+        disabled={creation}
+        style={{ marginTop: 12, fontSize: 13, padding: "8px 16px", background: bleu, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
+      >
+        {creation ? "Création…" : "Créer la mission"}
+      </button>
     </div>
   );
 }

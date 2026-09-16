@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, FormEvent } from "react";
-import { bleuFonce, grisTexte, bordure } from "@/lib/theme";
+import Link from "next/link";
+import { bleuFonce, bleu, grisTexte, bordure } from "@/lib/theme";
 
 type Mission = {
   id: string;
@@ -14,6 +15,10 @@ type Mission = {
   margePct?: number | null;
   client: { nom: string };
   profil?: { nom: string; prenom?: string | null };
+  // COMPANY ATLAS — LOT 6 : Mission Context Bridge (16/09/2026).
+  dateDebut?: string | null;
+  modeTravail?: string | null;
+  sourceDemande?: { id: string; titre: string | null } | null;
 };
 
 type ClientOption = { id: string; nom: string };
@@ -226,6 +231,8 @@ export default function MissionsPage() {
               <th style={{ padding: "6px 8px" }}>Ingénieur</th>
               <th style={{ padding: "6px 8px" }}>Repère</th>
               <th style={{ padding: "6px 8px" }}>Jours</th>
+              <th style={{ padding: "6px 8px" }}>Début</th>
+              <th style={{ padding: "6px 8px" }}>Mode</th>
               <th style={{ padding: "6px 8px" }}>Statut</th>
               {isAdmin && <th style={{ padding: "6px 8px" }}>TJM vente</th>}
               {isAdmin && <th style={{ padding: "6px 8px" }}>CA prévisionnel</th>}
@@ -241,7 +248,20 @@ export default function MissionsPage() {
                 <td style={{ padding: "6px 8px" }}>{nomIngenieur(m.profil)}</td>
                 <td style={{ padding: "6px 8px" }}>{m.repere ?? "—"}</td>
                 <td style={{ padding: "6px 8px" }}>{m.nbJours}</td>
-                <td style={{ padding: "6px 8px" }}>{m.statut}</td>
+                <td style={{ padding: "6px 8px" }}>{m.dateDebut ? new Date(m.dateDebut).toLocaleDateString("fr-FR") : "—"}</td>
+                <td style={{ padding: "6px 8px" }}>{m.modeTravail ?? "—"}</td>
+                <td style={{ padding: "6px 8px" }}>
+                  {m.statut}
+                  {m.sourceDemande && (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <Link href={`/admin/talent/${m.sourceDemande.id}`} style={{ color: bleu, fontSize: 11 }}>
+                        depuis besoin
+                      </Link>
+                    </>
+                  )}
+                </td>
                 {isAdmin && <td style={{ padding: "6px 8px" }}>{m.tjmVente != null ? Math.round(m.tjmVente) + " €" : "—"}</td>}
                 {isAdmin && <td style={{ padding: "6px 8px" }}>{m.ca != null ? Math.round(m.ca).toLocaleString("fr-FR") + " €" : "—"}</td>}
                 {isAdmin && (

@@ -1124,6 +1124,35 @@ model Mission {
   documents Document[]
   feuillesDeTemps FeuilleDeTemps[]
   evaluation Evaluation?
+
+  // COMPANY ATLAS — LOT 6 : Mission Context Bridge (16/09/2026).
+  //
+  // Traçabilité UNIQUEMENT vers la DemandeTalent d'origine — jamais une
+  // copie de ses critères (ceux-ci restent exclusivement dans
+  // DemandeTalent, jamais dupliqués ici). Volontairement PAS @unique :
+  // une même DemandeTalent peut donner lieu à plusieurs Mission (ex.
+  // deux ingénieurs affectés, ou une nouvelle mission après renouvellement)
+  // — voir revue architecturale, jamais supposer 1 demande = 1 mission.
+  // Nullable : la quasi-totalité des Mission existantes (créées
+  // manuellement par l'Admin avant ce lot, et la plupart après) n'ont pas
+  // de demande source.
+  sourceDemande DemandeTalent? @relation(fields: [sourceDemandeId], references: [id])
+  sourceDemandeId String?
+
+  // Contexte opérationnel réellement décidé pour cette intervention —
+  // jamais une seconde source de vérité pour le besoin (celui-ci reste
+  // dans ClientNeed/DemandeTalent). Pré-remplis depuis la DemandeTalent
+  // source à la création (dateDebutSouhaitee/mobilite), mais toujours
+  // modifiables par l'Admin ensuite : ce sont ici les valeurs RÉELLEMENT
+  // retenues pour la mission, pas une simple recopie figée.
+  dateDebut DateTime?
+  dateFin DateTime?
+  // Même vocabulaire fermé que DemandeTalent.mobilite (Remote/Hybride/Sur
+  // site) — jamais un second vocabulaire. dateFin/modeTravail restent NULL
+  // (UNKNOWN explicite) tant que non décidés : jamais une valeur devinée.
+  modeTravail String?
+
+  @@index([sourceDemandeId])
 }
 
 model FeuilleDeTemps {
@@ -1236,6 +1265,10 @@ model DemandeTalent {
   // besoin source.
   sourceNeed ClientNeed? @relation(fields: [sourceNeedId], references: [id])
   sourceNeedId String? @unique
+
+  // LOT 6 : back-relation de Mission.sourceDemandeId — une DemandeTalent
+  // peut donner lieu à plusieurs Mission, jamais l'inverse.
+  missions Mission[]
 
   shortlist ShortlistEntree[]
   createdAt DateTime @default(now())

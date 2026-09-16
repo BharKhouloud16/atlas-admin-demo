@@ -36,6 +36,10 @@ type Besoin = {
   // qu'une démarche Talent a été engagée par notre équipe, jamais aucun
   // détail interne de la demande elle-même.
   demarcheTalentEngagee: boolean;
+  // LOT 6 (16/09/2026) : dérivé côté serveur (relation Mission →
+  // DemandeTalent → ClientNeed), jamais un nouveau statut de besoin, jamais
+  // aucun détail interne de la mission (tarifs, ingénieur, marge).
+  missionEnCours: boolean;
 };
 
 const LABEL_CLE: Record<string, string> = {
@@ -243,7 +247,11 @@ function CarteBesoin({
         <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
           <Badge variant="info">{LABEL_STATUT_BESOIN[besoin.statut]}</Badge>
           <Badge variant={VARIANT_COHERENCE[besoin.coherenceStatut]}>{LABEL_COHERENCE[besoin.coherenceStatut]}</Badge>
-          {besoin.demarcheTalentEngagee && <Badge variant="success">Démarche Talent engagée</Badge>}
+          {besoin.missionEnCours ? (
+            <Badge variant="success">Mission en cours</Badge>
+          ) : (
+            besoin.demarcheTalentEngagee && <Badge variant="success">Démarche Talent engagée</Badge>
+          )}
         </div>
       </div>
 

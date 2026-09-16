@@ -76,7 +76,10 @@ export async function GET() {
 
   if (session.role === "ADMIN") {
     const demandes = await prisma.demandeTalent.findMany({
-      include: { client: { select: { nom: true } }, _count: { select: { shortlist: true } } },
+      // LOT 6 : missions en lecture minimale (id uniquement) — permet à
+      // l'Admin de voir qu'une Mission a déjà été créée depuis cette
+      // demande, sans dupliquer les champs internes de Mission ici.
+      include: { client: { select: { nom: true } }, _count: { select: { shortlist: true } }, missions: { select: { id: true } } },
       orderBy: { createdAt: "desc" },
     });
     return NextResponse.json(demandes);
