@@ -4,6 +4,7 @@ import { getSession } from "@/lib/auth";
 import { instancesActivesParCle } from "@/lib/client-profile/faits";
 import { dernierFaitParCle } from "@/lib/client-need/faits";
 import { detecterRecurrences } from "@/lib/client-profile/recurrence";
+import { detecterSignalResultatMission } from "@/lib/client-profile/mission-outcome";
 
 // COMPANY ATLAS — LOT 4 : Profil Client Intelligence Foundation (15/09/2026).
 //
@@ -73,10 +74,15 @@ export async function GET() {
 
   const missions = await prisma.mission.findMany({
     where: { clientId: session.clientId },
-    select: { evaluation: { select: { note: true } } },
+    select: { id: true, evaluation: { select: { note: true } } },
   });
   const notes = missions.map((m) => m.evaluation?.note).filter((n): n is number => typeof n === "number");
   const noteMoyenne = notes.length > 0 ? notes.reduce((a, b) => a + b, 0) / notes.length : null;
+
+  const missionsEvaluees = missions
+    .filter((m): m is typeof m & { evaluation: { note: number } } => typeof m.evaluation?.note === "number")
+    .map((m) => ({ id: m.id, note: m.evaluation.note }));
+  const signalResultatMission = detecterSignalResultatMission(missionsEvaluees);
 
   return NextResponse.json({
     client,
@@ -85,6 +91,7 @@ export async function GET() {
     besoins: { total: besoins.length, ouverts: besoinsOuverts, recents: besoins.slice(0, 5) },
     resultats: { missionsRealisees: missions.length, noteMoyenne, nombreEvaluations: notes.length },
     signauxRecurrence,
+    signalResultatMission,
   });
 }
 

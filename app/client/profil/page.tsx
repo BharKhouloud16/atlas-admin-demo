@@ -39,6 +39,14 @@ type Besoin = { id: string; titre: string | null; texteOriginal: string; statut:
 
 type SignalRecurrence = { cle: string; valeur: string; occurrences: number; needIds: string[] };
 
+type SignalResultatMission = {
+  cle: "CRITERE_REUSSITE_DURABLE";
+  valeur: string;
+  noteMoyenne: number;
+  occurrences: number;
+  missionIds: string[];
+};
+
 type ProfilData = {
   client: Client;
   profile: { id: string; createdAt: string; updatedAt: string };
@@ -46,6 +54,7 @@ type ProfilData = {
   besoins: { total: number; ouverts: number; recents: Besoin[] };
   resultats: { missionsRealisees: number; noteMoyenne: number | null; nombreEvaluations: number };
   signauxRecurrence: SignalRecurrence[];
+  signalResultatMission: SignalResultatMission | null;
 };
 
 const CLES_SINGLETON = new Set(["CONTEXTE_ACTIVITE"]);
@@ -151,7 +160,7 @@ export default function ProfilClientPage() {
           />
         )}
         {onglet === "besoins-recurrence" && <BesoinsRecurrence data={data} recharger={charger} />}
-        {onglet === "resultats" && <Resultats data={data} />}
+        {onglet === "resultats" && <Resultats data={data} recharger={charger} />}
         {onglet === "a-confirmer" && <AConfirmer faits={aConfirmer} recharger={charger} />}
       </Section>
     </div>
@@ -521,7 +530,29 @@ function BesoinsRecurrence({ data, recharger }: { data: ProfilData; recharger: (
   );
 }
 
-function Resultats({ data }: { data: ProfilData }) {
+function Resultats({ data, recharger }: { data: ProfilData; recharger: () => void }) {
+  const [envoi, setEnvoi] = useState(false);
+  const dejaConfirme = data.faits.some(
+    (f) => f.cle === "CRITERE_REUSSITE_DURABLE" && data.signalResultatMission && normaliserPourComparaison(f.valeur) === normaliserPourComparaison(data.signalResultatMission.valeur)
+  );
+
+  async function enregistrerSignalResultat() {
+    if (!data.signalResultatMission) return;
+    setEnvoi(true);
+    await fetch("/api/client/profil/faits", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        cle: data.signalResultatMission.cle,
+        action: "AJOUTER",
+        valeur: data.signalResultatMission.valeur,
+        depuisSignal: true,
+      }),
+    });
+    setEnvoi(false);
+    recharger();
+  }
+
   return (
     <Card>
       <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 8px" }}>Résultats</p>
@@ -535,8 +566,20 @@ function Resultats({ data }: { data: ProfilData }) {
         Le détail de vos missions et évaluations est disponible dans la rubrique{" "}
         <a href="/client/resultats" style={{ color: bleuFonce }}>Résultats</a>.
       </p>
+      {data.signalResultatMission && !dejaConfirme && (
+        <div style={{ marginTop: 14, paddingTop: 10, borderTop: "1px solid #eee", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <p style={{ margin: 0, fontSize: 13 }}>{data.signalResultatMission.valeur}</p>
+          <Bouton variant="secondary" onClick={enregistrerSignalResultat} disabled={envoi}>
+            Enregistrer dans mon profil
+          </Bouton>
+        </div>
+      )}
     </Card>
   );
+}
+
+function normaliserPourComparaison(valeur: string): string {
+  return valeur.trim().toLowerCase();
 }
 
 function AConfirmer({ faits, recharger }: { faits: Fait[]; recharger: () => void }) {
