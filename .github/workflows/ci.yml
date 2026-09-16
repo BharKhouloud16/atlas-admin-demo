@@ -43,7 +43,20 @@ jobs:
       # complète (bien plus de 20 connexions au total) déclenche le
       # rate-limiting anti-bruteforce prévu pour de vrais visiteurs distincts
       # en production, où ce seuil reste à 20 (défaut de lib/rate-limit.ts).
-      RATE_LIMIT_LOGIN_MAX_IP: "500"
+      #
+      # CI FIX (16/09/2026) — la suite combinée après merge des PR #31/#32/#33
+      # (1032 tests) consomme exactement 510 tentatives de connexion sur la
+      # fenêtre de 15 min (mesuré directement en base, clé TentativeIp
+      # "login:127.0.0.1", compteur final observé lors d'une exécution
+      # complète avec seuil temporairement relevé) — dépassait donc le seuil
+      # de 500 pour la première fois, provoquant des échecs d'authentification
+      # artificiels en fin de suite (pas un défaut de code : voir PR #31/#32/#33,
+      # aucune régression réelle identifiée). 600 conserve une limite réelle
+      # (~18 % de marge au-dessus de la consommation mesurée, pas une valeur
+      # arbitraire) tout en couvrant la suite actuelle ; aucun test ne dépend
+      # de la valeur exacte du seuil de rate-limiting lui-même (mécanisme
+      # inchangé, toujours actif).
+      RATE_LIMIT_LOGIN_MAX_IP: "600"
 
     steps:
       - uses: actions/checkout@v4
