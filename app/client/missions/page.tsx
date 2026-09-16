@@ -24,12 +24,18 @@ type ProfilVitrine = {
   aVideo: boolean;
 };
 
+type SourceDemande = { id: string; titre: string | null };
+
 type Mission = {
   id: string;
   repere: string | null;
   statut: string;
   nbJours: number;
   createdAt: string;
+  dateDebut: string | null;
+  dateFin: string | null;
+  modeTravail: string | null;
+  sourceDemande: SourceDemande | null;
   profil: ProfilVitrine;
 };
 
@@ -87,6 +93,20 @@ export default function MissionsClientPage() {
                     <p style={{ margin: "3px 0 0", fontSize: 13, color: grisTexte }}>
                       Statut : {m.statut} · {m.nbJours} jour(s) · démarrée le {new Date(m.createdAt).toLocaleDateString("fr-FR")}
                     </p>
+                    {(m.dateDebut || m.modeTravail) && (
+                      <p style={{ margin: "3px 0 0", fontSize: 13, color: grisTexte }}>
+                        {m.dateDebut && <>Début : {new Date(m.dateDebut).toLocaleDateString("fr-FR")}</>}
+                        {m.dateDebut && m.dateFin && " · "}
+                        {m.dateFin && <>Fin : {new Date(m.dateFin).toLocaleDateString("fr-FR")}</>}
+                        {(m.dateDebut || m.dateFin) && m.modeTravail && " · "}
+                        {m.modeTravail && <>Mode : {m.modeTravail}</>}
+                      </p>
+                    )}
+                    {m.sourceDemande && (
+                      <p style={{ margin: "3px 0 0", fontSize: 12, color: "#94a0b3" }}>
+                        Issue du besoin : {m.sourceDemande.titre ?? "(sans titre)"}
+                      </p>
+                    )}
                     {m.profil.badge && (
                       <div style={{ marginTop: 6 }}>
                         <Badge variant="info">

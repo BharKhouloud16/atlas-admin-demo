@@ -6,15 +6,16 @@ import { Card, Section, EmptyState } from "@/components/client/primitives";
 
 // LOT 1 — Client Workspace Foundation (15/09/2026) : rubrique "Documents",
 // extraite de l'ancien dashboard (app/client/page.tsx) — même appel API
-// (GET /api/client/documents, inchangé), même champs exposés. Seul
-// changement : regroupement par type (contrat/facture/rapport/autre) côté
-// affichage uniquement — la donnée retournée par l'API ne change pas.
+// (GET /api/client/documents), même regroupement par type.
+//
+// CLIENT COMPLETION PROGRAM — C6 (16/09/2026) : fileUrl n'est plus exposé
+// par l'API (URL de stockage privée) — le téléchargement passe par
+// GET /api/client/documents/[id]/fichier.
 
 type DocumentClient = {
   id: string;
   titre: string;
   type: string;
-  fileUrl: string;
   createdAt: string;
 };
 
@@ -66,7 +67,7 @@ export default function DocumentsClientPage() {
                     {new Date(d.createdAt).toLocaleDateString("fr-FR")}
                   </p>
                 </div>
-                <a href={d.fileUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, color: bleu, fontWeight: 600 }}>
+                <a href={`/api/client/documents/${d.id}/fichier`} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, color: bleu, fontWeight: 600 }}>
                   Télécharger
                 </a>
               </Card>
