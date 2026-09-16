@@ -36,17 +36,17 @@ enum StatutDocument {
 // Un compte auto-inscrit (INGENIEUR ou CLIENT) démarre avec actif=false :
 // il ne peut pas se connecter tant qu'un ADMIN ne l'a pas validé.
 model User {
-  id       String @id @default(cuid())
-  email    String @unique
+  id           String   @id @default(cuid())
+  email        String   @unique
   passwordHash String
-  role     Role
-  actif    Boolean @default(true) // false pour tout compte auto-inscrit, en attente de validation
-  createdAt DateTime @default(now())
+  role         Role
+  actif        Boolean  @default(true) // false pour tout compte auto-inscrit, en attente de validation
+  createdAt    DateTime @default(now())
 
   // Traçabilité pour la nouvelle rubrique Admin "Ingénieurs" (liste des
   // comptes validés, voir /admin/ingenieurs) : quand le compte a été validé
   // par un Admin, et sa toute première connexion réussie.
-  valideLe DateTime?
+  valideLe            DateTime?
   premiereConnexionLe DateTime?
 
   // Vérification de l'adresse email à l'inscription (voir lib/email.ts,
@@ -55,19 +55,19 @@ model User {
   // avant l'ajout de cette fonctionnalité) : seule l'inscription publique
   // (/api/auth/signup) le met explicitement à false pour un nouveau compte
   // INGENIEUR/CLIENT, le temps que le lien envoyé par email soit cliqué.
-  emailVerifie Boolean @default(true)
-  emailVerificationToken String? @unique
+  emailVerifie            Boolean   @default(true)
+  emailVerificationToken  String?   @unique
   emailVerificationExpire DateTime?
 
   // Reinitialisation de mot de passe oublie (B14). Colonnes nullables, jamais renseignees par defaut, a usage unique.
-  resetPasswordToken String? @unique
+  resetPasswordToken  String?   @unique
   resetPasswordExpire DateTime?
 
   // Désactivation temporaire du compte par l'ingénieur lui-même (voir
   // /ingenieur -> "Mon compte"). Un compte désactivé peut toujours se
   // reconnecter (contrairement à actif=false) mais est redirigé vers
   // /ingenieur/compte-desactive tant qu'il ne s'est pas réactivé.
-  desactive Boolean @default(false)
+  desactive   Boolean   @default(false)
   desactiveLe DateTime?
 
   // Consentement RGPD au traitement des données (voir /confidentialite),
@@ -75,7 +75,7 @@ model User {
   // CLIENT (case à cocher, voir /inscription). Sert de preuve de
   // consentement (horodatage) — n'affecte pas les comptes ADMIN, créés
   // manuellement en base.
-  consentementRgpd Boolean @default(false)
+  consentementRgpd   Boolean   @default(false)
   consentementRgpdLe DateTime?
 
   profilId String? @unique // renseigné pour un compte INGENIEUR : relie à sa fiche Profil (tarifs)
@@ -88,15 +88,15 @@ model User {
   // app/api/auth/login/route.ts, lib/rate-limit.ts) : ralentit un bruteforce
   // ciblé sur un compte précis sans dépendre d'un service externe type
   // Redis. Remis à zéro dès qu'une connexion réussit.
-  echecsConnexion Int @default(0)
+  echecsConnexion  Int       @default(0)
   verrouilleJusqua DateTime?
 
   // Authentification à deux facteurs (TOTP) — pour l'instant réservée au
   // rôle ADMIN (le compte le plus sensible, accès aux coûts/marges
   // internes). totpSecret reste vide tant que la configuration n'est pas
   // terminée (voir /admin -> "Sécurité", app/api/auth/2fa).
-  totpSecret String?
-  totpActif Boolean @default(false)
+  totpSecret       String?
+  totpActif        Boolean @default(false)
   totpCodesSecours String? // JSON string[] de codes à usage unique (hashés bcrypt)
 }
 
@@ -107,11 +107,11 @@ model User {
 // Fenêtre glissante simple en base plutôt qu'un service externe (Redis...),
 // suffisant pour le volume de cette démo — voir lib/rate-limit.ts.
 model TentativeIp {
-  id String @id @default(cuid())
-  cle String @unique // ex. "login:1.2.3.4"
-  compteur Int @default(0)
+  id           String   @id @default(cuid())
+  cle          String   @unique // ex. "login:1.2.3.4"
+  compteur     Int      @default(0)
   fenetreDebut DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  updatedAt    DateTime @updatedAt
 }
 
 // Journal d'audit des actions administratives sensibles (validation de
@@ -119,13 +119,13 @@ model TentativeIp {
 // voir lib/audit.ts. Attendu par tout client ESN/staffing sérieux : qui a
 // fait quoi, et quand. Consultable dans /admin/journal.
 model JournalActivite {
-  id String @id @default(cuid())
+  id          String   @id @default(cuid())
   acteurEmail String
-  acteurRole Role
-  action String // ex. "validation_compte", "creation_profil", "rejet_cra"
-  cible String? // id de l'entité concernée (userId, profilId, feuilleId...)
-  detail String?
-  createdAt DateTime @default(now())
+  acteurRole  Role
+  action      String // ex. "validation_compte", "creation_profil", "rejet_cra"
+  cible       String? // id de l'entité concernée (userId, profilId, feuilleId...)
+  detail      String?
+  createdAt   DateTime @default(now())
 
   @@index([createdAt])
 }
@@ -164,23 +164,23 @@ enum SeveriteEvenementSecurite {
 }
 
 model EvenementSecurite {
-  id String @id @default(cuid())
+  id            String @id @default(cuid())
   correlationId String // regroupe les événements d'une même requête/tentative
 
   acteurEmail String?
-  acteurRole Role?
-  acteurId String?
+  acteurRole  Role?
+  acteurId    String?
 
-  action String // vocabulaire fermé côté lib/security/events.ts, ex. "auth.login.echec"
+  action        String // vocabulaire fermé côté lib/security/events.ts, ex. "auth.login.echec"
   ressourceType String?
-  ressourceId String?
+  ressourceId   String?
 
-  contexteIp String?
+  contexteIp    String?
   contexteRoute String?
 
   resultat ResultatEvenementSecurite
   severite SeveriteEvenementSecurite @default(INFO)
-  detail String? // texte court, jamais de secret/stack trace (plafonné en code)
+  detail   String? // texte court, jamais de secret/stack trace (plafonné en code)
 
   createdAt DateTime @default(now())
 
@@ -209,16 +209,16 @@ enum StatutPropositionSecurite {
 }
 
 model PropositionSecurite {
-  id String @id @default(cuid())
-  origine String // ex. "SIGNAL:acces_refuses_repetes" ou "MANUEL:admin-demo@example.com" — traçabilité de la source
-  titre String
-  description String
-  statut StatutPropositionSecurite @default(PROPOSEE)
+  id              String                    @id @default(cuid())
+  origine         String // ex. "SIGNAL:acces_refuses_repetes" ou "MANUEL:admin-demo@example.com" — traçabilité de la source
+  titre           String
+  description     String
+  statut          StatutPropositionSecurite @default(PROPOSEE)
   proposeParEmail String? // null si générée depuis un signal plutôt que saisie par un humain
-  proposeLe DateTime @default(now())
-  decideParEmail String?
-  decideLe DateTime?
-  motifDecision String?
+  proposeLe       DateTime                  @default(now())
+  decideParEmail  String?
+  decideLe        DateTime?
+  motifDecision   String?
 
   @@index([statut])
   @@index([proposeLe])
@@ -251,22 +251,22 @@ enum AgentIdentityStatut {
 model AgentIdentity {
   id String @id // volontairement PAS @default(cuid()) : les 4 lignes sont seedées avec un identifiant déterministe fixe par la migration (voir migration.sql), jamais généré à la volée — cohérent avec le caractère fermé et non créable de ce registre.
 
-  agent AgentOfficiel @unique // vocabulaire fermé, exactement les 4 agents officiels — @unique interdit toute deuxième ligne pour le même agent
+  agent        AgentOfficiel       @unique // vocabulaire fermé, exactement les 4 agents officiels — @unique interdit toute deuxième ligne pour le même agent
   nomTechnique String // nom technique stable, ex. "atlas-talent" — usage interne/documentation, ne sert pas encore de mécanisme d'authentification (voir limite ci-dessus)
-  statut AgentIdentityStatut @default(ACTIVE)
-  description String?
-  version String?
+  statut       AgentIdentityStatut @default(ACTIVE)
+  description  String?
+  version      String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  permissions AgentPermission[] // B20 — voir modèle ci-dessous
-  rapports RapportAgent[] // B18-FIX — voir modèle plus bas
+  permissions           AgentPermission[] // B20 — voir modèle ci-dessous
+  rapports              RapportAgent[] // B18-FIX — voir modèle plus bas
   strategicPropositions StrategicActionProposal[] // B21 — voir modèle plus bas
-  decisions Decision[] // B22 — voir modèle plus bas
-  delegations Delegation[] // B22
+  decisions             Decision[] // B22 — voir modèle plus bas
+  delegations           Delegation[] // B22
   authorizationRequests AuthorizationRequest[] // B22
-  auditEvents AuditEvent[] // B22
+  auditEvents           AuditEvent[] // B22
 
   @@index([statut])
 }
@@ -314,11 +314,11 @@ model AgentPermission {
   id String @id // déterministe, seedé par la migration — même discipline que AgentIdentity.id (B19), jamais généré à la volée.
 
   agentId String
-  agent AgentIdentity @relation(fields: [agentId], references: [id])
+  agent   AgentIdentity @relation(fields: [agentId], references: [id])
 
-  action AgentPermissionAction
-  scope AgentPermissionScope
-  statut AgentPermissionStatut @default(ACTIVE)
+  action      AgentPermissionAction
+  scope       AgentPermissionScope
+  statut      AgentPermissionStatut @default(ACTIVE)
   description String?
 
   createdAt DateTime @default(now())
@@ -377,21 +377,21 @@ enum StatutRapportAgent {
 }
 
 model RapportAgent {
-  id String @id @default(cuid())
+  id            String @id @default(cuid())
   correlationId String // regroupe les rapports d'une même chaîne d'exécution — même mécanisme que EvenementSecurite (lib/security/events.ts)
 
   agentId String
-  agent AgentIdentity @relation(fields: [agentId], references: [id])
+  agent   AgentIdentity @relation(fields: [agentId], references: [id])
 
   typeRapport String // vocabulaire fermé côté lib/gouvernance/rapports.ts (TYPES_RAPPORT)
-  objectif String
-  analyse String?
-  actions String?
-  risques String?
-  statut StatutRapportAgent
-  inconnu String? // UNKNOWN explicite (Charte F.1) — jamais déduit, jamais omis silencieusement
-  contexte String?
-  severite SeveriteEvenementSecurite @default(INFO) // réutilise l'enum existant (B16) plutôt que d'en dupliquer un — même discipline que le reste de ce fichier
+  objectif    String
+  analyse     String?
+  actions     String?
+  risques     String?
+  statut      StatutRapportAgent
+  inconnu     String? // UNKNOWN explicite (Charte F.1) — jamais déduit, jamais omis silencieusement
+  contexte    String?
+  severite    SeveriteEvenementSecurite @default(INFO) // réutilise l'enum existant (B16) plutôt que d'en dupliquer un — même discipline que le reste de ce fichier
 
   createdAt DateTime @default(now())
 
@@ -452,14 +452,14 @@ enum StrategicProposalStatut {
 }
 
 model StrategicSignal {
-  id String @id @default(cuid())
+  id            String @id @default(cuid())
   correlationId String // même mécanisme que EvenementSecurite/RapportAgent (lib/security/events.ts)
 
-  categorie StrategicCategory
-  source String // déclaratif, court (ex. "veille manuelle — communiqué concurrent X") — jamais une URL récupérée en masse (pas de scraping, directive B21)
-  titre String
+  categorie   StrategicCategory
+  source      String // déclaratif, court (ex. "veille manuelle — communiqué concurrent X") — jamais une URL récupérée en masse (pas de scraping, directive B21)
+  titre       String
   description String?
-  statut StrategicSignalStatut @default(NOUVEAU)
+  statut      StrategicSignalStatut @default(NOUVEAU)
 
   createdAt DateTime @default(now())
 
@@ -471,21 +471,21 @@ model StrategicSignal {
 }
 
 model StrategicAnalysis {
-  id String @id @default(cuid())
+  id            String @id @default(cuid())
   correlationId String
 
   signalId String
-  signal StrategicSignal @relation(fields: [signalId], references: [id])
+  signal   StrategicSignal @relation(fields: [signalId], references: [id])
 
-  constat String // fait observé appuyé sur le signal — evidence-first, jamais une affirmation sans preuve
-  preuves String?
+  constat   String // fait observé appuyé sur le signal — evidence-first, jamais une affirmation sans preuve
+  preuves   String?
   hypothese String? // hypothèse distincte du fait constaté — jamais présentée comme confirmée
-  inconnu String? // UNKNOWN explicite (Charte F.1) — jamais déduit, jamais omis silencieusement
+  inconnu   String? // UNKNOWN explicite (Charte F.1) — jamais déduit, jamais omis silencieusement
 
   createdAt DateTime @default(now())
 
-  opportunites StrategicOpportunity[]
-  menaces StrategicThreat[]
+  opportunites    StrategicOpportunity[]
+  menaces         StrategicThreat[]
   recommandations StrategicRecommendation[]
 
   @@index([createdAt])
@@ -494,13 +494,13 @@ model StrategicAnalysis {
 }
 
 model StrategicOpportunity {
-  id String @id @default(cuid())
+  id            String            @id @default(cuid())
   correlationId String // B21.1 (M3) — propagé depuis StrategicAnalysis.correlationId (jamais fourni par l'appelant), même mécanisme transverse que StrategicSignal/StrategicAnalysis (lib/security/events.ts)
-  analysisId String
-  analysis StrategicAnalysis @relation(fields: [analysisId], references: [id])
+  analysisId    String
+  analysis      StrategicAnalysis @relation(fields: [analysisId], references: [id])
 
   description String
-  priorite StrategicPriority // toujours saisie par l'appelant humain — jamais calculée/déduite ici
+  priorite    StrategicPriority // toujours saisie par l'appelant humain — jamais calculée/déduite ici
 
   createdAt DateTime @default(now())
 
@@ -510,13 +510,13 @@ model StrategicOpportunity {
 }
 
 model StrategicThreat {
-  id String @id @default(cuid())
+  id            String            @id @default(cuid())
   correlationId String // B21.1 (M3) — propagé depuis StrategicAnalysis.correlationId
-  analysisId String
-  analysis StrategicAnalysis @relation(fields: [analysisId], references: [id])
+  analysisId    String
+  analysis      StrategicAnalysis @relation(fields: [analysisId], references: [id])
 
   description String
-  priorite StrategicPriority
+  priorite    StrategicPriority
 
   createdAt DateTime @default(now())
 
@@ -526,13 +526,13 @@ model StrategicThreat {
 }
 
 model StrategicRecommendation {
-  id String @id @default(cuid())
+  id            String            @id @default(cuid())
   correlationId String // B21.1 (M3) — propagé depuis StrategicAnalysis.correlationId
-  analysisId String
-  analysis StrategicAnalysis @relation(fields: [analysisId], references: [id])
+  analysisId    String
+  analysis      StrategicAnalysis @relation(fields: [analysisId], references: [id])
 
   recommandation String
-  priorite StrategicPriority
+  priorite       StrategicPriority
 
   createdAt DateTime @default(now())
 
@@ -544,22 +544,22 @@ model StrategicRecommendation {
 }
 
 model StrategicActionProposal {
-  id String @id @default(cuid())
+  id            String @id @default(cuid())
   correlationId String
 
   recommendationId String
-  recommendation StrategicRecommendation @relation(fields: [recommendationId], references: [id])
+  recommendation   StrategicRecommendation @relation(fields: [recommendationId], references: [id])
 
   agentId String
-  agent AgentIdentity @relation(fields: [agentId], references: [id])
+  agent   AgentIdentity @relation(fields: [agentId], references: [id])
 
   actionProposee String
-  perimetre String? // scope proposé par l'agent — n'engage rien tant qu'aucune StrategicAuthorization n'existe
-  statut StrategicProposalStatut @default(PROPOSEE)
+  perimetre      String? // scope proposé par l'agent — n'engage rien tant qu'aucune StrategicAuthorization n'existe
+  statut         StrategicProposalStatut @default(PROPOSEE)
 
   createdAt DateTime @default(now())
 
-  autorisation StrategicAuthorization?
+  autorisation       StrategicAuthorization?
   authorizationLinks StrategicAuthorizationLink[]
 
   @@index([createdAt])
@@ -568,20 +568,20 @@ model StrategicActionProposal {
 }
 
 model StrategicAuthorization {
-  id String @id @default(cuid())
+  id            String @id @default(cuid())
   correlationId String
 
-  proposalId String @unique // une seule autorisation par proposition — jamais réutilisée pour une autre action
-  proposal StrategicActionProposal @relation(fields: [proposalId], references: [id])
+  proposalId String                  @unique // une seule autorisation par proposition — jamais réutilisée pour une autre action
+  proposal   StrategicActionProposal @relation(fields: [proposalId], references: [id])
 
   autorisateurEmail String // TOUJOURS dérivé de la session ADMIN authentifiée côté serveur (jamais du corps de la requête) — voir app/api/strategic/propositions/[id]/autoriser/route.ts. Aucun agent n'a de session (limite héritée B19/B20) : structurellement jamais un agent ici. Règle "ne jamais s'auto-autoriser" (directive B21).
-  scope String
-  duree String // durée de validité déclarée (texte court) — pas de moteur d'expiration automatique (Authorization Engine complet hors périmètre B21)
-  budget String?
-  limites String?
+  scope             String
+  duree             String // durée de validité déclarée (texte court) — pas de moteur d'expiration automatique (Authorization Engine complet hors périmètre B21)
+  budget            String?
+  limites           String?
 
   dateAutorisation DateTime @default(now())
-  createdAt DateTime @default(now())
+  createdAt        DateTime @default(now())
 
   @@index([correlationId])
 }
@@ -617,11 +617,11 @@ model StrategicAuthorization {
 // ce modèle établit uniquement la relation historique, jamais un second
 // registre d'état.
 model StrategicAuthorizationLink {
-  id String @id @default(cuid())
+  id            String @id @default(cuid())
   correlationId String
 
   proposalId String
-  proposal StrategicActionProposal @relation(fields: [proposalId], references: [id])
+  proposal   StrategicActionProposal @relation(fields: [proposalId], references: [id])
 
   authorizationRequestId String
 
@@ -787,20 +787,20 @@ enum AuditObjectType {
 // Le problème décisionnel. Ne possède AUCUN droit d'action — une
 // Decision ne modifie jamais rien hors d'elle-même et de ses options.
 model Decision {
-  id String @id @default(cuid())
+  id            String @id @default(cuid())
   correlationId String // validé via estCorrelationIdValide (lib/strategic/domain.ts) — ≤300 inchangé, >300 refusé (400), jamais tronqué
 
   agentId String
-  agent AgentIdentity @relation(fields: [agentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  agent   AgentIdentity @relation(fields: [agentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
   objective String
-  context String?
+  context   String?
 
-  options DecisionOption[] @relation("DecisionOptions")
+  options             DecisionOption[] @relation("DecisionOptions")
   recommendedOptionId String?
-  recommendedOption DecisionOption? @relation("DecisionRecommendedOption", fields: [recommendedOptionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  recommendedOption   DecisionOption?  @relation("DecisionRecommendedOption", fields: [recommendedOptionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  confidence Float? // déclaratif uniquement (0.0-1.0, validé en code) — ne transforme jamais seul une décision en ALLOW
+  confidence     Float? // déclaratif uniquement (0.0-1.0, validé en code) — ne transforme jamais seul une décision en ALLOW
   humanNecessity HumanNecessityLevel? // snapshot au moment de la recommandation — jamais copié vers AuthorizationRequest, toujours recalculé
 
   status DecisionStatus @default(OPEN)
@@ -821,26 +821,26 @@ model Decision {
 // explicites, JAMAIS de score/rank calculé automatiquement (directive B22,
 // section 7/8) — un humain lit chaque dimension séparément.
 model DecisionOption {
-  id String @id @default(cuid())
+  id            String @id @default(cuid())
   correlationId String // toujours copié serveur depuis Decision.correlationId, jamais du body
 
-  decisionId String
-  decision Decision @relation("DecisionOptions", fields: [decisionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  decisionId            String
+  decision              Decision   @relation("DecisionOptions", fields: [decisionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   decisionsRecommandant Decision[] @relation("DecisionRecommendedOption")
 
-  label String
+  label       String
   description String
 
-  businessImpact String? // informatif, jamais un score
+  businessImpact  String? // informatif, jamais un score
   financialImpact String? // informatif, jamais un montant calculé (voir Delegation.maxAmount pour le seul champ numérique qui gate réellement)
   strategicImpact String?
-  clientImpact String?
-  brandImpact BrandImpact? // informatif, jamais un veto (directive B22, section 10)
+  clientImpact    String?
+  brandImpact     BrandImpact? // informatif, jamais un veto (directive B22, section 10)
 
-  riskLevel RiskLevel? // déclaré + justifié, jamais calculé
+  riskLevel         RiskLevel? // déclaré + justifié, jamais calculé
   riskJustification String? // requis en code si riskLevel non nul
-  reversibility String? // qualitatif libre — volontairement pas un enum supplémentaire (non demandé explicitement, voir Phase 3)
-  evidenceQuality EvidenceQuality @default(UNKNOWN) // jamais un null implicite (Charte F.1 : UNKNOWN toujours explicite)
+  reversibility     String? // qualitatif libre — volontairement pas un enum supplémentaire (non demandé explicitement, voir Phase 3)
+  evidenceQuality   EvidenceQuality @default(UNKNOWN) // jamais un null implicite (Charte F.1 : UNKNOWN toujours explicite)
 
   createdAt DateTime @default(now())
 
@@ -855,28 +855,28 @@ model DecisionOption {
 // création ET relu, jamais en cache, à chaque évaluation d'AuthorizationRequest
 // — voir lib/control-plane/delegations.ts).
 model Delegation {
-  id String @id @default(cuid())
+  id            String @id @default(cuid())
   correlationId String
 
   agentId String
-  agent AgentIdentity @relation(fields: [agentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  agent   AgentIdentity @relation(fields: [agentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  action AgentPermissionAction // vocabulaire B20 réutilisé — aucun nouveau vocabulaire d'action
-  scope AgentPermissionScope // vocabulaire B20 réutilisé
-  resource String?
-  objective String
+  action      AgentPermissionAction // vocabulaire B20 réutilisé — aucun nouveau vocabulaire d'action
+  scope       AgentPermissionScope // vocabulaire B20 réutilisé
+  resource    String?
+  objective   String
   actionClass ActionClass
 
   // NULL != illimité (directive B22/Phase 3-FIX, point 5) : NULL signifie
   // "cette délégation ne couvre pas cette dimension", jamais "sans limite".
   // Voir lib/control-plane/delegations.ts (estDelegationCouvrante).
-  maxAmount Float?
+  maxAmount    Float?
   maxRiskLevel RiskLevel?
-  conditions String? // texte libre — volontairement pas un moteur de règles structuré
+  conditions   String? // texte libre — volontairement pas un moteur de règles structuré
 
-  startsAt DateTime @default(now())
+  startsAt  DateTime         @default(now())
   expiresAt DateTime // OBLIGATOIRE — aucune délégation permanente implicite
-  status DelegationStatus @default(ACTIVE)
+  status    DelegationStatus @default(ACTIVE)
 
   createdBy String // TOUJOURS session.email, jamais le corps de la requête
   revokedAt DateTime?
@@ -899,36 +899,36 @@ model Delegation {
 // résolution inline, jamais réémise. Ne peut jamais dépasser AgentIdentity/
 // AgentPermission/Delegation/EmergencyStop (voir lib/control-plane/authorization.ts).
 model AuthorizationRequest {
-  id String @id @default(cuid())
+  id            String @id @default(cuid())
   correlationId String
 
   agentId String
-  agent AgentIdentity @relation(fields: [agentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  agent   AgentIdentity @relation(fields: [agentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  action AgentPermissionAction
+  action      AgentPermissionAction
   actionClass ActionClass // TOUJOURS recalculé serveur (lib/control-plane/commitment.ts) — jamais accepté du client
-  scope AgentPermissionScope
-  resource String?
-  objective String
-  reason String
+  scope       AgentPermissionScope
+  resource    String?
+  objective   String
+  reason      String
 
-  riskLevel RiskLevel? // déclaré + justifié
-  riskJustification String?
-  amount Float? // montant demandé, uniquement si l'action porte un engagement financier — comparé à Delegation.maxAmount (NULL = jamais couvert, voir estDelegationCouvrante)
+  riskLevel              RiskLevel? // déclaré + justifié
+  riskJustification      String?
+  amount                 Float? // montant demandé, uniquement si l'action porte un engagement financier — comparé à Delegation.maxAmount (NULL = jamais couvert, voir estDelegationCouvrante)
   requestedAutonomyLevel AutonomyLevel // > L4 refusé (400) avant toute écriture — voir la route
 
-  decisionId String?
-  decisionRef Decision? @relation(fields: [decisionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  decisionId   String?
+  decisionRef  Decision?   @relation(fields: [decisionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   delegationId String?
-  delegation Delegation? @relation(fields: [delegationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  delegation   Delegation? @relation(fields: [delegationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  status AuthorizationRequestStatus @default(PENDING)
-  decision AuthorizationDecision? // verdict courant — système ("system") puis, si besoin, humain (session.email) ; même champ écrasé en place, jamais réémis après RESOLVED
+  status         AuthorizationRequestStatus @default(PENDING)
+  decision       AuthorizationDecision? // verdict courant — système ("system") puis, si besoin, humain (session.email) ; même champ écrasé en place, jamais réémis après RESOLVED
   decisionReason String? // requis en code si decision non nul
   humanNecessity HumanNecessityLevel? // recalculé ici, jamais copié depuis Decision
-  decidedBy String? // "system" (évaluation automatique) ou session.email (résolution humaine) — jamais un agent
-  approvedBy String? // renseigné uniquement si la résolution humaine finale est ALLOW
-  approvedAt DateTime?
+  decidedBy      String? // "system" (évaluation automatique) ou session.email (résolution humaine) — jamais un agent
+  approvedBy     String? // renseigné uniquement si la résolution humaine finale est ALLOW
+  approvedAt     DateTime?
 
   // OBLIGATOIRE, calculé serveur = requestedAt + 72h — jamais fourni par le
   // client, jamais prolongé (Phase 3-FIX, point 5). Une nouvelle fenêtre
@@ -936,8 +936,8 @@ model AuthorizationRequest {
   expiresAt DateTime
 
   requestedAt DateTime @default(now())
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@index([agentId])
   @@index([status])
@@ -954,18 +954,18 @@ model AuthorizationRequest {
 // PATCH/DELETE (même discipline que AgentIdentity/AgentPermission —
 // aucune mutation possible en dehors de la création).
 model AuditEvent {
-  id String @id @default(cuid())
+  id            String @id @default(cuid())
   correlationId String
 
   objectType AuditObjectType
-  objectId String // volontairement PAS une FK — polymorphe par construction
+  objectId   String // volontairement PAS une FK — polymorphe par construction
 
-  action String // court, plafonné — ex. "created", "revoked", "decided:ALLOW"
+  action   String // court, plafonné — ex. "created", "revoked", "decided:ALLOW"
   decision AuthorizationDecision?
-  actor String // "system" ou session.email — jamais une prétention d'agent
-  agentId String?
-  agent AgentIdentity? @relation(fields: [agentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  reason String?
+  actor    String // "system" ou session.email — jamais une prétention d'agent
+  agentId  String?
+  agent    AgentIdentity?         @relation(fields: [agentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  reason   String?
   metadata Json? // jamais de secret/token/mot de passe — même discipline que EvenementSecurite.detail
 
   timestamp DateTime @default(now())
@@ -982,17 +982,17 @@ model AuditEvent {
 // liftedAt IS NULL — pas de champ status séparé (une seule source de
 // vérité, évite toute désynchronisation).
 model EmergencyStop {
-  id String @id @default(cuid())
+  id            String @id @default(cuid())
   correlationId String
 
-  scope EmergencyStopScope
+  scope    EmergencyStopScope
   targetId String? // requis en code si scope != GLOBAL (contrôle applicatif, pas une contrainte DB)
-  reason String
+  reason   String
 
   activatedBy String // TOUJOURS session.email d'un ADMIN, jamais un agent
-  activatedAt DateTime @default(now())
-  liftedBy String?
-  liftedAt DateTime?
+  activatedAt DateTime  @default(now())
+  liftedBy    String?
+  liftedAt    DateTime?
 
   @@index([scope, targetId])
   @@index([correlationId])
@@ -1000,27 +1000,28 @@ model EmergencyStop {
 }
 
 model Client {
-  id String @id @default(cuid())
-  nom String // raison sociale
-  pays String? // pays d'implantation du client (affiché dans l'historique de mission ingénieur, et sert à terme au calendrier de jours fériés des feuilles de temps)
-  secteur String?
-  contactReferent String? // nom de la personne de contact côté client
-  email String?
-  telephone String?
+  id                    String           @id @default(cuid())
+  nom                   String // raison sociale
+  pays                  String? // pays d'implantation du client (affiché dans l'historique de mission ingénieur, et sert à terme au calendrier de jours fériés des feuilles de temps)
+  secteur               String?
+  contactReferent       String? // nom de la personne de contact côté client
+  email                 String?
+  telephone             String?
   identifiantEntreprise String? // RC / RNE selon le pays
-  formeJuridique String? // SARL, SA, EURL, Auto-entrepreneur, etc.
-  statutPreferere TypeContrat?
-  dateDebutPrevue DateTime?
-  notes String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  missions Mission[]
-  documents Document[]
-  compte User? // le compte de connexion du client, une fois inscrit
-  demandesTalent DemandeTalent[] // ATLAS TALENT (fondations, 06/09) — voir DemandeTalent
-  clientNeeds ClientNeed[] // Client Need Intelligence (LOT 2, 15/09) — voir ClientNeed
-  clientProfile ClientProfile? // Profil Client durable (LOT 4, 15/09) — voir ClientProfile
-  messages Message[] // CLIENT COMPLETION PROGRAM — C8 (16/09/2026) — voir Message
+  formeJuridique        String? // SARL, SA, EURL, Auto-entrepreneur, etc.
+  statutPreferere       TypeContrat?
+  dateDebutPrevue       DateTime?
+  notes                 String?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  missions              Mission[]
+  documents             Document[]
+  compte                User? // le compte de connexion du client, une fois inscrit
+  demandesTalent        DemandeTalent[] // ATLAS TALENT (fondations, 06/09) — voir DemandeTalent
+  clientNeeds           ClientNeed[] // Client Need Intelligence (LOT 2, 15/09) — voir ClientNeed
+  clientProfile         ClientProfile? // Profil Client durable (LOT 4, 15/09) — voir ClientProfile
+  messages              Message[] // CLIENT COMPLETION PROGRAM — C8 (16/09/2026) — voir Message
+  solutionOptions       SolutionOption[] // V2.1-A — C3 Solution Intelligence (16/09/2026) — voir SolutionOption
 }
 
 // Fiche interne d'un profil d'ingénieur. Créée automatiquement, vide de
@@ -1029,39 +1030,39 @@ model Client {
 // déterminés après import + validation du CV (voir InfoCV), sur la base de
 // l'analyse du profil (séniorité, compétences) — voir lib/analyse-profil.ts.
 model Profil {
-  id String @id @default(cuid())
-  nom String // nom de famille (avant la refonte, contenait le nom complet — voir prenom)
-  prenom String? // prénom, saisi séparément à l'inscription depuis la refonte du 4 sept.
-  type TypeContrat?
+  id           String       @id @default(cuid())
+  nom          String // nom de famille (avant la refonte, contenait le nom complet — voir prenom)
+  prenom       String? // prénom, saisi séparément à l'inscription depuis la refonte du 4 sept.
+  type         TypeContrat?
   montantSaisi Float? // laissé vide jusqu'à ce qu'un contrat soit négocié
 
-  cvUrl String?
+  cvUrl        String?
   cvNomFichier String?
-  cvImporteLe DateTime?
-  cvValide Boolean @default(false)
+  cvImporteLe  DateTime?
+  cvValide     Boolean   @default(false)
 
-  anneesExperience Int?
-  seniorite String?
-  pointsForts String?
-  tjmEstime Float?
+  anneesExperience   Int?
+  seniorite          String?
+  pointsForts        String?
+  tjmEstime          Float?
   typeContratSuggere TypeContrat?
 
-  disponibilite String?
-  disponibilitePrevue String?
-  changerMissionActuelle Boolean?
-  missionApres String?
-  preavis String?
-  preavisPrecision String?
+  disponibilite             String?
+  disponibilitePrevue       String?
+  changerMissionActuelle    Boolean?
+  missionApres              String?
+  preavis                   String?
+  preavisPrecision          String?
   disponibiliteRenseigneeLe DateTime?
-  questionnaireValide Boolean @default(false)
+  questionnaireValide       Boolean   @default(false)
 
-  nationalite String?
-  nationalitePrecision String?
-  paysResidence String?
+  nationalite            String?
+  nationalitePrecision   String?
+  paysResidence          String?
   paysResidencePrecision String?
-  regimeSuggere String?
+  regimeSuggere          String?
 
-  tjmSouhaite Float?
+  tjmSouhaite       Float?
   tjmSouhaiteDevise String?
 
   competences String[] @default([])
@@ -1070,61 +1071,61 @@ model Profil {
 
   realisations Json?
 
-  videoUrl String?
+  videoUrl        String?
   videoNomFichier String?
-  videoImporteLe DateTime?
+  videoImporteLe  DateTime?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  missions Mission[]
-  infosCv InfoCV[]
-  versionsCv VersionCv[]
-  compte User?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  missions         Mission[]
+  infosCv          InfoCV[]
+  versionsCv       VersionCv[]
+  compte           User?
   shortlistEntrees ShortlistEntree[]
   competencesGraph ProfilCompetence[]
 }
 
 model VersionCv {
-  id String @id @default(cuid())
-  profil Profil @relation(fields: [profilId], references: [id], onDelete: Cascade)
-  profilId String
-  cvUrl String
+  id           String   @id @default(cuid())
+  profil       Profil   @relation(fields: [profilId], references: [id], onDelete: Cascade)
+  profilId     String
+  cvUrl        String
   cvNomFichier String?
-  importeLe DateTime
-  createdAt DateTime @default(now())
+  importeLe    DateTime
+  createdAt    DateTime @default(now())
 
   @@index([profilId])
 }
 
 model InfoCV {
-  id String @id @default(cuid())
-  profil Profil @relation(fields: [profilId], references: [id], onDelete: Cascade)
-  profilId String
+  id        String   @id @default(cuid())
+  profil    Profil   @relation(fields: [profilId], references: [id], onDelete: Cascade)
+  profilId  String
   categorie String
-  libelle String
-  valeur String
-  ordre Int @default(0)
-  valide Boolean @default(false)
+  libelle   String
+  valeur    String
+  ordre     Int      @default(0)
+  valide    Boolean  @default(false)
   createdAt DateTime @default(now())
 }
 
 model Mission {
-  id String @id @default(cuid())
-  repere String?
-  client Client @relation(fields: [clientId], references: [id])
-  clientId String
-  profil Profil @relation(fields: [profilId], references: [id])
-  profilId String
-  nbJours Int
-  margeCible Float @default(0.30)
-  tjmVente Float
-  deviseVente String @default("EUR")
-  statut String @default("En cours") // En cours / Terminée / Annulée
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  documents Document[]
+  id              String           @id @default(cuid())
+  repere          String?
+  client          Client           @relation(fields: [clientId], references: [id])
+  clientId        String
+  profil          Profil           @relation(fields: [profilId], references: [id])
+  profilId        String
+  nbJours         Int
+  margeCible      Float            @default(0.30)
+  tjmVente        Float
+  deviseVente     String           @default("EUR")
+  statut          String           @default("En cours") // En cours / Terminée / Annulée
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  documents       Document[]
   feuillesDeTemps FeuilleDeTemps[]
-  evaluation Evaluation?
+  evaluation      Evaluation?
 
   // COMPANY ATLAS — LOT 6 : Mission Context Bridge (16/09/2026).
   //
@@ -1137,7 +1138,7 @@ model Mission {
   // Nullable : la quasi-totalité des Mission existantes (créées
   // manuellement par l'Admin avant ce lot, et la plupart après) n'ont pas
   // de demande source.
-  sourceDemande DemandeTalent? @relation(fields: [sourceDemandeId], references: [id])
+  sourceDemande   DemandeTalent? @relation(fields: [sourceDemandeId], references: [id])
   sourceDemandeId String?
 
   // Contexte opérationnel réellement décidé pour cette intervention —
@@ -1146,8 +1147,8 @@ model Mission {
   // source à la création (dateDebutSouhaitee/mobilite), mais toujours
   // modifiables par l'Admin ensuite : ce sont ici les valeurs RÉELLEMENT
   // retenues pour la mission, pas une simple recopie figée.
-  dateDebut DateTime?
-  dateFin DateTime?
+  dateDebut   DateTime?
+  dateFin     DateTime?
   // Même vocabulaire fermé que DemandeTalent.mobilite (Remote/Hybride/Sur
   // site) — jamais un second vocabulaire. dateFin/modeTravail restent NULL
   // (UNKNOWN explicite) tant que non décidés : jamais une valeur devinée.
@@ -1157,44 +1158,44 @@ model Mission {
 }
 
 model FeuilleDeTemps {
-  id String @id @default(cuid())
-  mission Mission @relation(fields: [missionId], references: [id])
-  missionId String
-  mois String // format "AAAA-MM"
-  joursTravailles Float @default(0)
-  heuresSupplementaires Float @default(0)
-  commentaire String?
-  detailJours Json?
-  statut String @default("Brouillon")
-  motifRejet String?
-  soumiseLe DateTime?
-  valideeAdminLe DateTime?
-  valideeClientLe DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                    String    @id @default(cuid())
+  mission               Mission   @relation(fields: [missionId], references: [id])
+  missionId             String
+  mois                  String // format "AAAA-MM"
+  joursTravailles       Float     @default(0)
+  heuresSupplementaires Float     @default(0)
+  commentaire           String?
+  detailJours           Json?
+  statut                String    @default("Brouillon")
+  motifRejet            String?
+  soumiseLe             DateTime?
+  valideeAdminLe        DateTime?
+  valideeClientLe       DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
   @@unique([missionId, mois])
 }
 
 model Evaluation {
-  id String @id @default(cuid())
-  mission Mission @relation(fields: [missionId], references: [id])
-  missionId String @unique
-  note Int
+  id          String   @id @default(cuid())
+  mission     Mission  @relation(fields: [missionId], references: [id])
+  missionId   String   @unique
+  note        Int
   commentaire String?
-  createdAt DateTime @default(now())
+  createdAt   DateTime @default(now())
 }
 
 model Document {
-  id String @id @default(cuid())
-  titre String
-  type StatutDocument @default(AUTRE)
-  fileUrl String
-  mission Mission? @relation(fields: [missionId], references: [id])
+  id        String         @id @default(cuid())
+  titre     String
+  type      StatutDocument @default(AUTRE)
+  fileUrl   String
+  mission   Mission?       @relation(fields: [missionId], references: [id])
   missionId String?
-  client Client @relation(fields: [clientId], references: [id])
-  clientId String
-  createdAt DateTime @default(now())
+  client    Client         @relation(fields: [clientId], references: [id])
+  clientId  String
+  createdAt DateTime       @default(now())
 }
 
 // CLIENT COMPLETION PROGRAM — C8 : Communication (16/09/2026).
@@ -1213,35 +1214,35 @@ enum MessageAuteurRole {
 }
 
 model Message {
-  id String @id @default(cuid())
-  client Client @relation(fields: [clientId], references: [id])
-  clientId String
+  id         String            @id @default(cuid())
+  client     Client            @relation(fields: [clientId], references: [id])
+  clientId   String
   auteurRole MessageAuteurRole
-  contenu String
-  createdAt DateTime @default(now())
+  contenu    String
+  createdAt  DateTime          @default(now())
 
   @@index([clientId])
 }
 
 model DemandeContact {
-  id String @id @default(cuid())
-  nom String
-  email String
-  entreprise String?
-  telephone String?
-  message String?
+  id              String   @id @default(cuid())
+  nom             String
+  email           String
+  entreprise      String?
+  telephone       String?
+  message         String?
   creneauSouhaite String?
-  traite Boolean @default(false)
-  createdAt DateTime @default(now())
+  traite          Boolean  @default(false)
+  createdAt       DateTime @default(now())
 }
 
 model Hypotheses {
-  id String @id @default("singleton")
-  joursAn Int @default(218)
-  chargesSalarie Float @default(0.42)
-  fraisFreelance Float @default(0.08)
-  overhead Float @default(0.15)
-  margeDefaut Float @default(0.30)
+  id             String @id @default("singleton")
+  joursAn        Int    @default(218)
+  chargesSalarie Float  @default(0.42)
+  fraisFreelance Float  @default(0.08)
+  overhead       Float  @default(0.15)
+  margeDefaut    Float  @default(0.30)
 }
 
 // ============================================================================
@@ -1257,29 +1258,29 @@ enum StatutDemandeTalent {
 }
 
 model DemandeTalent {
-  id String @id @default(cuid())
-  client Client @relation(fields: [clientId], references: [id])
-  clientId String
-  titre String?
+  id          String              @id @default(cuid())
+  client      Client              @relation(fields: [clientId], references: [id])
+  clientId    String
+  titre       String?
   description String
-  statut StatutDemandeTalent @default(SOUMISE)
+  statut      StatutDemandeTalent @default(SOUMISE)
 
-  competencesExtraites String[] @default([])
-  senioriteSouhaitee String?
-  anneesExperienceMin Int?
-  secteurActivite String?
-  localisation String?
-  mobilite String?
+  competencesExtraites   String[]  @default([])
+  senioriteSouhaitee     String?
+  anneesExperienceMin    Int?
+  secteurActivite        String?
+  localisation           String?
+  mobilite               String?
   disponibiliteSouhaitee String?
-  budgetTjmMax Float?
-  budgetDevise String @default("EUR")
-  dateDebutSouhaitee DateTime?
-  analyseProvider String?
-  analyseConfiance Float?
-  analyseeLe DateTime?
+  budgetTjmMax           Float?
+  budgetDevise           String    @default("EUR")
+  dateDebutSouhaitee     DateTime?
+  analyseProvider        String?
+  analyseConfiance       Float?
+  analyseeLe             DateTime?
 
   criteresModifiesParEmail String?
-  criteresModifiesLe DateTime?
+  criteresModifiesLe       DateTime?
 
   // COMPANY ATLAS — LOT 5 : Client Intelligence → Talent Bridge (15/09/2026).
   // Traçabilité UNIQUEMENT — jamais une copie des données du besoin (celles-ci
@@ -1290,16 +1291,16 @@ model DemandeTalent {
   // Nullable : la quasi-totalité des DemandeTalent existantes (créées
   // directement par le client, hors ce lot) n'ont et n'auront jamais de
   // besoin source.
-  sourceNeed ClientNeed? @relation(fields: [sourceNeedId], references: [id])
-  sourceNeedId String? @unique
+  sourceNeed   ClientNeed? @relation(fields: [sourceNeedId], references: [id])
+  sourceNeedId String?     @unique
 
   // LOT 6 : back-relation de Mission.sourceDemandeId — une DemandeTalent
   // peut donner lieu à plusieurs Mission, jamais l'inverse.
   missions Mission[]
 
   shortlist ShortlistEntree[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
 
   @@index([clientId])
 }
@@ -1311,18 +1312,18 @@ enum StatutShortlist {
 }
 
 model ShortlistEntree {
-  id String @id @default(cuid())
-  demande DemandeTalent @relation(fields: [demandeId], references: [id], onDelete: Cascade)
-  demandeId String
-  profil Profil @relation(fields: [profilId], references: [id])
-  profilId String
-  score Float
-  confiance Float
-  motifs Json
-  statut StatutShortlist @default(SUGGEREE)
+  id             String          @id @default(cuid())
+  demande        DemandeTalent   @relation(fields: [demandeId], references: [id], onDelete: Cascade)
+  demandeId      String
+  profil         Profil          @relation(fields: [profilId], references: [id])
+  profilId       String
+  score          Float
+  confiance      Float
+  motifs         Json
+  statut         StatutShortlist @default(SUGGEREE)
   valideParEmail String?
-  valideLe DateTime?
-  createdAt DateTime @default(now())
+  valideLe       DateTime?
+  createdAt      DateTime        @default(now())
 
   @@unique([demandeId, profilId])
 }
@@ -1361,27 +1362,32 @@ enum ClientNeedCoherenceStatut {
 }
 
 model ClientNeed {
-  id String @id @default(cuid())
-  client Client @relation(fields: [clientId], references: [id])
-  clientId String
-  correlationId String
+  id                 String                    @id @default(cuid())
+  client             Client                    @relation(fields: [clientId], references: [id])
+  clientId           String
+  correlationId      String
   // Jamais réécrit — la saisie originale du client reste consultable même
   // après extraction/correction (même principe que DemandeTalent.description).
-  texteOriginal String
-  titre String?
-  statut ClientNeedStatut @default(BROUILLON)
-  coherenceStatut ClientNeedCoherenceStatut @default(UNKNOWN)
+  texteOriginal      String
+  titre              String?
+  statut             ClientNeedStatut          @default(BROUILLON)
+  coherenceStatut    ClientNeedCoherenceStatut @default(UNKNOWN)
   // Liste de {regle, statut, explication} — voir lib/client-need/coherence.ts.
-  coherenceDetail Json?
-  analyseProvider String?
-  analyseeLe DateTime?
-  faits ClientNeedFait[]
+  coherenceDetail    Json?
+  analyseProvider    String?
+  analyseeLe         DateTime?
+  faits              ClientNeedFait[]
   // LOT 5 : présent (non-null) une fois qu'un ADMIN a explicitement créé une
   // DemandeTalent à partir de ce besoin (voir DemandeTalent.sourceNeedId).
   // Jamais renseigné automatiquement.
   demandeTalentCreee DemandeTalent?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // V2.1-A : options/recommandations/décisions C3 Solution Intelligence
+  // rattachées à ce besoin (voir SolutionOption ci-dessous) — relation
+  // requise par Prisma en contrepartie de SolutionOption.need, aucun champ
+  // existant modifié.
+  solutionOptions    SolutionOption[]
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
 
   @@index([clientId])
 }
@@ -1438,18 +1444,95 @@ enum ClientNeedFaitCle {
 // sont répétables par nature — l'appliquer au niveau base figerait
 // prématurément le modèle.
 model ClientNeedFait {
-  id String @id @default(cuid())
-  need ClientNeed @relation(fields: [needId], references: [id], onDelete: Cascade)
-  needId String
+  id           String                 @id @default(cuid())
+  need         ClientNeed             @relation(fields: [needId], references: [id], onDelete: Cascade)
+  needId       String
   composanteId String?
-  cle ClientNeedFaitCle
-  valeur String
-  statut StatutPreuveCompetence @default(INCONNU)
-  source String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  cle          ClientNeedFaitCle
+  valeur       String
+  statut       StatutPreuveCompetence @default(INCONNU)
+  source       String?
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
 
   @@index([needId])
+}
+
+// COMPANY ATLAS — V2.1-A : C3 Solution Intelligence, socle data (16/09/2026).
+//
+// SolutionOption porte toute la chaîne de gouvernance FAIT→SIGNAL→
+// HYPOTHESE→OPTION→RECOMMANDATION→DECISION pour un ClientNeed donné — un
+// seul modèle append-only, même discipline que ClientProfileFact (jamais
+// d'UPDATE/DELETE, une nouvelle ligne pour chaque nouvel élément de la
+// chaîne). `niveau` utilise un vocabulaire dédié (NiveauCertitudeSolution),
+// volontairement PAS StatutProfilFait ni StatutPreuveCompetence ni
+// ShortlistEntree.statut — même principe de séparation des domaines déjà
+// appliqué pour ClientProfileFact vis-à-vis de StatutPreuveCompetence (voir
+// plus haut) : la gouvernance C3 (Client-facing) ne doit jamais dépendre du
+// vocabulaire de staffing interne (Admin-facing) et inversement.
+//
+// V2.1-A ne crée que le socle : aucune logique de calcul, de comparaison,
+// d'adaptation Talent→Client ni de décision n'est implémentée ici (voir
+// V2.1-B/C/D). FAIT et SIGNAL ne sont volontairement jamais persistés comme
+// SolutionOption (calculés à la volée en amont, même principe que le signal
+// de récurrence de ClientProfile) — seules HYPOTHESE et les niveaux
+// suivants donnent lieu à une ligne.
+model SolutionOption {
+  id              String                  @id @default(cuid())
+  need            ClientNeed              @relation(fields: [needId], references: [id], onDelete: Cascade)
+  needId          String
+  // Dénormalisé depuis need.clientId — vérification d'ownership directe en
+  // une seule lecture, même patron que Document/Message ; ne provient et ne
+  // doit jamais provenir d'une entrée utilisateur (session uniquement, côté
+  // API — aucune API n'est créée dans cette étape).
+  client          Client                  @relation(fields: [clientId], references: [id])
+  clientId        String
+  niveau          NiveauCertitudeSolution
+  typeSolution    TypeSolution
+  titre           String
+  justification   String
+  // Evidence structurée (compétences correspondantes, contraintes
+  // satisfaites/non satisfaites, etc.) — jamais une copie des données
+  // sources (ClientNeedFait/DemandeTalent), même rôle que
+  // ShortlistEntree.motifs côté staffing interne.
+  donnees         Json
+  // Auto-référence traçant la chaîne (RECOMMANDATION pointe vers la ou les
+  // OPTION dont elle dérive, DECISION pointe vers la RECOMMANDATION
+  // décidée) — volontairement une simple colonne, pas une relation Prisma,
+  // même mécanisme que ClientProfileFact.confirmeDepuis : aucune contrainte
+  // FK, résolue en code applicatif (V2.1-B/D), jamais de mutation en place.
+  sourceOptionId  String?
+  // Référence de traçabilité pure vers une DemandeTalent existante, jamais
+  // une relation Prisma complète : une relation forcerait un champ inverse
+  // sur DemandeTalent, donc une modification de ce modèle, explicitement
+  // exclue de ce lot. Renseigné uniquement quand typeSolution=TALENT et
+  // qu'une DemandeTalent a déjà été créée par un Admin (LOT 5, inchangé) —
+  // jamais créée automatiquement depuis C3.
+  demandeTalentId String?
+  // Renseignés uniquement quand niveau=DECISION — aucune logique de
+  // décision n'est implémentée dans cette étape (voir V2.1-D).
+  decideParEmail  String?
+  decideLe        DateTime?
+  createdAt       DateTime                @default(now())
+
+  @@index([needId])
+  @@index([clientId])
+}
+
+enum NiveauCertitudeSolution {
+  FAIT
+  SIGNAL
+  HYPOTHESE
+  OPTION
+  RECOMMANDATION
+  DECISION
+}
+
+// Un seul type pour cette étape — SERVICE/AUTRE seront ajoutés uniquement
+// si un besoin réel (ex. ATLAS APPLICATION) le justifie, jamais par
+// anticipation (voir revue architecturale, point ouvert de la conception).
+enum TypeSolution {
+  TALENT
 }
 
 // COMPANY ATLAS — LOT 4 : Profil Client Intelligence Foundation (15/09/2026).
@@ -1471,12 +1554,12 @@ model ClientNeedFait {
 // confirmée devient logiquement inactive dès qu'une ligne ultérieure la
 // référence par `confirmeDepuis`, sans jamais être supprimée ni modifiée.
 model ClientProfile {
-  id String @id @default(cuid())
-  client Client @relation(fields: [clientId], references: [id])
-  clientId String @unique
-  faits ClientProfileFact[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id        String              @id @default(cuid())
+  client    Client              @relation(fields: [clientId], references: [id])
+  clientId  String              @unique
+  faits     ClientProfileFact[]
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
 }
 
 // Vocabulaire FERMÉ — un nouvel attribut s'ajoute comme une nouvelle valeur
@@ -1504,16 +1587,16 @@ enum ClientProfileFaitCle {
 // "actif" séparée. Pas de contrainte d'unicité sur (profileId, cle) :
 // plusieurs instances valides simultanément pour les clés répétables.
 model ClientProfileFact {
-  id String @id @default(cuid())
-  profile ClientProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  profileId String
-  cle ClientProfileFaitCle
-  valeur String
-  statut StatutProfilFait @default(INCONNU)
-  source String?
+  id             String               @id @default(cuid())
+  profile        ClientProfile        @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  profileId      String
+  cle            ClientProfileFaitCle
+  valeur         String
+  statut         StatutProfilFait     @default(INCONNU)
+  source         String?
   confirmeDepuis String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
 
   @@index([profileId])
 }
@@ -1565,32 +1648,32 @@ enum SourcePreuveCompetence {
 }
 
 model ProfilCompetence {
-  id String @id @default(cuid())
-  profil Profil @relation(fields: [profilId], references: [id], onDelete: Cascade)
-  profilId String
-  competence String
-  niveau Int?
+  id               String                 @id @default(cuid())
+  profil           Profil                 @relation(fields: [profilId], references: [id], onDelete: Cascade)
+  profilId         String
+  competence       String
+  niveau           Int?
   anneesExperience Int?
-  contexte String?
-  secteur String?
-  statut StatutPreuveCompetence @default(INCONNU)
-  confiance NiveauConfiance @default(BASSE)
-  preuves SkillEvidence[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  contexte         String?
+  secteur          String?
+  statut           StatutPreuveCompetence @default(INCONNU)
+  confiance        NiveauConfiance        @default(BASSE)
+  preuves          SkillEvidence[]
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
 
   @@unique([profilId, competence])
   @@index([profilId])
 }
 
 model SkillEvidence {
-  id String @id @default(cuid())
-  profilCompetence ProfilCompetence @relation(fields: [profilCompetenceId], references: [id], onDelete: Cascade)
+  id                 String                 @id @default(cuid())
+  profilCompetence   ProfilCompetence       @relation(fields: [profilCompetenceId], references: [id], onDelete: Cascade)
   profilCompetenceId String
-  source SourcePreuveCompetence
-  detail String?
-  niveau Int?
-  createdAt DateTime @default(now())
+  source             SourcePreuveCompetence
+  detail             String?
+  niveau             Int?
+  createdAt          DateTime               @default(now())
 
   @@index([profilCompetenceId])
 }
