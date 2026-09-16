@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { bleu, bleuFonce, grisTexte, bordure } from "@/lib/theme";
 import { PAYS } from "@/lib/localisation";
 
@@ -146,6 +147,7 @@ export default function ClientsPage() {
               <th style={{ padding: "6px 8px" }}>Email</th>
               <th style={{ padding: "6px 8px" }}>Téléphone</th>
               <th style={{ padding: "6px 8px" }}>Client depuis</th>
+              <th style={{ padding: "6px 8px" }}></th>
             </tr>
           </thead>
           <tbody>
@@ -158,6 +160,11 @@ export default function ClientsPage() {
                 <td style={{ padding: "6px 8px" }}>{c.email ?? "—"}</td>
                 <td style={{ padding: "6px 8px" }}>{c.telephone ?? "—"}</td>
                 <td style={{ padding: "6px 8px" }}>{new Date(c.createdAt).toLocaleDateString("fr-FR")}</td>
+                <td style={{ padding: "6px 8px" }}>
+                  <Link href={`/admin/clients/${c.id}/messages`} style={{ fontSize: 13, color: bleu, textDecoration: "none" }}>
+                    Messages
+                  </Link>
+                </td>
               </tr>
             ))}
           </tbody>

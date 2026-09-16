@@ -20,7 +20,7 @@ const RUBRIQUES: { href: string; label: string; disponible: boolean }[] = [
   { href: "/client/atlas-os", label: "ATLAS OS / Services", disponible: false },
   { href: "/client/resultats", label: "Résultats", disponible: true },
   { href: "/client/documents", label: "Documents", disponible: true },
-  { href: "/client/communication", label: "Communication", disponible: false },
+  { href: "/client/communication", label: "Communication", disponible: true },
   { href: "/client/finance", label: "Finance", disponible: true },
   // LOT 4 (15/09/2026) : "Entreprise" (réservée LOT 1, vide) devient
   // "Profil" — même emplacement de navigation, décision CEO explicite de
