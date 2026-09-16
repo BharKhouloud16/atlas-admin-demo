@@ -18,10 +18,20 @@ import type { MissionEvaluable } from "@/components/client/EvaluationsAFaire";
 // importants, 5. Résultats (teaser). Aucun agrégat calculé n'est présenté
 // comme une métrique officielle — seulement des comptages directs des
 // mêmes listes.
+//
+// CLIENT COMPLETION PROGRAM — C10 (16/09/2026) : "Actions requises"
+// n'agrégeait que 2 signaux (feuilles à valider, missions à évaluer) alors
+// que 2 autres existaient déjà, chacun visible uniquement sur sa propre
+// page (besoins/page.tsx, profil/page.tsx) — jamais remontés ici. Ajout de
+// GET /api/client/besoins (statut A_CLARIFIER) et GET /api/client/profil
+// (faits INFERE/OBSERVE, même filtre que profil/page.tsx aConfirmer) — deux
+// routes déjà existantes, aucune nouvelle route créée.
 
 type Mission = { id: string; repere: string | null; statut: string; nbJours: number; createdAt: string; profil: { nom: string } };
 type DocumentClient = { id: string; titre: string; type: string; createdAt: string };
 type DemandeTalent = { id: string; titre: string | null; description: string; statut: string; createdAt: string };
+type Besoin = { id: string; titre: string | null; texteOriginal: string; statut: string };
+type FaitProfil = { statut: string };
 
 type ActiviteItem = { id: string; date: string; label: string; href: string };
 
@@ -31,6 +41,8 @@ export default function VueDEnsembleClient() {
   const [feuilles, setFeuilles] = useState<FeuilleClient[]>([]);
   const [evaluables, setEvaluables] = useState<MissionEvaluable[]>([]);
   const [demandes, setDemandes] = useState<DemandeTalent[]>([]);
+  const [besoins, setBesoins] = useState<Besoin[]>([]);
+  const [faitsProfil, setFaitsProfil] = useState<FaitProfil[]>([]);
   const [chargement, setChargement] = useState(true);
 
   useEffect(() => {
@@ -40,19 +52,25 @@ export default function VueDEnsembleClient() {
       fetch("/api/feuilles-de-temps").then((r) => r.json()),
       fetch("/api/evaluations").then((r) => r.json()),
       fetch("/api/talent/demandes").then((r) => r.json()),
-    ]).then(([m, d, f, ev, dem]) => {
+      fetch("/api/client/besoins").then((r) => r.json()),
+      fetch("/api/client/profil").then((r) => r.json()),
+    ]).then(([m, d, f, ev, dem, b, p]) => {
       setMissions(m ?? []);
       setDocuments(Array.isArray(d) ? d : []);
       setFeuilles(f.feuilles ?? []);
       setEvaluables(ev.missions ?? []);
       setDemandes(Array.isArray(dem) ? dem : []);
+      setBesoins(b.besoins ?? []);
+      setFaitsProfil(p.faits ?? []);
       setChargement(false);
     });
   }, []);
 
   const feuillesAValider = feuilles.filter((f) => f.statut === "ValideeAdmin");
   const missionsAEvaluer = evaluables.filter((m) => !m.evaluation);
-  const totalActions = feuillesAValider.length + missionsAEvaluer.length;
+  const besoinsAClarifier = besoins.filter((b) => b.statut === "A_CLARIFIER");
+  const faitsAConfirmer = faitsProfil.filter((f) => f.statut === "INFERE" || f.statut === "OBSERVE");
+  const totalActions = feuillesAValider.length + missionsAEvaluer.length + besoinsAClarifier.length + faitsAConfirmer.length;
 
   const missionsEnCours = missions.filter((m) => m.statut === "En cours");
   const demandesEnCours = demandes.filter((d) => d.statut !== "CLOTUREE");
@@ -89,6 +107,26 @@ export default function VueDEnsembleClient() {
                 <Card style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <p style={{ margin: 0, fontWeight: 600, color: "#111" }}>
                     {missionsAEvaluer.length} mission{missionsAEvaluer.length > 1 ? "s" : ""} terminée{missionsAEvaluer.length > 1 ? "s" : ""} à évaluer
+                  </p>
+                  <Badge variant="warning">À traiter</Badge>
+                </Card>
+              </Link>
+            )}
+            {besoinsAClarifier.length > 0 && (
+              <Link href="/client/besoins" style={{ textDecoration: "none" }}>
+                <Card style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <p style={{ margin: 0, fontWeight: 600, color: "#111" }}>
+                    {besoinsAClarifier.length} besoin{besoinsAClarifier.length > 1 ? "s" : ""} à clarifier
+                  </p>
+                  <Badge variant="warning">À traiter</Badge>
+                </Card>
+              </Link>
+            )}
+            {faitsAConfirmer.length > 0 && (
+              <Link href="/client/profil" style={{ textDecoration: "none" }}>
+                <Card style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <p style={{ margin: 0, fontWeight: 600, color: "#111" }}>
+                    {faitsAConfirmer.length} information{faitsAConfirmer.length > 1 ? "s" : ""} de profil à confirmer
                   </p>
                   <Badge variant="warning">À traiter</Badge>
                 </Card>

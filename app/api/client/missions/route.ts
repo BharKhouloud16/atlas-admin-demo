@@ -8,6 +8,11 @@ import { calculerBadgeConfiance } from "@/lib/scoring";
 // Depuis peu, on expose aussi côté client un aperçu "vitrine" du profil de
 // l'ingénieur (portfolio de réalisations, badge de confiance, vidéo de
 // présentation) — jamais de score de matching ni de TJM, réservés à l'Admin.
+//
+// CLIENT COMPLETION PROGRAM — C4 (16/09/2026) : expose enfin dateDebut,
+// dateFin, modeTravail (LOT 6) et le lien minimal vers le besoin d'origine
+// (id + titre uniquement, même forme que l'Admin) — champs déjà écrits en
+// base par LOT 6 mais jamais sélectionnés ici jusqu'à présent.
 export async function GET() {
   const session = await getSession();
   if (!session || session.role !== "CLIENT" || !session.clientId) {
@@ -22,6 +27,10 @@ export async function GET() {
       statut: true,
       nbJours: true,
       createdAt: true,
+      dateDebut: true,
+      dateFin: true,
+      modeTravail: true,
+      sourceDemande: { select: { id: true, titre: true } },
       profil: {
         select: {
           id: true,

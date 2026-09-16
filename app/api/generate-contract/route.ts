@@ -9,6 +9,12 @@ import { getSession } from "@/lib/auth";
 import { adresseIp } from "@/lib/rate-limit";
 import { enregistrerEvenementSecurite, nouveauCorrelationId } from "@/lib/security/events";
 import { estTemplateInterneIngenieur } from "@/lib/security/contrats";
+import { persisterDocumentClient } from "@/lib/client-documents";
+
+const LABEL_TEMPLATE: Record<string, string> = {
+  contrat_prestation: "Contrat de prestation",
+  nda: "Accord de confidentialité (NDA)",
+};
 
 // Modèles disponibles dans /templates — chacun doit contenir des balises
 // {nom_client}, {tjm_vente}, {nb_jours}, {profil_nom}, {type_contrat}, etc.
@@ -116,6 +122,25 @@ export async function POST(req: NextRequest) {
   });
 
   const buffer = doc.getZip().generate({ type: "nodebuffer" });
+
+  // CLIENT COMPLETION PROGRAM — C6 (16/09/2026) : ne persister en Document
+  // (visible via GET /api/client/documents) QUE les modèles destinés au
+  // CLIENT (contrat_prestation, nda). Les modèles internes (cdi/freelance/
+  // portage) contiennent la rémunération de l'ingénieur (montant_profil) —
+  // les persister rendrait cette donnée interne visible au client via sa
+  // propre route Documents, ce que cette route protège explicitement
+  // ailleurs (voir estTemplateInterneIngenieur ci-dessus). Best-effort :
+  // un échec de stockage ne bloque jamais le téléchargement par l'Admin.
+  if (!estTemplateInterne) {
+    await persisterDocumentClient({
+      titre: `${LABEL_TEMPLATE[templateKey]} — ${mission.repere ?? mission.id}`,
+      type: "CONTRAT",
+      nomFichier: `${templateKey}_${mission.client.nom.replace(/\s+/g, "_")}.docx`,
+      buffer,
+      missionId: mission.id,
+      clientId: mission.clientId,
+    });
+  }
 
   await enregistrerEvenementSecurite({
     correlationId,

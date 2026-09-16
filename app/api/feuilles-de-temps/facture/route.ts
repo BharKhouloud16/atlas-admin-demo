@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { genererFacturePdf } from "@/lib/pdf-facture";
+import { persisterDocumentClient } from "@/lib/client-documents";
 
 // Génère la facture PDF (voir lib/pdf-facture.ts) d'un CRA définitivement
 // validé (statut ValideeClient — voir PATCH /api/feuilles-de-temps,
@@ -52,6 +53,20 @@ export async function GET(req: NextRequest) {
     // toujours son défaut "EUR" quelle que soit la mission. Aucune
     // conversion : on transmet tel quel le montant et son code devise.
     deviseTjm: feuille.mission.deviseVente,
+  });
+
+  // CLIENT COMPLETION PROGRAM — C7 (16/09/2026) : persiste la facture en
+  // Document (visible via GET /api/client/documents) — jusqu'ici cette
+  // route se contentait de streamer le PDF à l'Admin sans jamais
+  // l'enregistrer. Best-effort (voir lib/client-documents.ts) : un échec de
+  // stockage ne bloque jamais la génération/transmission de la facture.
+  await persisterDocumentClient({
+    titre: `Facture ${numero}`,
+    type: "FACTURE",
+    nomFichier: `${numero}.pdf`,
+    buffer: Buffer.from(pdfBytes),
+    missionId: feuille.mission.id,
+    clientId: feuille.mission.clientId,
   });
 
   // new Uint8Array(...) : voir le commentaire équivalent dans
