@@ -68,7 +68,14 @@ const CLIENT_PREFIXES = ["/client", "/api/client/"];
 // /api/missions/[id]/marge-intelligence hérite du même préfixe
 // "/api/missions" et bénéficie du même correctif sans modification
 // séparée.
-const SHARED_PREFIXES = ["/api/feuilles-de-temps", "/api/evaluations", "/api/generate-contract", "/api/missions", "/api/clients"];
+// V2.2-B (17/09/2026) : /api/factures ajouté ici sur exactement le même
+// patron que /api/feuilles-de-temps (FIX B16/B17, voir commentaire
+// ci-dessus) — le middleware laisse passer les 3 rôles authentifiés, mais
+// chaque route (app/api/factures/*) reste seule responsable du détail
+// RBAC/ownership et journalise elle-même tout refus (defense in depth,
+// même discipline). Un Ingénieur reçoit systématiquement 403 depuis la
+// route elle-même : il n'a jamais accès à Facture/Paiement.
+const SHARED_PREFIXES = ["/api/feuilles-de-temps", "/api/evaluations", "/api/generate-contract", "/api/missions", "/api/clients", "/api/factures"];
 // ATLAS TALENT V1 (fondations, 06/09) — réservé à CLIENT (sa propre
 // DemandeTalent) et ADMIN (matching/shortlist) ; jamais l'INGENIEUR. Chaque
 // route vérifie aussi elle-même le rôle exact (voir
@@ -179,5 +186,6 @@ export const config = {
     "/api/feuilles-de-temps/:path*",
     "/api/evaluations/:path*",
     "/api/talent/:path*",
+    "/api/factures/:path*",
   ],
 };
