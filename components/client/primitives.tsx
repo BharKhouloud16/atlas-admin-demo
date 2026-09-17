@@ -1,5 +1,5 @@
-import type { ReactNode, CSSProperties, ButtonHTMLAttributes } from "react";
-import { bleu, bleuFonce, bordure, grisTexte, vert, orange, rouge } from "@/lib/theme";
+import type { ReactNode, CSSProperties, ButtonHTMLAttributes, ReactElement } from "react";
+import { bleu, bleuFonce, bordure, grisTexte, vert, orange, rouge, fondClair } from "@/lib/theme";
 
 // LOT 4 — Profil Client (15/09/2026) : deux ajouts minimaux au design
 // system existant, aucun autre composant créé (Tabs et bouton tertiary —
@@ -205,5 +205,78 @@ export function Tabs({
         );
       })}
     </div>
+  );
+}
+
+// V2.2-B — Billing Foundation (17/09/2026) : premier besoin réel d'une
+// forme tabulaire dans l'Espace Client (voir audit V2.2-A — jusqu'ici
+// volontairement absente, tout étant des listes de cartes). `<table>`
+// sémantique (accessibilité — lecteurs d'écran, navigation clavier) plutôt
+// qu'une grille de `<div>` ; wrapper à défilement horizontal pour rester
+// utilisable sur mobile sans reflow spécifique (voir mandat CEO V2.2-B
+// section 19 : "réutilisable au-delà de Billing" — colonnes/lignes
+// génériques, jamais un contenu Billing en dur).
+export function Table({ colonnes, lignes, cleLigne }: { colonnes: { label: string; align?: "left" | "right" }[]; lignes: ReactNode[][]; cleLigne: (index: number) => string }) {
+  return (
+    <div style={{ overflowX: "auto", border: `1px solid ${bordure}`, borderRadius: 10 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <thead>
+          <tr style={{ background: fondClair }}>
+            {colonnes.map((c, i) => (
+              <th
+                key={i}
+                style={{
+                  textAlign: c.align ?? "left",
+                  padding: "10px 12px",
+                  fontSize: 11,
+                  textTransform: "uppercase",
+                  color: grisTexte,
+                  fontWeight: 700,
+                  borderBottom: `1px solid ${bordure}`,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {c.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {lignes.map((ligne, i) => (
+            <tr key={cleLigne(i)} style={{ borderBottom: i < lignes.length - 1 ? `1px solid ${bordure}` : "none" }}>
+              {ligne.map((cellule, j) => (
+                <td key={j} style={{ padding: "10px 12px", textAlign: colonnes[j]?.align ?? "left", verticalAlign: "middle" }}>
+                  {cellule}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Affiche un montant hiérarchisé (mandat CEO V2.2-B section 18 : "montant
+// visible" comme critère UX de premier plan) — jamais une valeur brute
+// sans contexte de devise, jamais un composant Billing-only (réutilisable
+// pour tout montant de l'Espace Client).
+export function MoneyDisplay({ montant, devise, taille = 20, couleur = bleuFonce }: { montant: number; devise: string; taille?: number; couleur?: string }): ReactElement {
+  const formate = montant.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return (
+    <span style={{ fontSize: taille, fontWeight: 700, color: couleur }}>
+      {formate} <span style={{ fontSize: taille * 0.55, fontWeight: 600 }}>{devise}</span>
+    </span>
+  );
+}
+
+// Bloc résumé (solde, prochaine échéance...) — reprend le style Card
+// existant, jamais une nouvelle esthétique de "widget dashboard".
+export function StatTile({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <Card style={{ flex: "1 1 160px", minWidth: 160 }}>
+      <p style={{ margin: "0 0 6px", fontSize: 11, textTransform: "uppercase", color: "#888", fontWeight: 700 }}>{label}</p>
+      {children}
+    </Card>
   );
 }

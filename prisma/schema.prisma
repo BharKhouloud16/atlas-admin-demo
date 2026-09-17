@@ -1022,6 +1022,7 @@ model Client {
   clientProfile         ClientProfile? // Profil Client durable (LOT 4, 15/09) — voir ClientProfile
   messages              Message[] // CLIENT COMPLETION PROGRAM — C8 (16/09/2026) — voir Message
   solutionOptions       SolutionOption[] // V2.1-A — C3 Solution Intelligence (16/09/2026) — voir SolutionOption
+  factures              Facture[] // V2.2-B — Billing Foundation (17/09/2026) — voir Facture
 }
 
 // Fiche interne d'un profil d'ingénieur. Créée automatiquement, vide de
@@ -1154,6 +1155,8 @@ model Mission {
   // (UNKNOWN explicite) tant que non décidés : jamais une valeur devinée.
   modeTravail String?
 
+  factures Facture[] // V2.2-B — Billing Foundation (17/09/2026) — voir Facture
+
   @@index([sourceDemandeId])
 }
 
@@ -1173,6 +1176,10 @@ model FeuilleDeTemps {
   valideeClientLe       DateTime?
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
+  // V2.2-B — Billing Foundation (17/09/2026) : une FeuilleDeTemps donne lieu
+  // à au plus une Facture (voir Facture.feuilleDeTempsId, @unique côté
+  // Facture) — jamais plusieurs factures pour la même période/mission.
+  facture               Facture?
 
   @@unique([missionId, mois])
 }
@@ -1196,6 +1203,12 @@ model Document {
   client    Client         @relation(fields: [clientId], references: [id])
   clientId  String
   createdAt DateTime       @default(now())
+  // V2.2-B — Billing Foundation (17/09/2026) : PDF de facture, une fois
+  // généré, persisté ici comme n'importe quel autre Document (même
+  // infrastructure de stockage privé, lib/storage.ts — jamais un second
+  // système). Back-relation requise par Prisma pour Facture.documentId,
+  // aucun champ existant modifié.
+  facture   Facture?
 }
 
 // CLIENT COMPLETION PROGRAM — C8 : Communication (16/09/2026).
@@ -1676,4 +1689,189 @@ model SkillEvidence {
   createdAt          DateTime               @default(now())
 
   @@index([profilCompetenceId])
+}
+
+// ==========================================================================
+// COMPANY ATLAS — V2.2-B : BILLING + FISCAL & REGULATORY COMPLIANCE
+// FOUNDATION (17/09/2026)
+// ==========================================================================
+//
+// Sépare conceptuellement la transaction commerciale (Facture, Paiement) de
+// la règle réglementaire qui s'y applique (RegleFiscale) — jamais un
+// `if France...`/`if 2027...` dispersé dans le code applicatif (voir
+// lib/billing/regle-fiscale.ts). Chaque Facture fige, à son émission, une
+// copie non réévaluable de la règle réellement appliquée
+// (Facture.complianceSnapshot) : une évolution ultérieure de RegleFiscale
+// (nouvelle version, nouveau régime) ne réécrit jamais l'histoire d'une
+// facture déjà émise — même principe déjà éprouvé dans ce dépôt pour
+// SolutionOption (V2.1) et ClientProfileFact (LOT 4) : append-only, jamais
+// de mutation rétroactive silencieuse.
+//
+// 100% additif : aucun champ existant modifié/supprimé sur Mission,
+// FeuilleDeTemps, Document, Client — Facture réutilise ces entités par
+// relation, ne les duplique jamais (source unique de vérité : le TJM/la
+// devise restent sur Mission, jamais recopiés ailleurs que dans le
+// complianceSnapshot figé, dont c'est justement la fonction).
+//
+// Montants en Decimal (pas Float, contrairement à Mission.tjmVente/
+// montantSaisi) : décision délibérée et documentée pour ce lot — un montant
+// FACTURÉ/PAYÉ, contrairement à un TJM négocié, doit pouvoir être comparé à
+// zéro (solde == 0) sans dérive d'arrondi binaire. Voir rapport V2.2-B,
+// section Architecture retenue.
+
+// Statut de Facture — ÉCHUE est volontairement absent de cette liste :
+// c'est un état DÉRIVÉ (ENVOYEE ou PARTIELLEMENT_PAYEE + dateEcheance
+// dépassée), jamais stocké ni muté par une tâche planifiée (aucune
+// infrastructure de notification/cron n'existe dans ce dépôt à ce stade,
+// voir audit V2.2-A/B) — calculé à la lecture par
+// lib/billing/etat-facture.ts (statutAffiche()), jamais une vérité de plus
+// à faire dériver deux fois.
+enum StatutFacture {
+  BROUILLON
+  VALIDEE
+  ENVOYEE
+  PARTIELLEMENT_PAYEE
+  PAYEE
+  ANNULEE
+}
+
+// PARTIELLEMENT_PAYEE/PAYEE ne sont jamais positionnés directement par un
+// appelant : ils sont toujours le résultat déterministe du solde après
+// enregistrement d'un Paiement (lib/billing/etat-facture.ts) — jamais une
+// action Admin indépendante qui pourrait diverger du solde réel.
+enum StatutPaiement {
+  CONFIRME
+  ANNULE
+}
+
+// Statut du cycle de vie d'une RegleFiscale elle-même (pas de la Facture) —
+// permet de préparer une future version (BROUILLON) avant activation, et de
+// retirer une règle obsolète sans jamais la supprimer (RETIREE, jamais un
+// DELETE : une Facture historique doit toujours pouvoir résoudre la règle
+// qui lui a été appliquée à l'époque).
+enum StatutRegleFiscale {
+  BROUILLON
+  ACTIVE
+  RETIREE
+}
+
+// Consolide en UNE SEULE entité versionnée et time-bound ce que le mandat
+// CEO décrit comme Jurisdiction + TaxRegime + VATRule + InvoiceRule +
+// RegulatoryVersion : une même juridiction/un même régime ont besoin d'un
+// ensemble cohérent de paramètres qui évoluent ENSEMBLE dans le temps (taux
+// de TVA, mentions obligatoires, référence légale) — les séparer en
+// plusieurs tables aurait exigé de les revalider mutuellement à chaque
+// lecture sans bénéfice réel, l'exact anti-pattern que le mandat CEO
+// dénonce. `parametres` (Json) porte les données propres à chaque règle
+// (taux, mentions...) — jamais une colonne dédiée par futur paramètre
+// fiscal, même principe que SolutionOption.donnees (V2.1).
+//
+// Aucune règle fiscale n'est inventée ici : la seule ligne réellement
+// activée par ce lot (voir migration de données de ce lot) reprend le
+// régime DÉJÀ appliqué et affiché par lib/pdf-facture.ts avant ce lot
+// (franchise en base, art. 293B du CGI, aucune TVA) — jamais une nouvelle
+// affirmation juridique. Toute autre juridiction/régime reste UNKNOWN tant
+// qu'il n'est pas explicitement sourcé et validé (voir rapport V2.2-B,
+// section Risques / UNKNOWN).
+model RegleFiscale {
+  id            String             @id @default(cuid())
+  // Code libre (jamais un enum fermé : les juridictions futures ne sont
+  // pas connues à l'avance) — ex. "FR", "EU", "INTERNATIONAL".
+  juridiction   String
+  // Identifiant de version lisible, ex. "FR_FRANCHISE_BASE_V1" — jamais
+  // réutilisé une fois une version ACTIVE ou RETIREE (immuable une fois
+  // sortie de BROUILLON).
+  version       String             @unique
+  statut        StatutRegleFiscale @default(BROUILLON)
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  // Référence de la source réglementaire (texte de loi, article, lien) —
+  // jamais une règle sans provenance vérifiable.
+  source        String
+  parametres    Json
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  factures      Facture[]
+
+  @@index([juridiction, statut])
+}
+
+// Entité persistante et append-only sur ses montants : une fois `statut`
+// sorti de BROUILLON, montantHT/montantTVA/montantTTC/devise ne sont plus
+// jamais recalculés depuis Mission/FeuilleDeTemps (contrairement au PDF à
+// la volée existant avant ce lot) — une évolution ultérieure de
+// Mission.tjmVente ne modifie jamais rétroactivement une Facture déjà
+// créée. `complianceSnapshot` fige la règle fiscale réellement appliquée à
+// la validation (voir RegleFiscale ci-dessus) : une Facture historique
+// reste interprétable même si `regleFiscale` évolue ou est retirée ensuite.
+//
+// Une Facture par FeuilleDeTemps (jamais plusieurs pour la même période/
+// mission) : `feuilleDeTempsId` est @unique, garantissant l'idempotence de
+// la création au niveau base de données, pas seulement applicatif (voir
+// lib/billing/creation.ts).
+//
+// `dateEnvoi` (distinct de `dateEmission`) est le seul champ qui détermine
+// la visibilité Client (voir app/api/factures/route.ts) — jamais le
+// `statut` directement : une Facture ANNULEE après avoir été envoyée doit
+// rester visible côté Client (il doit savoir qu'elle a été annulée),
+// tandis qu'une Facture BROUILLON/VALIDEE (jamais envoyée) ou ANNULEE
+// avant tout envoi ne doit jamais lui apparaître.
+model Facture {
+  id                 String         @id @default(cuid())
+  client             Client         @relation(fields: [clientId], references: [id])
+  clientId           String
+  mission            Mission        @relation(fields: [missionId], references: [id])
+  missionId          String
+  feuilleDeTemps     FeuilleDeTemps @relation(fields: [feuilleDeTempsId], references: [id])
+  feuilleDeTempsId   String         @unique
+  numeroFacture      String         @unique
+  statut             StatutFacture  @default(BROUILLON)
+  montantHT          Decimal        @db.Decimal(12, 2)
+  montantTVA         Decimal        @default(0) @db.Decimal(12, 2)
+  montantTTC         Decimal        @db.Decimal(12, 2)
+  devise             String
+  dateEmission       DateTime?
+  dateEcheance       DateTime?
+  dateEnvoi          DateTime?
+  regleFiscale       RegleFiscale?  @relation(fields: [regleFiscaleId], references: [id])
+  regleFiscaleId     String?
+  // Copie figée, non réévaluable, de la règle appliquée — voir le
+  // commentaire de RegleFiscale ci-dessus.
+  complianceSnapshot Json?
+  document           Document?      @relation(fields: [documentId], references: [id])
+  documentId         String?        @unique
+  paiements          Paiement[]
+  // ANNULEE uniquement : trace du motif, jamais une suppression de la
+  // Facture elle-même (append-only, même discipline que le reste du
+  // domaine).
+  motifAnnulation    String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  @@index([clientId])
+  @@index([missionId])
+  @@index([statut])
+}
+
+// Jamais une propriété de Facture (une Facture peut recevoir 0, 1 ou
+// plusieurs Paiement) — voir lib/billing/solde.ts pour le calcul du solde,
+// toujours dérivé en lisant cette table, jamais un champ dénormalisé sur
+// Facture qui pourrait diverger. `reference` unique PAR Facture :
+// idempotence au niveau base de données contre un double enregistrement du
+// même paiement (retry réseau, double clic) — voir lib/billing/paiement.ts.
+model Paiement {
+  id           String         @id @default(cuid())
+  facture      Facture        @relation(fields: [factureId], references: [id])
+  factureId    String
+  montant      Decimal        @db.Decimal(12, 2)
+  devise       String
+  datePaiement DateTime
+  reference    String
+  methode      String
+  statut       StatutPaiement @default(CONFIRME)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@unique([factureId, reference])
+  @@index([factureId])
 }
