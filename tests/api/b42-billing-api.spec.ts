@@ -16,31 +16,42 @@ async function connecter(request: APIRequestContext, email: string, password = "
   expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
 }
 
-async function idProfilIngenieurDemo(request: APIRequestContext): Promise<string> {
-  const reponse = await request.get("/api/profils");
-  expect(reponse.ok()).toBeTruthy();
-  const { profils } = await reponse.json();
-  const profil = profils.find((p: { nom: string }) => p.nom === "Ingénieur Démo");
+// FIX (17/09/2026) — Ce fichier appelait initialement /api/auth/login à
+// chaque étape de préparation (Admin crée la Mission, Ingénieur soumet le
+// CRA, Admin valide, Client valide) pour CHACUN des ~24 tests, via
+// feuilleValideeClientDeTest(). En CI (workers=1, un seul run partage le
+// même quota RATE_LIMIT_LOGIN_MAX_IP sur 15 min avec tout le reste de la
+// suite — voir lib/rate-limit.ts), cela a fait exploser le nombre cumulé de
+// connexions bien au-delà de ce que la suite pré-existante consommait déjà,
+// déclenchant des 429 en cascade sur des tests SANS RAPPORT (ex.
+// tests/e2e/connexion.spec.ts) plus tard dans le run — confirmé en
+// comparant le run CI de ce commit à celui, vert, du commit précédent.
+//
+// Le circuit CRA (Mission -> soumission -> double validation) est déjà
+// intégralement testé ailleurs (tests/api/facturation-devise.spec.ts,
+// suite feuilles-de-temps) : le reconstituer via l'API à chaque test
+// Billing n'apportait aucune couverture supplémentaire, seulement du
+// volume de connexions. Les helpers ci-dessous construisent donc cet état
+// "donné" (GIVEN) directement via Prisma — même principe que
+// tests/api/b39-client-solution-intelligence-api.spec.ts (creerBesoinValide)
+// — et ne consomment plus aucune connexion. Seul ce que ce fichier teste
+// réellement (les routes /api/factures/*) continue de passer par l'API,
+// avec une connexion unique par test plutôt qu'une chaîne de
+// changements de rôle.
+async function idProfilIngenieurDemo(): Promise<string> {
+  const profil = await prisma.profil.findFirst({ where: { nom: "Ingénieur Démo" } });
   expect(profil, "le profil de démo 'Ingénieur Démo' devrait exister (voir prisma/seed.ts)").toBeTruthy();
-  return profil.id;
+  return profil!.id;
 }
 
-// Ne PAS chercher "Client Démo SAS" par nom via GET /api/clients (trié par
-// date de création décroissante, voir app/api/clients/route.ts) : cet
-// environnement local accumule des Client de test au nom identique au fil
-// des sessions précédentes (jamais nettoyés entre exécutions locales,
-// contrairement à la base Postgres jetable de CI) — `.find()` par nom peut
-// donc retourner un tout autre Client que celui réellement lié au compte
-// client-demo@example.com. On dérive l'id directement depuis la session
-// Client elle-même (GET /api/client/profil, réservé CLIENT — voir LOT 4),
-// exactement comme le ferait l'application réelle : jamais une devinette
-// par position ou par nom.
-async function idClientDemoReel(request: APIRequestContext): Promise<string> {
-  await connecter(request, "client-demo@example.com");
-  const reponse = await request.get("/api/client/profil");
-  expect(reponse.ok()).toBeTruthy();
-  const { client } = await reponse.json();
-  return client.id as string;
+// Ne PAS chercher "Client Démo SAS" par nom (voir tests/api/facturation-devise.spec.ts,
+// FIX B17) : cet environnement local accumule des Client de test au nom
+// identique au fil des sessions précédentes — on dérive l'id directement
+// depuis le compte lui-même.
+async function idClientDemoReel(): Promise<string> {
+  const compte = await prisma.user.findUnique({ where: { email: "client-demo@example.com" }, select: { clientId: true } });
+  expect(compte?.clientId, "le compte client-demo@example.com devrait être lié à un Client").toBeTruthy();
+  return compte!.clientId!;
 }
 
 // Second Client isolé, entièrement sous contrôle du test — même précaution
@@ -50,55 +61,51 @@ async function creerClientDeTest(suffixe: string) {
   return prisma.client.create({ data: { nom: `Client Test Billing ${suffixe}` } });
 }
 
-// Fait avancer une Mission jusqu'à un CRA ValideeClient (le seul état
-// facturable, voir lib/billing/creation.ts) et renvoie de quoi appeler
-// POST /api/factures. Ne crée PAS la Facture elle-même — chaque test décide
-// explicitement quand la créer, pour pouvoir aussi tester le cas "pas encore
-// facturé".
-async function feuilleValideeClientDeTest(
-  request: APIRequestContext,
+// Construit directement (sans passer par l'API) une FeuilleDeTemps au
+// statut demandé, liée à une Mission de test fraîchement créée pour le
+// Client/Ingénieur de démo. `statut: "ValideeClient"` par défaut (le seul
+// état facturable, voir lib/billing/creation.ts) ; un test peut demander
+// un autre statut (ex. "ValideeAdmin") pour exercer le rejet de
+// creerFactureDepuisFeuille.
+async function feuilleDeTest(
   mois: string,
-  options: { tjmVente?: number; deviseVente?: string; joursTravailles?: number } = {}
+  options: { tjmVente?: number; deviseVente?: string; joursTravailles?: number; statut?: string } = {}
 ) {
   const tjmVente = options.tjmVente ?? 600;
   const deviseVente = options.deviseVente ?? "EUR";
   const joursTravailles = options.joursTravailles ?? 5;
+  const statut = options.statut ?? "ValideeClient";
 
-  const clientId = await idClientDemoReel(request);
-  await connecter(request, "admin-demo@example.com");
-  const profilId = await idProfilIngenieurDemo(request);
-
-  const creation = await request.post("/api/missions", {
+  const [clientId, profilId] = await Promise.all([idClientDemoReel(), idProfilIngenieurDemo()]);
+  const mission = await prisma.mission.create({
     data: { clientId, profilId, nbJours: joursTravailles, tjmVente, deviseVente, repere: `Test billing ${mois}-${Date.now()}-${Math.random()}` },
   });
-  expect(creation.status(), "création de la mission de test").toBe(201);
-  const mission = await creation.json();
-
-  await connecter(request, "ingenieur-demo@example.com");
-  const soumission = await request.post("/api/feuilles-de-temps", {
-    data: { missionId: mission.id, mois, joursTravailles, heuresSupplementaires: 0, soumettre: true },
+  const maintenant = new Date();
+  const feuille = await prisma.feuilleDeTemps.create({
+    data: {
+      missionId: mission.id,
+      mois,
+      joursTravailles,
+      heuresSupplementaires: 0,
+      statut,
+      soumiseLe: maintenant,
+      valideeAdminLe: statut === "ValideeAdmin" || statut === "ValideeClient" ? maintenant : null,
+      valideeClientLe: statut === "ValideeClient" ? maintenant : null,
+    },
   });
-  expect(soumission.status(), "soumission du CRA").toBe(201);
-  const feuille = await soumission.json();
-
-  await connecter(request, "admin-demo@example.com");
-  const validationAdmin = await request.patch("/api/feuilles-de-temps", { data: { id: feuille.id, action: "validerAdmin" } });
-  expect(validationAdmin.ok(), "validation Admin du CRA").toBeTruthy();
-
-  await connecter(request, "client-demo@example.com");
-  const validationClient = await request.patch("/api/feuilles-de-temps", { data: { id: feuille.id, action: "validerClient" } });
-  expect(validationClient.ok(), "validation Client du CRA").toBeTruthy();
 
   const montantTTCAttendu = joursTravailles * tjmVente;
-  return { feuilleDeTempsId: feuille.id as string, clientId, missionId: mission.id as string, devise: deviseVente, montantTTCAttendu };
+  return { feuilleDeTempsId: feuille.id, clientId, missionId: mission.id, devise: deviseVente, montantTTCAttendu };
 }
 
 // Crée une Facture ENVOYEE (prête à recevoir des paiements) en passant par
-// le circuit réel Admin (jamais une écriture Prisma directe pour ce qui est
-// atteignable par l'API — seule l'isolation inter-client, non atteignable
-// autrement, utilise Prisma directement).
+// le circuit réel Admin pour ce qui est effectivement sous test (jamais une
+// écriture Prisma directe pour Facture/Paiement eux-mêmes — seule
+// l'isolation inter-client, non atteignable autrement, utilise Prisma
+// directement ailleurs dans ce fichier). Une seule connexion Admin, pas une
+// par étape.
 async function factureEnvoyeeDeTest(request: APIRequestContext, mois: string, options: { tjmVente?: number; deviseVente?: string } = {}) {
-  const { feuilleDeTempsId, montantTTCAttendu, devise } = await feuilleValideeClientDeTest(request, mois, options);
+  const { feuilleDeTempsId, montantTTCAttendu, devise } = await feuilleDeTest(mois, options);
   await connecter(request, "admin-demo@example.com");
   const creation = await request.post("/api/factures", { data: { feuilleDeTempsId } });
   expect(creation.status()).toBe(201);
@@ -111,7 +118,7 @@ async function factureEnvoyeeDeTest(request: APIRequestContext, mois: string, op
 
 test.describe("V2.2-B — Création de Facture (POST /api/factures)", () => {
   test("Admin peut créer une Facture depuis un CRA ValideeClient", async ({ request }) => {
-    const { feuilleDeTempsId, montantTTCAttendu, devise } = await feuilleValideeClientDeTest(request, "2026-04");
+    const { feuilleDeTempsId, montantTTCAttendu, devise } = await feuilleDeTest("2026-04");
     await connecter(request, "admin-demo@example.com");
     const reponse = await request.post("/api/factures", { data: { feuilleDeTempsId } });
     expect(reponse.status()).toBe(201);
@@ -124,32 +131,17 @@ test.describe("V2.2-B — Création de Facture (POST /api/factures)", () => {
   });
 
   test("un CRA pas encore ValideeClient (ex. ValideeAdmin seulement) -> 409, aucune Facture créée", async ({ request }) => {
-    const clientId = await idClientDemoReel(request);
+    const { feuilleDeTempsId } = await feuilleDeTest("2026-05", { statut: "ValideeAdmin" });
     await connecter(request, "admin-demo@example.com");
-    const profilId = await idProfilIngenieurDemo(request);
-    const creationMission = await request.post("/api/missions", {
-      data: { clientId, profilId, nbJours: 5, tjmVente: 600, deviseVente: "EUR", repere: `Test billing non-validee ${Date.now()}` },
-    });
-    const mission = await creationMission.json();
-
-    await connecter(request, "ingenieur-demo@example.com");
-    const soumission = await request.post("/api/feuilles-de-temps", {
-      data: { missionId: mission.id, mois: "2026-05", joursTravailles: 5, heuresSupplementaires: 0, soumettre: true },
-    });
-    const feuille = await soumission.json();
-
-    await connecter(request, "admin-demo@example.com");
-    await request.patch("/api/feuilles-de-temps", { data: { id: feuille.id, action: "validerAdmin" } });
-    // Jamais validée par le Client — reste ValideeAdmin.
 
     const avant = await prisma.facture.count();
-    const reponse = await request.post("/api/factures", { data: { feuilleDeTempsId: feuille.id } });
+    const reponse = await request.post("/api/factures", { data: { feuilleDeTempsId } });
     expect(reponse.status()).toBe(409);
     expect(await prisma.facture.count()).toBe(avant);
   });
 
   test("Idempotence — un second appel pour la même FeuilleDeTemps renvoie la même Facture (200, jamais un doublon)", async ({ request }) => {
-    const { feuilleDeTempsId } = await feuilleValideeClientDeTest(request, "2026-06");
+    const { feuilleDeTempsId } = await feuilleDeTest("2026-06");
     await connecter(request, "admin-demo@example.com");
     const premier = await request.post("/api/factures", { data: { feuilleDeTempsId } });
     const premiereFacture = await premier.json();
@@ -164,7 +156,7 @@ test.describe("V2.2-B — Création de Facture (POST /api/factures)", () => {
   });
 
   test("Concurrence — deux créations simultanées pour la même FeuilleDeTemps -> une seule Facture en base", async ({ request }) => {
-    const { feuilleDeTempsId } = await feuilleValideeClientDeTest(request, "2026-07");
+    const { feuilleDeTempsId } = await feuilleDeTest("2026-07");
     await connecter(request, "admin-demo@example.com");
     const [r1, r2] = await Promise.all([
       request.post("/api/factures", { data: { feuilleDeTempsId } }),
@@ -175,7 +167,7 @@ test.describe("V2.2-B — Création de Facture (POST /api/factures)", () => {
   });
 
   test("RBAC — INGENIEUR et Client ne peuvent jamais créer de Facture, non authentifié non plus", async ({ request }) => {
-    const { feuilleDeTempsId } = await feuilleValideeClientDeTest(request, "2026-08");
+    const { feuilleDeTempsId } = await feuilleDeTest("2026-08");
 
     await connecter(request, "ingenieur-demo@example.com");
     expect((await request.post("/api/factures", { data: { feuilleDeTempsId } })).status()).toBe(403);
@@ -199,7 +191,7 @@ test.describe("V2.2-B — RBAC / IDOR sur la liste et le détail (GET /api/factu
   });
 
   test("un Client ne voit une Facture (liste et détail) qu'une fois ENVOYEE — jamais une facture BROUILLON/VALIDEE, même la sienne", async ({ request }) => {
-    const { feuilleDeTempsId } = await feuilleValideeClientDeTest(request, "2026-09");
+    const { feuilleDeTempsId } = await feuilleDeTest("2026-09");
     await connecter(request, "admin-demo@example.com");
     const { facture } = await (await request.post("/api/factures", { data: { feuilleDeTempsId } })).json();
 
@@ -232,7 +224,7 @@ test.describe("V2.2-B — RBAC / IDOR sur la liste et le détail (GET /api/factu
   test("IDOR — le Client A ne peut jamais voir une Facture ENVOYEE du Client B (404, jamais une fuite d'existence)", async ({ request }) => {
     const clientB = await creerClientDeTest(`${Date.now()}-idor`);
     try {
-      const feuille = await feuilleValideeClientDeTest(request, "2026-10");
+      const feuille = await feuilleDeTest("2026-10");
       // Réattribue la Facture au Client B après création (isolation testée
       // au niveau lecture, pas au niveau du circuit de création lui-même).
       await connecter(request, "admin-demo@example.com");
@@ -252,7 +244,7 @@ test.describe("V2.2-B — RBAC / IDOR sur la liste et le détail (GET /api/factu
   });
 
   test("Admin voit toujours la Facture brute (montants inclus), quel que soit son statut", async ({ request }) => {
-    const { feuilleDeTempsId } = await feuilleValideeClientDeTest(request, "2026-11");
+    const { feuilleDeTempsId } = await feuilleDeTest("2026-11");
     await connecter(request, "admin-demo@example.com");
     const { facture } = await (await request.post("/api/factures", { data: { feuilleDeTempsId } })).json();
     const detail = await request.get(`/api/factures/${facture.id}`);
@@ -265,7 +257,7 @@ test.describe("V2.2-B — RBAC / IDOR sur la liste et le détail (GET /api/factu
 
 test.describe("V2.2-B — Transitions de statut (PATCH /api/factures/[id]/transition)", () => {
   test("cycle complet BROUILLON -> VALIDEE -> ENVOYEE, avec compliance snapshot et échéance figés à la validation", async ({ request }) => {
-    const { feuilleDeTempsId } = await feuilleValideeClientDeTest(request, "2026-12");
+    const { feuilleDeTempsId } = await feuilleDeTest("2026-12");
     await connecter(request, "admin-demo@example.com");
     const { facture } = await (await request.post("/api/factures", { data: { feuilleDeTempsId } })).json();
 
@@ -287,7 +279,7 @@ test.describe("V2.2-B — Transitions de statut (PATCH /api/factures/[id]/transi
   });
 
   test("transition invalide -> 409, jamais une mutation silencieuse", async ({ request }) => {
-    const { feuilleDeTempsId } = await feuilleValideeClientDeTest(request, "2027-01");
+    const { feuilleDeTempsId } = await feuilleDeTest("2027-01");
     await connecter(request, "admin-demo@example.com");
     const { facture } = await (await request.post("/api/factures", { data: { feuilleDeTempsId } })).json();
 
@@ -299,7 +291,7 @@ test.describe("V2.2-B — Transitions de statut (PATCH /api/factures/[id]/transi
   });
 
   test("annulation — motif obligatoire persisté, jamais une suppression", async ({ request }) => {
-    const { feuilleDeTempsId } = await feuilleValideeClientDeTest(request, "2027-02");
+    const { feuilleDeTempsId } = await feuilleDeTest("2027-02");
     await connecter(request, "admin-demo@example.com");
     const { facture } = await (await request.post("/api/factures", { data: { feuilleDeTempsId } })).json();
     const annuler = await request.patch(`/api/factures/${facture.id}/transition`, { data: { action: "annuler", motif: "Erreur de saisie" } });
@@ -311,7 +303,7 @@ test.describe("V2.2-B — Transitions de statut (PATCH /api/factures/[id]/transi
   });
 
   test("RBAC — jamais le Client ni l'Ingénieur ne peuvent transitionner une Facture", async ({ request }) => {
-    const { feuilleDeTempsId } = await feuilleValideeClientDeTest(request, "2027-03");
+    const { feuilleDeTempsId } = await feuilleDeTest("2027-03");
     await connecter(request, "admin-demo@example.com");
     const { facture } = await (await request.post("/api/factures", { data: { feuilleDeTempsId } })).json();
 
@@ -327,7 +319,7 @@ test.describe("V2.2-B — Transitions de statut (PATCH /api/factures/[id]/transi
 
 test.describe("V2.2-B — Paiements (GET/POST /api/factures/[id]/paiements)", () => {
   test("un paiement ne peut être enregistré que sur une Facture ENVOYEE/PARTIELLEMENT_PAYEE, jamais BROUILLON/VALIDEE", async ({ request }) => {
-    const { feuilleDeTempsId } = await feuilleValideeClientDeTest(request, "2027-04");
+    const { feuilleDeTempsId } = await feuilleDeTest("2027-04");
     await connecter(request, "admin-demo@example.com");
     const { facture } = await (await request.post("/api/factures", { data: { feuilleDeTempsId } })).json();
 
@@ -436,14 +428,14 @@ test.describe("V2.2-B — Paiements (GET/POST /api/factures/[id]/paiements)", ()
 
 test.describe("V2.2-B — Document PDF (GET /api/factures/[id]/document)", () => {
   test("document indisponible tant que la Facture n'est pas au moins VALIDEE (409)", async ({ request }) => {
-    const { feuilleDeTempsId } = await feuilleValideeClientDeTest(request, "2027-11");
+    const { feuilleDeTempsId } = await feuilleDeTest("2027-11");
     await connecter(request, "admin-demo@example.com");
     const { facture } = await (await request.post("/api/factures", { data: { feuilleDeTempsId } })).json();
     expect((await request.get(`/api/factures/${facture.id}/document`)).status()).toBe(409);
   });
 
   test("génère le PDF une fois VALIDEE, le persiste, et sert le même document aux appels suivants (jamais deux PDF divergents)", async ({ request }) => {
-    const { feuilleDeTempsId } = await feuilleValideeClientDeTest(request, "2027-12");
+    const { feuilleDeTempsId } = await feuilleDeTest("2027-12");
     await connecter(request, "admin-demo@example.com");
     const { facture } = await (await request.post("/api/factures", { data: { feuilleDeTempsId } })).json();
     await request.patch(`/api/factures/${facture.id}/transition`, { data: { action: "valider" } });
@@ -473,7 +465,7 @@ test.describe("V2.2-B — Document PDF (GET /api/factures/[id]/document)", () =>
   });
 
   test("le Client ne peut télécharger le PDF qu'une fois la Facture envoyée, jamais avant (404 anti-fuite)", async ({ request }) => {
-    const { feuilleDeTempsId } = await feuilleValideeClientDeTest(request, "2028-01");
+    const { feuilleDeTempsId } = await feuilleDeTest("2028-01");
     await connecter(request, "admin-demo@example.com");
     const { facture } = await (await request.post("/api/factures", { data: { feuilleDeTempsId } })).json();
     await request.patch(`/api/factures/${facture.id}/transition`, { data: { action: "valider" } });
