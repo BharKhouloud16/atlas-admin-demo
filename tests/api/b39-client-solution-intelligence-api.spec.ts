@@ -26,6 +26,17 @@ async function creerBesoinValide(clientId: string, faits: { cle: string; valeur:
   });
 }
 
+// Crée un second Client isolé et déterministe, entièrement sous le
+// contrôle du test — indépendant du jeu de données de démo (qui ne
+// provisionne qu'UN SEUL compte Client en CI, contrairement à l'environnement
+// local où un second client existait ; s'appuyer sur le seed pour un
+// deuxième client est donc non déterministe). Aucun compte de connexion
+// (User) n'est créé : les tests IDOR/BOLA ci-dessous n'authentifient jamais
+// ce second client, seulement client-demo qui tente d'accéder à ses données.
+async function creerClientDeTest(suffixe: string) {
+  return prisma.client.create({ data: { nom: `Client Test IDOR ${suffixe}` } });
+}
+
 // Crée un candidat exploitable par le Matching (cvValide=true, compétence
 // connue) — sans cela, aucune SolutionOption ne peut jamais être générée
 // dans cet environnement de test (aucun profil cvValide=true seedé par
@@ -90,34 +101,39 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
 
   test.describe("IDOR / BOLA — isolation cross-client", () => {
     test("GET solutions d'un besoin appartenant à un autre client -> 404, jamais une fuite", async ({ request }) => {
-      const autreClient = await prisma.client.findFirst({
-        where: { compte: { email: { not: "client-demo@example.com" } } },
-      });
-      const need = await creerBesoinValide(autreClient!.id);
-      await connecter(request, "client-demo@example.com");
-      const reponse = await request.get(`/api/client/besoins/${need.id}/solutions`);
-      expect(reponse.status()).toBe(404);
+      const autreClient = await creerClientDeTest(`${Date.now()}-idor1`);
+      try {
+        const need = await creerBesoinValide(autreClient.id);
+        await connecter(request, "client-demo@example.com");
+        const reponse = await request.get(`/api/client/besoins/${need.id}/solutions`);
+        expect(reponse.status()).toBe(404);
+      } finally {
+        await prisma.clientNeed.deleteMany({ where: { clientId: autreClient.id } });
+        await prisma.client.delete({ where: { id: autreClient.id } });
+      }
     });
 
     test("POST decision sur une option d'un autre client -> 404, aucune décision créée", async ({ request }) => {
-      const clientA = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
-      const clientB = await prisma.client.findFirst({
-        where: { compte: { email: { not: "client-demo@example.com" } }, id: { not: clientA!.id } },
-      });
-      const suffixe = `${Date.now()}-idor`;
-      await creerProfilCandidatDeTest(suffixe);
-      const needB = await creerBesoinValide(clientB!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
+      const clientB = await creerClientDeTest(`${Date.now()}-idor2`);
+      try {
+        const suffixe = `${Date.now()}-idor`;
+        await creerProfilCandidatDeTest(suffixe);
+        const needB = await creerBesoinValide(clientB.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-      // Génère une recommandation pour le besoin du client B (hors session, directement en base pour préparer le test).
-      const resultatB = await genererOuRecupererSolutions(needB.id, clientB!.id);
-      expect(resultatB.eligible).toBe(true);
-      const recommandationB = resultatB.eligible ? resultatB.recommandation : null;
-      expect(recommandationB, "une recommandation doit exister pour ce test").toBeTruthy();
+        // Génère une recommandation pour le besoin du client B (hors session, directement en base pour préparer le test).
+        const resultatB = await genererOuRecupererSolutions(needB.id, clientB.id);
+        expect(resultatB.eligible).toBe(true);
+        const recommandationB = resultatB.eligible ? resultatB.recommandation : null;
+        expect(recommandationB, "une recommandation doit exister pour ce test").toBeTruthy();
 
-      await connecter(request, "client-demo@example.com");
-      const reponse = await request.post(`/api/client/besoins/${needB.id}/solutions/${recommandationB!.id}/decision`);
-      expect(reponse.status()).toBe(404);
-      expect(await prisma.solutionOption.count({ where: { needId: needB.id, niveau: "DECISION" } })).toBe(0);
+        await connecter(request, "client-demo@example.com");
+        const reponse = await request.post(`/api/client/besoins/${needB.id}/solutions/${recommandationB!.id}/decision`);
+        expect(reponse.status()).toBe(404);
+        expect(await prisma.solutionOption.count({ where: { needId: needB.id, niveau: "DECISION" } })).toBe(0);
+      } finally {
+        await prisma.clientNeed.deleteMany({ where: { clientId: clientB.id } });
+        await prisma.client.delete({ where: { id: clientB.id } });
+      }
     });
   });
 
