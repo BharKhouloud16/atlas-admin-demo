@@ -65,6 +65,19 @@ test.describe("Client — Solutions possibles (C3)", () => {
     // numérique réelle du candidat (600) et toute trace d'identité/score
     // interne.
     //
+    // Portée volontairement limitée à la section "Solutions possibles" de
+    // CE besoin (pas au body entier) : le seed CI (prisma/seed.ts)
+    // provisionne pour client-demo de nombreux autres besoins de démo dont
+    // certains mentionnent littéralement des montants réalistes (ex.
+    // "budget 600 EUR par jour TJM") dans leur texte original — visibles
+    // dans la liste "Vos besoins" de la même page, sans rapport avec une
+    // fuite de la fonctionnalité C3 testée ici. "Solutions possibles"
+    // n'apparaît qu'une seule fois sur la page (seul le besoin ouvert par
+    // ce test, VALIDÉ, la déclenche — voir app/client/besoins/page.tsx) :
+    // .last() sélectionne ici le plus petit conteneur englobant réel de ce
+    // libellé unique, pas un choix arbitraire parmi des éléments
+    // dupliqués/ambigus.
+    //
     // innerText() (pas textContent()) : textContent() remonte aussi le
     // contenu des balises <script> (le payload de streaming React Server
     // Components, injecté dans le <body> par Next.js), qui contient
@@ -73,11 +86,11 @@ test.describe("Client — Solutions possibles (C3)", () => {
     // innerText() ne renvoie que le texte effectivement rendu et visible à
     // l'écran, ce qui correspond exactement à ce que ce test vérifie
     // (« aucune fuite visible pour le Client »).
-    const contenuPage = await page.locator("body").innerText();
-    expect(contenuPage).not.toContain("scoreMatching");
-    expect(contenuPage?.toLowerCase()).not.toContain("profilid");
-    expect(contenuPage).not.toContain("CandidatE2E");
-    expect(contenuPage).not.toContain("600");
+    const contenuSolutions = await page.locator("div", { hasText: "Solutions possibles" }).last().innerText();
+    expect(contenuSolutions).not.toContain("scoreMatching");
+    expect(contenuSolutions.toLowerCase()).not.toContain("profilid");
+    expect(contenuSolutions).not.toContain("CandidatE2E");
+    expect(contenuSolutions).not.toContain("600");
 
     await page.getByRole("button", { name: "Choisir cette solution" }).click();
     await expect(page.getByText("Solution choisie")).toBeVisible({ timeout: 10_000 });
