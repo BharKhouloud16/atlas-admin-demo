@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { transitionAutorisee } from "./etat-facture";
 import { resoudreRegleFiscale, construireComplianceSnapshot } from "./regle-fiscale";
-import type { Prisma } from "@prisma/client";
+import type { Prisma, StatutFacture } from "@prisma/client";
 
 // COMPANY ATLAS — V2.2-B : Billing Foundation — transitions Admin de
 // Facture (validation, envoi, annulation). PARTIELLEMENT_PAYEE/PAYEE ne
@@ -24,6 +24,37 @@ export type ResultatTransition =
   | { ok: false; code: "FACTURE_INTROUVABLE" }
   | { ok: false; code: "TRANSITION_INVALIDE" };
 
+// FIX V2.2-C (mandat CEO section 21, "deux validations/émissions
+// simultanées -> UNE SEULE transaction métier") — chaque transition lisait
+// puis écrivait la Facture en deux opérations séparées, sans aucune garde
+// entre les deux : deux appels concurrents (ex. deux clics Admin, un
+// retry réseau croisé avec l'appel d'origine, ou — plus grave — un
+// "envoyer" et un "annuler" concurrents) pouvaient tous les deux lire le
+// même statut de départ, passer tous les deux transitionAutorisee(), puis
+// écrire tous les deux, la dernière écriture gagnant silencieusement sans
+// jamais être rejetée. `ecrireTransition` ferme cette fenêtre avec une
+// écriture conditionnelle en une seule instruction SQL (`updateMany` avec
+// le statut de départ observé en clause WHERE) : si le statut a changé
+// entre la lecture et l'écriture, `count === 0` et la transition est
+// refusée (TRANSITION_INVALIDE) au lieu d'écraser un état plus récent —
+// même principe que le CAS déjà utilisé par
+// app/api/factures/[id]/document/route.ts, plus léger qu'une transaction
+// Serializable + retry (lib/billing/paiement.ts) car chaque transition
+// n'a besoin de relire qu'un seul champ avant d'écrire, jamais d'agréger
+// plusieurs lignes.
+async function ecrireTransition(
+  factureId: string,
+  statutDepart: StatutFacture,
+  data: Parameters<typeof prisma.facture.update>[0]["data"]
+): Promise<ResultatTransition> {
+  const resultat = await prisma.facture.updateMany({ where: { id: factureId, statut: statutDepart }, data });
+  if (resultat.count === 0) {
+    return { ok: false, code: "TRANSITION_INVALIDE" };
+  }
+  const maj = await prisma.facture.findUniqueOrThrow({ where: { id: factureId } });
+  return { ok: true, facture: maj };
+}
+
 // BROUILLON -> VALIDEE : fige le contexte réglementaire (complianceSnapshot,
 // voir lib/billing/regle-fiscale.ts) et l'échéance — les montants HT/TVA/TTC
 // restent ceux figés à la création (lib/billing/creation.ts), jamais
@@ -41,17 +72,13 @@ export async function validerFacture(factureId: string): Promise<ResultatTransit
   const dateEcheance = new Date(maintenant);
   dateEcheance.setDate(dateEcheance.getDate() + DELAI_PAIEMENT_JOURS);
 
-  const maj = await prisma.facture.update({
-    where: { id: factureId },
-    data: {
-      statut: "VALIDEE",
-      dateEmission: maintenant,
-      dateEcheance,
-      regleFiscaleId: regleResolue?.id ?? null,
-      complianceSnapshot: snapshot as unknown as Prisma.InputJsonValue,
-    },
+  return ecrireTransition(factureId, facture.statut, {
+    statut: "VALIDEE",
+    dateEmission: maintenant,
+    dateEcheance,
+    regleFiscaleId: regleResolue?.id ?? null,
+    complianceSnapshot: snapshot as unknown as Prisma.InputJsonValue,
   });
-  return { ok: true, facture: maj };
 }
 
 // VALIDEE -> ENVOYEE : seul ce moment rend la Facture visible côté Client
@@ -61,11 +88,7 @@ export async function envoyerFacture(factureId: string): Promise<ResultatTransit
   if (!facture) return { ok: false, code: "FACTURE_INTROUVABLE" };
   if (!transitionAutorisee(facture.statut, "ENVOYEE")) return { ok: false, code: "TRANSITION_INVALIDE" };
 
-  const maj = await prisma.facture.update({
-    where: { id: factureId },
-    data: { statut: "ENVOYEE", dateEnvoi: new Date() },
-  });
-  return { ok: true, facture: maj };
+  return ecrireTransition(factureId, facture.statut, { statut: "ENVOYEE", dateEnvoi: new Date() });
 }
 
 // Toute -> ANNULEE (sauf PAYEE, terminal) — motif obligatoire, jamais une
@@ -75,9 +98,5 @@ export async function annulerFacture(factureId: string, motif: string): Promise<
   if (!facture) return { ok: false, code: "FACTURE_INTROUVABLE" };
   if (!transitionAutorisee(facture.statut, "ANNULEE")) return { ok: false, code: "TRANSITION_INVALIDE" };
 
-  const maj = await prisma.facture.update({
-    where: { id: factureId },
-    data: { statut: "ANNULEE", motifAnnulation: motif.trim() || "Non précisé." },
-  });
-  return { ok: true, facture: maj };
+  return ecrireTransition(factureId, facture.statut, { statut: "ANNULEE", motifAnnulation: motif.trim() || "Non précisé." });
 }
