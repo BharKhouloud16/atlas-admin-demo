@@ -5,6 +5,7 @@ import { grisTexte } from "@/lib/theme";
 import { Card, Section, EmptyState, Badge, Bouton, type BadgeVariant } from "@/components/client/primitives";
 import { dernierFaitParCle } from "@/lib/client-need/faits";
 import { prioriserClarifications, type Clarification } from "@/lib/client-need/clarification";
+import { SolutionsBesoin } from "@/components/client/SolutionsBesoin";
 
 // COMPANY ATLAS — LOT 2 : Client Need Intelligence Foundation (15/09/2026).
 // Remplace le "Bientôt disponible" du LOT 1 — premier point d'entrée réel
@@ -304,6 +305,13 @@ function CarteBesoin({
                   </p>
                 ))}
               </div>
+            </div>
+          )}
+
+          {besoin.statut === "VALIDE" && (
+            <div>
+              <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 6px" }}>Solutions possibles</p>
+              <SolutionsBesoin besoinId={besoin.id} statutBesoin={besoin.statut} />
             </div>
           )}
 

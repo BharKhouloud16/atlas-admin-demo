@@ -29,8 +29,8 @@ import type { DonneesSolutionOption, SolutionOptionVue } from "./persistence-typ
 const NOMBRE_OPTIONS_CLIENT_MAX = 5;
 
 export type ResultatGeneration =
-  | { eligible: false; raison: string; options: []; recommandation: null }
-  | { eligible: true; options: SolutionOptionVue[]; recommandation: SolutionOptionVue | null };
+  | { eligible: false; raison: string; options: []; recommandation: null; decisions: [] }
+  | { eligible: true; options: SolutionOptionVue[]; recommandation: SolutionOptionVue | null; decisions: SolutionOptionVue[] };
 
 function donneesVersJson(donnees: DonneesSolutionOption): Prisma.InputJsonValue {
   return donnees as unknown as Prisma.InputJsonValue;
@@ -198,8 +198,17 @@ export async function genererOuRecupererSolutions(needId: string, clientId: stri
 
           const eligibilite = evaluerEligibiliteBesoin(need);
           if (!eligibilite.eligible) {
-            return { eligible: false, raison: eligibilite.raison!, options: [], recommandation: null } as const;
+            return { eligible: false, raison: eligibilite.raison!, options: [], recommandation: null, decisions: [] } as const;
           }
+
+          // Historique des décisions — indépendant de la génération
+          // courante, jamais recalculé ni affecté par un refresh (voir
+          // decision.ts, append-only).
+          const lignesDecisions = await tx.solutionOption.findMany({
+            where: { needId, niveau: "DECISION" },
+            orderBy: { createdAt: "desc" },
+          });
+          const decisions = lignesDecisions.map(ligneVersVue);
 
           const criteres = suggererCriteresDemande(need.faits);
           const signature = calculerSignatureSource(criteres);
@@ -221,6 +230,7 @@ export async function genererOuRecupererSolutions(needId: string, clientId: stri
               eligible: true,
               options: vues.filter((v) => v.niveau === "OPTION"),
               recommandation: vues.find((v) => v.id === derniereRecommandation.id) ?? null,
+              decisions,
             } as const;
           }
 
@@ -240,7 +250,7 @@ export async function genererOuRecupererSolutions(needId: string, clientId: stri
 
           if (resultatComparaison.optionsOrdonnees.length === 0) {
             // Aucun candidat exploitable — jamais une option inventée.
-            return { eligible: true, options: [], recommandation: null } as const;
+            return { eligible: true, options: [], recommandation: null, decisions } as const;
           }
 
           const lignesCreees: { id: string; rang: number }[] = [];
@@ -305,6 +315,7 @@ export async function genererOuRecupererSolutions(needId: string, clientId: stri
             eligible: true,
             options: vues.filter((v) => v.niveau === "OPTION"),
             recommandation: ligneRecommandation ? vues.find((v) => v.id === ligneRecommandation!.id) ?? null : null,
+            decisions,
           } as const;
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
