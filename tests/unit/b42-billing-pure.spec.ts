@@ -250,7 +250,7 @@ test.describe("V2.2-B — numero.ts : numérotation de Facture", () => {
   });
 });
 
-function creerFactureDeTest(overrides: Partial<Facture> = {}): Facture & { paiements: Paiement[] } {
+function creerFactureDeTest(overrides: Partial<Facture & { paiements: Paiement[] }> = {}): Facture & { paiements: Paiement[] } {
   return {
     id: "facture-test",
     clientId: "client-test",
