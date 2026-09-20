@@ -139,6 +139,19 @@ export default function FacturesAdminPage() {
     recharger();
   }
 
+  // V2.2-D (mandat CEO section 16, "corriger selon règles autorisées") —
+  // seule correction possible sur un paiement déjà enregistré : l'annuler
+  // (lib/billing/paiement.ts annulerPaiement()). Jamais une édition du
+  // montant/de la référence — le paiement d'origine reste lisible tel
+  // quel, exactement comme motifAnnulation sur Facture.
+  async function annulerUnPaiement(factureId: string, paiementId: string) {
+    if (!window.confirm("Annuler ce paiement ? Le solde de la facture sera recalculé.")) return;
+    setEnCours(paiementId + "annulerPaiement");
+    await fetch(`/api/factures/${factureId}/paiements/${paiementId}`, { method: "PATCH" });
+    setEnCours(null);
+    recharger();
+  }
+
   if (chargement) return <div>Chargement...</div>;
 
   const facturables = feuilles.filter(
@@ -270,6 +283,31 @@ export default function FacturesAdminPage() {
                   </div>
                 </div>
               </div>
+
+              {f.paiements.length > 0 && (
+                <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #f0f0f0" }}>
+                  <p style={{ margin: "0 0 6px", fontSize: 11, fontWeight: 700, color: grisTexte, textTransform: "uppercase" }}>Paiements</p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {f.paiements.map((p) => (
+                      <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, gap: 8 }}>
+                        <span style={{ color: p.statut === "ANNULE" ? "#94a0b3" : grisTexte, textDecoration: p.statut === "ANNULE" ? "line-through" : "none" }}>
+                          {new Date(p.datePaiement).toLocaleDateString("fr-FR")} · {nombre(p.montant).toFixed(2)} {p.devise} · {p.methode} · réf. {p.reference}
+                          {p.statut === "ANNULE" && " (annulé)"}
+                        </span>
+                        {p.statut === "CONFIRME" && (
+                          <button
+                            onClick={() => annulerUnPaiement(f.id, p.id)}
+                            disabled={enCours === p.id + "annulerPaiement"}
+                            style={{ fontSize: 11, padding: "3px 8px", color: rouge, background: "transparent", border: `1px solid ${rouge}`, borderRadius: 4, cursor: "pointer" }}
+                          >
+                            Annuler
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {(f.statut === "ENVOYEE" || f.statut === "PARTIELLEMENT_PAYEE") && (
                 <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #f0f0f0", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>

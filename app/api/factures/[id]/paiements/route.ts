@@ -55,9 +55,27 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return NextResponse.json({ error: "Facture introuvable." }, { status: autorisation.status });
   }
 
-  const paiements = await prisma.paiement.findMany({ where: { factureId: id, statut: "CONFIRME" }, orderBy: { datePaiement: "desc" } });
+  // V2.2-D — Admin voit l'historique complet (CONFIRME + ANNULE, voir
+  // lib/billing/paiement.ts annulerPaiement()) : "ne jamais écraser
+  // l'historique financier" implique de pouvoir le consulter en entier, pas
+  // seulement son résultat net. Le Client continue de ne voir que les
+  // paiements CONFIRME (inchangé — un paiement annulé par l'Admin est une
+  // correction interne, jamais montrée comme un événement au Client, même
+  // discipline que lib/billing/adapter.ts).
+  const paiements = await prisma.paiement.findMany({
+    where: session.role === "ADMIN" ? { factureId: id } : { factureId: id, statut: "CONFIRME" },
+    orderBy: { datePaiement: "desc" },
+  });
   return NextResponse.json({
-    paiements: paiements.map((p) => ({ id: p.id, montant: p.montant.toNumber(), devise: p.devise, datePaiement: p.datePaiement, methode: p.methode })),
+    paiements: paiements.map((p) => ({
+      id: p.id,
+      montant: p.montant.toNumber(),
+      devise: p.devise,
+      datePaiement: p.datePaiement,
+      methode: p.methode,
+      reference: p.reference,
+      statut: p.statut,
+    })),
   });
 }
 

@@ -110,3 +110,71 @@ export async function enregistrerPaiement(params: {
   }
   throw new Error("ÉCHEC_ENREGISTREMENT_PAIEMENT_CONCURRENCE");
 }
+
+// COMPANY ATLAS — V2.2-D : Billing — Paiements + Solde + Rapprochement.
+//
+// `StatutPaiement.ANNULE` existe dans le schéma depuis V2.2-B
+// (prisma/schema.prisma) et `calculerSolde`/`adapterFactureClient`
+// l'excluent déjà correctement du total payé — mais aucun chemin de code
+// ne l'atteignait jamais avant ce lot (audit V2.2-D, section 1 du mandat :
+// "identifier précisément... transitions"). Le mandat CEO V2.2-D exige
+// explicitement qu'un paiement erroné (chèque en bois, rejet bancaire,
+// double saisie) reste "corrigeable selon les règles autorisées" (section
+// 16) sans jamais être supprimé (section 12, "ne jamais écraser
+// l'historique financier") — annulerPaiement() complète cette transition
+// déjà modélisée plutôt que d'ajouter un nouveau statut ou une nouvelle
+// entité.
+//
+// Même discipline que enregistrerPaiement() : transaction Serializable +
+// retry sur conflit (P2034), le statut de la Facture est intégralement
+// recalculé à partir du solde réel après annulation, jamais décrémenté à
+// la main. Une Facture ANNULEE (état terminal) n'est jamais repositionnée
+// vers ENVOYEE/PARTIELLEMENT_PAYEE/PAYEE par cette fonction — annuler un
+// paiement sur une facture déjà annulée reste possible (corriger
+// l'historique) mais ne fait jamais "revivre" la Facture elle-même.
+export type ResultatAnnulationPaiement =
+  | { ok: true; paiement: Awaited<ReturnType<typeof prisma.paiement.update>>; dejaAnnule: boolean }
+  | { ok: false; code: "PAIEMENT_INTROUVABLE" }
+  | { ok: false; code: "FACTURE_INTROUVABLE" };
+
+export async function annulerPaiement(paiementId: string): Promise<ResultatAnnulationPaiement> {
+  for (let tentative = 0; tentative < MAX_TENTATIVES_SERIALISATION; tentative++) {
+    try {
+      return await prisma.$transaction(
+        async (tx) => {
+          const paiement = await tx.paiement.findUnique({ where: { id: paiementId } });
+          if (!paiement) return { ok: false, code: "PAIEMENT_INTROUVABLE" } as const;
+          if (paiement.statut === "ANNULE") {
+            // Idempotent — annuler un paiement déjà annulé n'est jamais une
+            // erreur (retry réseau, double clic sur le bouton Admin).
+            return { ok: true, paiement, dejaAnnule: true } as const;
+          }
+
+          const facture = await tx.facture.findUnique({ where: { id: paiement.factureId }, include: { paiements: true } });
+          if (!facture) return { ok: false, code: "FACTURE_INTROUVABLE" } as const;
+
+          const paiementAnnule = await tx.paiement.update({ where: { id: paiementId }, data: { statut: "ANNULE" } });
+
+          if (facture.statut !== "ANNULEE") {
+            const paiementsApres = facture.paiements.map((p) =>
+              p.id === paiementId ? { montant: p.montant, statut: "ANNULE" as const } : { montant: p.montant, statut: p.statut }
+            );
+            const soldeApres = calculerSolde(facture.montantTTC, paiementsApres);
+            const nouveauStatut = statutDepuisSolde(soldeApres.toNumber(), facture.montantTTC.toNumber());
+            if (nouveauStatut !== facture.statut) {
+              await tx.facture.update({ where: { id: facture.id }, data: { statut: nouveauStatut } });
+            }
+          }
+
+          return { ok: true, paiement: paiementAnnule, dejaAnnule: false } as const;
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+      );
+    } catch (erreur) {
+      const estConflitSerialisation = erreur instanceof Prisma.PrismaClientKnownRequestError && erreur.code === "P2034";
+      if (estConflitSerialisation && tentative < MAX_TENTATIVES_SERIALISATION - 1) continue;
+      throw erreur;
+    }
+  }
+  throw new Error("ÉCHEC_ANNULATION_PAIEMENT_CONCURRENCE");
+}
