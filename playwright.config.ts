@@ -23,6 +23,13 @@ import { defineConfig, devices } from "@playwright/test";
 // entière prend <1 min) sans toucher au code applicatif ni réduire la
 // couverture de test. fullyParallel reste true en local (itération plus
 // rapide, la CI reste la garde-fou faisant foi).
+//
+// FIX ARCHITECTURAL (20/09/2026) — correctif CI #44, volet durable : projet
+// "setup" (voir tests/setup/auth.setup.ts) qui authentifie chaque rôle une
+// seule fois pour toute la suite et persiste sa session (storageState),
+// consommée ensuite par les fichiers qui n'ont besoin d'un rôle que comme
+// précondition. Le projet principal en dépend (dependencies: ["setup"]) :
+// il s'exécute donc toujours avant le reste, une seule fois par run.
 export default defineConfig({
   testDir: "./tests",
   fullyParallel: true,
@@ -33,7 +40,10 @@ export default defineConfig({
     baseURL: process.env.BASE_URL ?? "http://localhost:3000",
     trace: "on-first-retry",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    { name: "setup", testMatch: /.*\.setup\.ts/ },
+    { name: "chromium", use: { ...devices["Desktop Chrome"] }, dependencies: ["setup"] },
+  ],
   // En local, on suppose que `npm run dev` tourne déjà (plus rapide en
   // itération) ; en CI, Playwright démarre lui-même le serveur buildé.
   webServer: process.env.CI

@@ -1,10 +1,21 @@
 import { test, expect } from "@playwright/test";
+import { CLIENT_STATE } from "../setup/storage-state";
 
 // Parcours de connexion par rôle — voir prisma/seed.ts pour les comptes
 // utilisés (mot de passe Demo1234 pour tous). Ces tests supposent une base
 // tout juste seedée (voir .github/workflows/ci.yml) : ne pas les lancer en
 // local contre une base contenant déjà des données différentes sans
 // relancer `npm run seed` au préalable.
+//
+// FIX ARCHITECTURAL (20/09/2026, correctif CI #44 — volet durable) : tous
+// les tests de "Connexion" ci-dessous testent explicitement le mécanisme de
+// connexion lui-même (succès par rôle, échec, compte en attente) — ils
+// gardent chacun leur propre connexion UI réelle et fraîche, jamais
+// remplacée. Seul "un Client ne peut pas accéder à /admin/profils"
+// (Protection des routes) ne teste PAS le login — le login Client est déjà
+// testé explicitement ci-dessus ("un Client se connecte...") — seule la
+// protection de cette route précise est sous test ; il consomme donc la
+// session Client pré-authentifiée (voir tests/setup/auth.setup.ts).
 const MOT_DE_PASSE = "Demo1234";
 
 async function seConnecter(page: import("@playwright/test").Page, email: string, motDePasse: string) {
@@ -49,11 +60,13 @@ test.describe("Protection des routes (middleware)", () => {
     await expect(page).toHaveURL(/\/connexion/);
   });
 
-  test("un Client ne peut pas accéder à /admin/profils (réservé Admin/Ingénieur)", async ({ page }) => {
-    await seConnecter(page, "client-demo@example.com", MOT_DE_PASSE);
-    await expect(page).toHaveURL(/\/client/);
-    await page.goto("/admin/profils");
-    // Le middleware redirige vers /client — jamais le tableau de matching.
-    await expect(page).toHaveURL(/\/client/);
+  test.describe("Client authentifié", () => {
+    test.use({ storageState: CLIENT_STATE });
+
+    test("un Client ne peut pas accéder à /admin/profils (réservé Admin/Ingénieur)", async ({ page }) => {
+      await page.goto("/admin/profils");
+      // Le middleware redirige vers /client — jamais le tableau de matching.
+      await expect(page).toHaveURL(/\/client/);
+    });
   });
 });
