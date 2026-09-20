@@ -8,3 +8,7 @@ node_modules/
 /playwright-report/
 /blob-report/
 /playwright/.cache/
+
+# Sessions pré-authentifiées produites par tests/setup/auth.setup.ts —
+# jamais commitées (état de session, pas du code, régénérées à chaque run).
+/.auth/

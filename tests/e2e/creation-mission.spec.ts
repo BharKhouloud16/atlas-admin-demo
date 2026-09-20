@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { ADMIN_STATE } from "../setup/storage-state";
 
 // B15 — Correction : /admin/missions n'offrait aucune UI pour créer une
 // mission (l'endpoint POST /api/missions existait déjà, voir
@@ -8,16 +9,17 @@ import { test, expect } from "@playwright/test";
 // détection de rôle corrigée (auparavant déduite à tort de la présence de
 // tjmVente dans la liste des missions : un Admin sans mission existante
 // était traité comme un Ingénieur et perdait ce formulaire).
-const MOT_DE_PASSE = "Demo1234";
 
+// FIX ARCHITECTURAL (20/09/2026, correctif CI #44 — volet durable) : ni l'un
+// ni l'autre de ces 2 tests ne teste le login lui-même — les deux ne s'en
+// servent que comme précondition pour tester le formulaire de création de
+// mission. Session Admin pré-authentifiée consommée directement (voir
+// tests/setup/auth.setup.ts) — 0 connexion réelle dans ce fichier, contre 2
+// auparavant.
 test.describe("Admin — création d'une mission depuis /admin/missions", () => {
-  test("le formulaire crée une mission avec un client et un profil existants", async ({ page }) => {
-    await page.goto("/connexion");
-    await page.getByPlaceholder("Email").fill("admin-demo@example.com");
-    await page.getByPlaceholder("Mot de passe").fill(MOT_DE_PASSE);
-    await page.getByRole("button", { name: /se connecter/i }).click();
-    await expect(page).toHaveURL(/\/admin/);
+  test.use({ storageState: ADMIN_STATE });
 
+  test("le formulaire crée une mission avec un client et un profil existants", async ({ page }) => {
     await page.goto("/admin/missions");
     await expect(page.getByRole("heading", { name: /missions/i })).toBeVisible();
 
@@ -51,12 +53,6 @@ test.describe("Admin — création d'une mission depuis /admin/missions", () => 
   });
 
   test("le formulaire refuse la création sans nombre de jours ni TJM (validation existante côté API)", async ({ page }) => {
-    await page.goto("/connexion");
-    await page.getByPlaceholder("Email").fill("admin-demo@example.com");
-    await page.getByPlaceholder("Mot de passe").fill(MOT_DE_PASSE);
-    await page.getByRole("button", { name: /se connecter/i }).click();
-    await expect(page).toHaveURL(/\/admin/);
-
     await page.goto("/admin/missions");
     await page.getByRole("button", { name: /nouvelle mission/i }).click();
 

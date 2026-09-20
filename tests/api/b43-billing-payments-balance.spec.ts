@@ -183,17 +183,16 @@ test.describe("V2.2-D — Annulation de paiement (delta réel : ANNULE jamais at
 
   test("RBAC — jamais le Client ni l'Ingénieur ne peuvent annuler un paiement", async ({ request }) => {
     const { factureId, devise } = await factureEnvoyeeDeTest("2029-06", 1000);
-    await connecter(request, "admin-demo@example.com");
-    const paiement = await (
-      await request.post(`/api/factures/${factureId}/paiements`, { data: { montant: 400, devise, reference: `REF-${Date.now()}`, methode: "Virement" } })
-    ).json();
+    const paiement = await prisma.paiement.create({
+      data: { factureId, montant: 400, devise, datePaiement: new Date(), reference: `REF-${Date.now()}`, methode: "Virement", statut: "CONFIRME" },
+    });
 
     await connecter(request, "client-demo@example.com");
-    expect((await request.patch(`/api/factures/${factureId}/paiements/${paiement.paiement.id}`, { data: {} })).status()).toBe(403);
+    expect((await request.patch(`/api/factures/${factureId}/paiements/${paiement.id}`, { data: {} })).status()).toBe(403);
     await connecter(request, "ingenieur-demo@example.com");
-    expect((await request.patch(`/api/factures/${factureId}/paiements/${paiement.paiement.id}`, { data: {} })).status()).toBe(403);
+    expect((await request.patch(`/api/factures/${factureId}/paiements/${paiement.id}`, { data: {} })).status()).toBe(403);
 
-    expect((await prisma.paiement.findUnique({ where: { id: paiement.paiement.id } }))!.statut).toBe("CONFIRME");
+    expect((await prisma.paiement.findUnique({ where: { id: paiement.id } }))!.statut).toBe("CONFIRME");
   });
 
   test("un paiement inexistant, ou n'appartenant pas à la Facture désignée dans l'URL, -> 404", async ({ request }) => {
@@ -344,13 +343,12 @@ test.describe("V2.2-D — Sécurité (mandat CEO section 19)", () => {
     try {
       const { factureId, devise } = await factureEnvoyeeDeTest("2030-08", 1000);
       await prisma.facture.update({ where: { id: factureId }, data: { clientId: clientB.id } });
-      await connecter(request, "admin-demo@example.com");
-      const paiement = await (
-        await request.post(`/api/factures/${factureId}/paiements`, { data: { montant: 400, devise, reference: `REF-${Date.now()}`, methode: "Virement" } })
-      ).json();
+      const paiement = await prisma.paiement.create({
+        data: { factureId, montant: 400, devise, datePaiement: new Date(), reference: `REF-${Date.now()}`, methode: "Virement", statut: "CONFIRME" },
+      });
 
       await connecter(request, "client-demo@example.com");
-      const reponse = await request.patch(`/api/factures/${factureId}/paiements/${paiement.paiement.id}`, { data: {} });
+      const reponse = await request.patch(`/api/factures/${factureId}/paiements/${paiement.id}`, { data: {} });
       expect(reponse.status()).toBe(403);
     } finally {
       await prisma.paiement.deleteMany({ where: { facture: { clientId: clientB.id } } });

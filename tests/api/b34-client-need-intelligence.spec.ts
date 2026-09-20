@@ -143,10 +143,7 @@ test.describe("COMPANY ATLAS LOT 2 — Client Need Intelligence (API)", () => {
 
   test.describe("Sécurité — isolation client / IDOR / BOLA", () => {
     test("un Client ne voit jamais les besoins d'un autre client dans la liste", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
-      const creationClient = await request.post("/api/clients", { data: { nom: `Client LOT2 Isolation ${Date.now()}` } });
-      expect(creationClient.status()).toBe(201);
-      const autreClient = await creationClient.json();
+      const autreClient = await prisma.client.create({ data: { nom: `Client LOT2 Isolation ${Date.now()}` } });
 
       const autreBesoin = await prisma.clientNeed.create({
         data: {
@@ -164,9 +161,7 @@ test.describe("COMPANY ATLAS LOT 2 — Client Need Intelligence (API)", () => {
     });
 
     test("IDOR — accès direct par ID au besoin d'un autre client renvoie 404, jamais une fuite de contenu", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
-      const creationClient = await request.post("/api/clients", { data: { nom: `Client LOT2 IDOR ${Date.now()}` } });
-      const autreClient = await creationClient.json();
+      const autreClient = await prisma.client.create({ data: { nom: `Client LOT2 IDOR ${Date.now()}` } });
       const autreBesoin = await prisma.clientNeed.create({
         data: {
           clientId: autreClient.id,
@@ -182,9 +177,7 @@ test.describe("COMPANY ATLAS LOT 2 — Client Need Intelligence (API)", () => {
     });
 
     test("BOLA — un Client ne peut ni modifier ni supprimer le besoin d'un autre client", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
-      const creationClient = await request.post("/api/clients", { data: { nom: `Client LOT2 BOLA ${Date.now()}` } });
-      const autreClient = await creationClient.json();
+      const autreClient = await prisma.client.create({ data: { nom: `Client LOT2 BOLA ${Date.now()}` } });
       const autreBesoin = await prisma.clientNeed.create({
         data: {
           clientId: autreClient.id,
@@ -207,9 +200,7 @@ test.describe("COMPANY ATLAS LOT 2 — Client Need Intelligence (API)", () => {
     });
 
     test("clientId fourni dans le corps de la requête est structurellement ignoré — toujours celui de la session", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
-      const creationClient = await request.post("/api/clients", { data: { nom: `Client LOT2 Spoof ${Date.now()}` } });
-      const autreClient = await creationClient.json();
+      const autreClient = await prisma.client.create({ data: { nom: `Client LOT2 Spoof ${Date.now()}` } });
 
       await connecter(request, "client-demo@example.com");
       const reponse = await request.post("/api/client/besoins", {

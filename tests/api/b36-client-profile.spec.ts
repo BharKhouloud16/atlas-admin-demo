@@ -188,10 +188,7 @@ test.describe("COMPANY ATLAS LOT 4 — Profil Client (API)", () => {
     });
 
     test("IDOR — confirmer le fait d'un autre client (factIdACopier étranger) est refusé (404), aucune fuite, aucune écriture", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
-      const creationClient = await request.post("/api/clients", { data: { nom: `Client LOT4 IDOR ${Date.now()}` } });
-      expect(creationClient.status()).toBe(201);
-      const autreClient = await creationClient.json();
+      const autreClient = await prisma.client.create({ data: { nom: `Client LOT4 IDOR ${Date.now()}` } });
       const autreProfil = await prisma.clientProfile.create({ data: { clientId: autreClient.id } });
       const autreFait = await prisma.clientProfileFact.create({
         data: { profileId: autreProfil.id, cle: "ENJEU", valeur: "Information confidentielle d'un autre client", statut: "DECLARE", source: "client" },
@@ -209,9 +206,7 @@ test.describe("COMPANY ATLAS LOT 4 — Profil Client (API)", () => {
     });
 
     test("un client ne voit jamais les faits de profil d'un autre client dans son propre GET", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
-      const creationClient = await request.post("/api/clients", { data: { nom: `Client LOT4 Isolation ${Date.now()}` } });
-      const autreClient = await creationClient.json();
+      const autreClient = await prisma.client.create({ data: { nom: `Client LOT4 Isolation ${Date.now()}` } });
       const autreProfil = await prisma.clientProfile.create({ data: { clientId: autreClient.id } });
       await prisma.clientProfileFact.create({
         data: { profileId: autreProfil.id, cle: "RISQUE_DURABLE", valeur: "Risque propre à un autre client", statut: "DECLARE", source: "client" },
@@ -224,9 +219,7 @@ test.describe("COMPANY ATLAS LOT 4 — Profil Client (API)", () => {
     });
 
     test("clientId fourni dans le corps de PATCH est structurellement ignoré — toujours celui de la session", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
-      const creationClient = await request.post("/api/clients", { data: { nom: `Client LOT4 Spoof ${Date.now()}` } });
-      const autreClient = await creationClient.json();
+      const autreClient = await prisma.client.create({ data: { nom: `Client LOT4 Spoof ${Date.now()}` } });
       const nomAvant = autreClient.nom;
 
       await connecter(request, "client-demo@example.com");

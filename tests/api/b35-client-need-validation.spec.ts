@@ -232,10 +232,7 @@ test.describe("COMPANY ATLAS LOT 3 — Client Need Validation & Clarification (A
 
   test.describe("Sécurité — isolation client / IDOR / BOLA", () => {
     test("répondre à une clarification du besoin d'un autre client est refusé (404), aucune fuite, aucune écriture", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
-      const creationClient = await request.post("/api/clients", { data: { nom: `Client LOT3 Isolation ${Date.now()}` } });
-      expect(creationClient.status()).toBe(201);
-      const autreClient = await creationClient.json();
+      const autreClient = await prisma.client.create({ data: { nom: `Client LOT3 Isolation ${Date.now()}` } });
       const autreBesoin = await prisma.clientNeed.create({
         data: {
           clientId: autreClient.id,
