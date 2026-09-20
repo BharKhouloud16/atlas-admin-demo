@@ -153,9 +153,7 @@ test.describe("CLIENT COMPLETION — C6 : contrats générés, Document, et tél
     });
 
     test("IDOR : le document d'un autre client renvoie 404, jamais une fuite d'existence", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
-      const creationClient = await request.post("/api/clients", { data: { nom: `Client CLIENT-CONNECT IDOR ${Date.now()}` } });
-      const autreClient = await creationClient.json();
+      const autreClient = await prisma.client.create({ data: { nom: `Client CLIENT-CONNECT IDOR ${Date.now()}` } });
       const profil = await creerProfil();
       const mission = await prisma.mission.create({ data: { clientId: autreClient.id, profilId: profil.id, nbJours: 3, tjmVente: 500 } });
       const documentEtranger = await prisma.document.create({

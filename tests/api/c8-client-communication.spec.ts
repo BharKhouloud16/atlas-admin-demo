@@ -62,9 +62,7 @@ test.describe("COMPANY ATLAS C8 — GET/POST /api/client/messages", () => {
   });
 
   test("clientId fourni dans le corps est structurellement ignoré — toujours celui de la session", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
-    const creationClient = await request.post("/api/clients", { data: { nom: `Client C8 Spoof ${Date.now()}` } });
-    const autreClient = await creationClient.json();
+    const autreClient = await prisma.client.create({ data: { nom: `Client C8 Spoof ${Date.now()}` } });
 
     await connecter(request, "client-demo@example.com");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
@@ -78,9 +76,7 @@ test.describe("COMPANY ATLAS C8 — GET/POST /api/client/messages", () => {
   });
 
   test("isolation : un client ne voit jamais les messages d'un autre client dans son propre GET", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
-    const creationClient = await request.post("/api/clients", { data: { nom: `Client C8 Isolation ${Date.now()}` } });
-    const autreClient = await creationClient.json();
+    const autreClient = await prisma.client.create({ data: { nom: `Client C8 Isolation ${Date.now()}` } });
     await prisma.message.create({ data: { clientId: autreClient.id, auteurRole: "ADMIN", contenu: "Message confidentiel d'un autre client" } });
 
     await connecter(request, "client-demo@example.com");
