@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { grisTexte } from "@/lib/theme";
+import { grisTexte, vert } from "@/lib/theme";
 import { Section, EmptyState, Badge, Bouton, Table, MoneyDisplay, StatTile, type BadgeVariant } from "@/components/client/primitives";
 import type { FactureClientSafe, VarianteStatutFacture } from "@/lib/billing/adapter";
 
@@ -114,6 +114,7 @@ export function FacturesClient() {
             { label: "Émise le" },
             { label: "Échéance" },
             { label: "Montant", align: "right" },
+            { label: "Payé", align: "right" },
             { label: "Solde", align: "right" },
             { label: "", align: "right" },
           ]}
@@ -126,6 +127,7 @@ export function FacturesClient() {
             formaterDate(f.dateEmission),
             formaterDate(f.dateEcheance),
             <MoneyDisplay key="montant" montant={f.montantTTC} devise={f.devise} taille={13} couleur={grisTexte} />,
+            <MoneyDisplay key="paye" montant={f.montantTTC - f.solde} devise={f.devise} taille={13} couleur={vert} />,
             <MoneyDisplay key="solde" montant={f.solde} devise={f.devise} taille={13} />,
             <a key="action" href={`/api/factures/${f.id}/document`} target="_blank" rel="noreferrer" style={{ fontSize: 12, fontWeight: 600 }}>
               PDF

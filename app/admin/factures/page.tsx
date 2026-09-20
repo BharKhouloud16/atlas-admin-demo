@@ -19,6 +19,7 @@ import type { StatutFacture } from "@prisma/client";
 // primitives components/client/primitives.tsx restent réservées à l'Espace
 // Client, voir leur commentaire d'en-tête).
 type Paiement = { id: string; montant: string | number; devise: string; datePaiement: string; methode: string; reference: string; statut: string };
+type Anomalie = { type: string };
 type Facture = {
   id: string;
   numeroFacture: string;
@@ -31,6 +32,32 @@ type Facture = {
   client: { nom: string };
   mission: { repere: string | null };
   paiements: Paiement[];
+  anomalies: Anomalie[];
+};
+// V2.2-E — Financial Intelligence Foundation : calculé côté serveur
+// (lib/billing/rapport-financier.ts, Decimal réels) et transmis tel quel —
+// voir GET /api/factures (Admin), aucune nouvelle route.
+type RapportFinancierParDevise = {
+  devise: string;
+  nombreFactures: number;
+  totalFacture: string | number;
+  totalEncaisse: string | number;
+  totalRestant: string | number;
+  totalEnRetard: string | number;
+  nombreEnRetard: number;
+  totalPartiellementPaye: string | number;
+};
+
+const LABEL_ANOMALIE: Record<string, string> = {
+  MONTANT_TTC_NEGATIF: "Montant TTC négatif",
+  SOLDE_NEGATIF: "Solde négatif (trop perçu)",
+  PAYEE_SOLDE_NON_NUL: "Facture payée mais solde non nul",
+  PARTIELLEMENT_PAYEE_SOLDE_NUL: "Partiellement payée mais solde nul",
+  PARTIELLEMENT_PAYEE_AUCUN_PAIEMENT_CONFIRME: "Partiellement payée sans paiement confirmé",
+  PAIEMENT_MONTANT_NON_POSITIF: "Paiement à montant non positif",
+  PAIEMENT_DEVISE_INCOHERENTE: "Paiement en devise incohérente",
+  PAIEMENT_SANS_REFERENCE: "Paiement sans référence",
+  PAIEMENT_REFERENCE_DUPLIQUEE: "Référence de paiement dupliquée",
 };
 type Feuille = {
   id: string;
@@ -78,17 +105,20 @@ const FILTRES_STATUT: { valeur: string; label: string }[] = [
 
 export default function FacturesAdminPage() {
   const [factures, setFactures] = useState<Facture[]>([]);
+  const [rapportFinancier, setRapportFinancier] = useState<RapportFinancierParDevise[]>([]);
   const [feuilles, setFeuilles] = useState<Feuille[]>([]);
   const [chargement, setChargement] = useState(true);
   const [enCours, setEnCours] = useState<string | null>(null);
   const [paiementForm, setPaiementForm] = useState<Record<string, { montant: string; reference: string; methode: string }>>({});
   const [recherche, setRecherche] = useState("");
   const [filtreStatut, setFiltreStatut] = useState("TOUS");
+  const [anomaliesUniquement, setAnomaliesUniquement] = useState(false);
 
   function recharger() {
     Promise.all([fetch("/api/factures").then((r) => r.json()), fetch("/api/feuilles-de-temps").then((r) => r.json())]).then(
       ([f, c]) => {
         setFactures(f.factures ?? []);
+        setRapportFinancier(f.rapportFinancier ?? []);
         setFeuilles(c.feuilles ?? []);
         setChargement(false);
       }
@@ -163,9 +193,11 @@ export default function FacturesAdminPage() {
     statutAff: statutAffiche(f.statut, f.dateEcheance ? new Date(f.dateEcheance) : null),
   }));
   const enRetard = facturesAvecStatutAffiche.filter((x) => x.statutAff === "ECHUE");
+  const avecAnomalies = facturesAvecStatutAffiche.filter((x) => x.facture.anomalies.length > 0);
 
   const termeRecherche = recherche.trim().toLowerCase();
   const facturesAffichees = facturesAvecStatutAffiche.filter(({ facture: f, statutAff }) => {
+    if (anomaliesUniquement && f.anomalies.length === 0) return false;
     if (filtreStatut !== "TOUS" && statutAff !== filtreStatut) return false;
     if (!termeRecherche) return true;
     return (
@@ -183,6 +215,39 @@ export default function FacturesAdminPage() {
         constatez les paiements reçus. Les montants sont gelés à la création à partir du CRA et ne sont jamais
         modifiables ici.
       </p>
+
+      {rapportFinancier.length > 0 && (
+        <div style={{ display: "flex", gap: 10, marginBottom: 24, flexWrap: "wrap" }}>
+          {rapportFinancier.map((r) => (
+            <div key={r.devise} style={{ border: "1px solid #e4e7ee", borderRadius: 8, padding: "10px 14px", display: "flex", gap: 18, flexWrap: "wrap" }}>
+              <div>
+                <p style={{ margin: 0, fontSize: 10, textTransform: "uppercase", color: grisTexte, fontWeight: 700 }}>Facturé ({r.devise})</p>
+                <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: bleuFonce }}>{nombre(r.totalFacture).toFixed(2)}</p>
+              </div>
+              <div>
+                <p style={{ margin: 0, fontSize: 10, textTransform: "uppercase", color: grisTexte, fontWeight: 700 }}>Encaissé</p>
+                <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: vert }}>{nombre(r.totalEncaisse).toFixed(2)}</p>
+              </div>
+              <div>
+                <p style={{ margin: 0, fontSize: 10, textTransform: "uppercase", color: grisTexte, fontWeight: 700 }}>Restant</p>
+                <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: bleuFonce }}>{nombre(r.totalRestant).toFixed(2)}</p>
+              </div>
+              <div>
+                <p style={{ margin: 0, fontSize: 10, textTransform: "uppercase", color: grisTexte, fontWeight: 700 }}>En retard</p>
+                <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: rouge }}>
+                  {nombre(r.totalEnRetard).toFixed(2)} {r.nombreEnRetard > 0 ? `(${r.nombreEnRetard})` : ""}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {avecAnomalies.length > 0 && (
+        <div style={{ background: "#fff8e6", border: `1px solid ${orange}`, borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: orange, fontWeight: 600 }}>
+          {avecAnomalies.length} facture{avecAnomalies.length > 1 ? "s" : ""} présentant une anomalie de cohérence (voir détail sur chaque facture)
+        </div>
+      )}
 
       <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>
         CRA facturables ({facturables.length})
@@ -234,6 +299,10 @@ export default function FacturesAdminPage() {
               </option>
             ))}
           </select>
+          <label style={{ fontSize: 12, color: grisTexte, display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+            <input type="checkbox" checked={anomaliesUniquement} onChange={(e) => setAnomaliesUniquement(e.target.checked)} />
+            Anomalies uniquement
+          </label>
         </div>
       )}
 
@@ -253,9 +322,14 @@ export default function FacturesAdminPage() {
                     {f.mission.repere ? ` (${f.mission.repere})` : ""}
                   </p>
                   <p style={{ margin: "4px 0 0", fontSize: 13, color: "#4b5567" }}>
-                    {nombre(f.montantTTC).toFixed(2)} {f.devise} TTC · reste dû {restant.toFixed(2)} {f.devise}
+                    {nombre(f.montantTTC).toFixed(2)} {f.devise} TTC · payé {(nombre(f.montantTTC) - restant).toFixed(2)} · reste dû {restant.toFixed(2)} {f.devise}
                   </p>
                   {f.motifAnnulation && <p style={{ margin: "4px 0 0", fontSize: 12, color: rouge }}>Motif d&apos;annulation : {f.motifAnnulation}</p>}
+                  {f.anomalies.length > 0 && (
+                    <p style={{ margin: "4px 0 0", fontSize: 12, color: orange }}>
+                      ⚠ {f.anomalies.map((a) => LABEL_ANOMALIE[a.type] ?? a.type).join(" · ")}
+                    </p>
+                  )}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
                   <span style={{ fontSize: 11, fontWeight: 700, color: COULEUR_STATUT[statutAff] ?? grisTexte }}>

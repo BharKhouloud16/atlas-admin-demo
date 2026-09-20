@@ -6,6 +6,7 @@ import { enregistrerEvenementSecurite, nouveauCorrelationId } from "@/lib/securi
 import { journaliser } from "@/lib/audit";
 import { creerFactureDepuisFeuille } from "@/lib/billing/creation";
 import { adapterFactureClient } from "@/lib/billing/adapter";
+import { calculerRapportFinancier, detecterAnomalies } from "@/lib/billing/rapport-financier";
 
 // COMPANY ATLAS — V2.2-B : Billing Foundation — API Facture.
 //
@@ -29,7 +30,15 @@ export async function GET(req: NextRequest) {
       include: { paiements: true, client: { select: { nom: true } }, mission: { select: { repere: true } } },
       orderBy: { createdAt: "desc" },
     });
-    return NextResponse.json({ factures });
+    // V2.2-E — Financial Intelligence Foundation (mandat CEO section 3/9) :
+    // calculé ici, avec les Decimal Prisma réels, jamais côté client après
+    // sérialisation JSON (voir lib/billing/rapport-financier.ts). Aucune
+    // nouvelle route : cet enrichissement de la réponse existante suffit à
+    // ce qu'Admin comprenne "immédiatement" solde global/retards/anomalies
+    // sans construire de Dashboard CEO (explicitement hors périmètre).
+    const rapportFinancier = calculerRapportFinancier(factures);
+    const facturesAvecAnomalies = factures.map((f) => ({ ...f, anomalies: detecterAnomalies(f) }));
+    return NextResponse.json({ factures: facturesAvecAnomalies, rapportFinancier });
   }
 
   if (session.role === "CLIENT") {
