@@ -1875,3 +1875,112 @@ model Paiement {
   @@unique([factureId, reference])
   @@index([factureId])
 }
+
+// COMPANY ATLAS — V2.3 : Communication Intelligence + Attention Center.
+//
+// Audit (mandat CEO V2.3 section 21, étape 0) : aucun modèle Notification
+// n'existait avant ce lot, et Message (ci-dessus) n'a jamais porté de
+// readAt/isRead. Le mandat section 5 (Attention Center) et section 8
+// (Notifications) décrivent des ensembles de champs quasi identiques
+// (type/priorité/titre/résumé/source/sourceId/createdAt/readAt/expiresAt) :
+// créer deux modèles aurait violé la règle explicite section 6 ("ne pas
+// créer deux systèmes concurrents"). Attention est donc le SEUL modèle,
+// servant à la fois de centre d'attention et de notification.
+//
+// Vocabulaire fermé de `type` : chaque fait métier réel a son propre nom
+// (repris verbatim des exemples du mandat section 11 pour Billing, et de
+// la section 10 pour les besoins) — jamais une valeur libre.
+enum AttentionType {
+  FACTURE_ENVOYEE
+  FACTURE_ECHEANCE_PROCHE
+  FACTURE_ECHUE
+  PAIEMENT_RECU
+  PAIEMENT_PARTIEL
+  PAIEMENT_ANNULE
+  ANOMALIE_FINANCIERE
+  BESOIN_A_CLARIFIER
+}
+
+enum AttentionCategorie {
+  ACTION_REQUISE
+  ALERTE
+  INFORMATION
+  RECOMMANDATION
+}
+
+enum AttentionPriorite {
+  P0_CRITIQUE
+  P1_HAUTE
+  P2_NORMALE
+  P3_BASSE
+}
+
+// OUVERTE = non lue. LUE = lue mais le fait métier sous-jacent est toujours
+// vrai (jamais transformé en RESOLUE automatiquement dans ce cas — mandat
+// section 10 : "ne jamais transformer automatiquement UNKNOWN en FACT").
+// RESOLUE = le fait métier sous-jacent ne s'applique plus (détecté par
+// lib/attention/synchronisation.ts) OU dismissal explicite d'une Attention
+// purement INFORMATION/RECOMMANDATION (jamais une ACTION_REQUISE/ALERTE :
+// voir lib/attention/api.ts). EXPIREE = date d'expiration dépassée sans
+// résolution — calculé à la lecture, jamais par une tâche planifiée (aucune
+// infrastructure de ce type n'existe dans ce dépôt, voir
+// lib/billing/etat-facture.ts, précédent direct).
+enum AttentionStatut {
+  OUVERTE
+  LUE
+  RESOLUE
+  EXPIREE
+}
+
+// Jamais INGENIEUR : ce rôle n'a structurellement accès à aucune donnée
+// Billing ni Besoin (voir middleware.ts et chaque route consommée par
+// lib/attention/synchronisation.ts) — l'exclure ici, au niveau du
+// vocabulaire fermé, empêche toute Attention de lui être un jour destinée
+// par erreur.
+enum AttentionDestinataireType {
+  CLIENT
+  ADMIN
+}
+
+// Agrège des événements provenant des domaines existants — n'est JAMAIS une
+// nouvelle source de vérité métier (mandat section 5) : chaque ligne est
+// entièrement dérivable à nouveau depuis Facture/Paiement/ClientNeed à tout
+// moment par lib/attention/synchronisation.ts, jamais une donnée saisie
+// directement ici. `recipientId` est le clientId quand recipientType=CLIENT
+// (une Attention Client est toujours scopée à UN Client, jamais un
+// diffusion globale) ; NULL quand recipientType=ADMIN (rôle, jamais un
+// destinataire individuel — même modèle que Facture/Paiement, qui n'ont
+// aucune notion d'admin nommé).
+//
+// `actionDisponible` : forme contrôlée {label, href} UNIQUEMENT — jamais un
+// objet d'action exécutable (aucune autonomie L5/L6 ajoutée, mandat section
+// 16) : c'est un lien de navigation, jamais une action déclenchée par le
+// système.
+model Attention {
+  id               String                    @id @default(cuid())
+  type             AttentionType
+  categorie        AttentionCategorie
+  priorite         AttentionPriorite
+  titre            String
+  resume           String
+  raison           String
+  source           String
+  sourceId         String
+  recipientType    AttentionDestinataireType
+  recipientId      String?
+  actionDisponible Json?
+  metadata         Json?
+  statut           AttentionStatut           @default(OUVERTE)
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+  readAt           DateTime?
+  resolvedAt       DateTime?
+  expiresAt        DateTime?
+
+  // Idempotence structurelle (mandat section 8 : "une même source ne doit
+  // pas générer 50 notifications identiques") — un même fait métier mute
+  // toujours la même ligne, jamais une nouvelle insertion.
+  @@unique([type, source, sourceId])
+  @@index([recipientType, recipientId, statut])
+  @@index([createdAt])
+}

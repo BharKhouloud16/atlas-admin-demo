@@ -1,8 +1,10 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { bleu, grisTexte } from "@/lib/theme";
+import { UnreadBadge } from "@/components/client/primitives";
 
 // COMPANY ATLAS — LOT 1 : Client Workspace Foundation (15/09/2026).
 //
@@ -12,8 +14,15 @@ import { bleu, grisTexte } from "@/lib/theme";
 // existe et affiche un état "Bientôt disponible" explicite, elle n'est
 // jamais retirée du menu ni désactivée au clic : le client doit toujours
 // comprendre que la rubrique existe et savoir où elle sera.
+// V2.3 — Communication Intelligence + Attention Center : mandat CEO
+// explicite section 12 ("Centre de notifications... le Client doit
+// comprendre immédiatement 'voici ce qui nécessite mon attention'"), qui
+// justifie une 11e rubrique — dérogation documentée au principe LOT 1
+// ("les 10 rubriques cibles") sur mandat CEO direct, jamais une extension
+// discrétionnaire du menu.
 const RUBRIQUES: { href: string; label: string; disponible: boolean }[] = [
   { href: "/client", label: "Vue d'ensemble", disponible: true },
+  { href: "/client/attentions", label: "Attention", disponible: true },
   { href: "/client/besoins", label: "Besoins", disponible: true },
   { href: "/client/talent", label: "Talents", disponible: true },
   { href: "/client/missions", label: "Missions", disponible: true },
@@ -30,6 +39,18 @@ const RUBRIQUES: { href: string; label: string; disponible: boolean }[] = [
 
 export default function ClientNav() {
   const pathname = usePathname();
+  const [nonLues, setNonLues] = useState(0);
+
+  // Compteur non-lus chargé une fois à l'affichage de la navigation — même
+  // discipline que le reste de l'Espace Client (aucun mécanisme de
+  // rafraîchissement en temps réel n'existe ailleurs dans ce dépôt, jamais
+  // introduit ici en premier).
+  useEffect(() => {
+    fetch("/api/client/attentions")
+      .then((r) => r.json())
+      .then((d) => setNonLues(d.nonLues ?? 0))
+      .catch(() => {});
+  }, [pathname]);
 
   return (
     <nav
@@ -58,6 +79,7 @@ export default function ClientNav() {
             }}
           >
             {r.label}
+            {r.href === "/client/attentions" && <UnreadBadge count={nonLues} />}
             {!r.disponible && (
               <span style={{ fontSize: 9, fontWeight: 700, color: "#b7bfcc", textTransform: "uppercase" }}>bientôt</span>
             )}

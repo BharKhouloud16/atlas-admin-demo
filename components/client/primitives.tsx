@@ -1,5 +1,6 @@
 import type { ReactNode, CSSProperties, ButtonHTMLAttributes, ReactElement } from "react";
 import { bleu, bleuFonce, bordure, grisTexte, vert, orange, rouge, fondClair } from "@/lib/theme";
+import type { AttentionCategorie, AttentionPriorite } from "@prisma/client";
 
 // LOT 4 — Profil Client (15/09/2026) : deux ajouts minimaux au design
 // system existant, aucun autre composant créé (Tabs et bouton tertiary —
@@ -277,6 +278,127 @@ export function StatTile({ label, children }: { label: string; children: ReactNo
     <Card style={{ flex: "1 1 160px", minWidth: 160 }}>
       <p style={{ margin: "0 0 6px", fontSize: 11, textTransform: "uppercase", color: "#888", fontWeight: 700 }}>{label}</p>
       {children}
+    </Card>
+  );
+}
+
+// V2.3 — Communication Intelligence + Attention Center (mandat CEO section
+// 19 : "créer seulement les primitives nécessaires", noms repris de la
+// liste donnée section 19). Seuls PriorityBadge/UnreadBadge/AttentionCard
+// sont réellement utilisés dans ce lot (NotificationItem/AttentionFilters/
+// AttentionSummary/ActionRequiredPanel n'ont aucun besoin réel identifié —
+// jamais créés sans consommateur, même discipline que le reste de ce
+// fichier).
+const COULEUR_PRIORITE: Record<AttentionPriorite, BadgeVariant> = {
+  P0_CRITIQUE: "error",
+  P1_HAUTE: "warning",
+  P2_NORMALE: "info",
+  P3_BASSE: "neutral",
+};
+
+const LABEL_PRIORITE: Record<AttentionPriorite, string> = {
+  P0_CRITIQUE: "Critique",
+  P1_HAUTE: "Haute",
+  P2_NORMALE: "Normale",
+  P3_BASSE: "Basse",
+};
+
+const LABEL_CATEGORIE: Record<AttentionCategorie, string> = {
+  ACTION_REQUISE: "Action requise",
+  ALERTE: "Alerte",
+  INFORMATION: "Information",
+  RECOMMANDATION: "Recommandation",
+};
+
+// Priorité ET catégorie affichées ensemble (mandat section 4 : "Pourquoi
+// est-ce important ? Dois-je agir ?") — jamais l'enum brute, toujours le
+// libellé humain (même principe que LABEL_STATUT_FACTURE).
+export function PriorityBadge({ priorite, categorie }: { priorite: AttentionPriorite; categorie: AttentionCategorie }) {
+  return (
+    <Badge variant={COULEUR_PRIORITE[priorite]}>
+      {LABEL_CATEGORIE[categorie]} · {LABEL_PRIORITE[priorite]}
+    </Badge>
+  );
+}
+
+// Pastille de compteur non-lus — jamais affichée à zéro (mandat section 4 :
+// "moins de notifications" — un badge à "0" est du bruit visuel, pas un
+// signal).
+export function UnreadBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        minWidth: 18,
+        height: 18,
+        padding: "0 5px",
+        borderRadius: 999,
+        background: rouge,
+        color: "#fff",
+        fontSize: 11,
+        fontWeight: 700,
+        lineHeight: 1,
+      }}
+    >
+      {count > 99 ? "99+" : count}
+    </span>
+  );
+}
+
+export type AttentionCardData = {
+  id: string;
+  categorie: AttentionCategorie;
+  priorite: AttentionPriorite;
+  titre: string;
+  resume: string;
+  raison: string;
+  statut: "OUVERTE" | "LUE" | "RESOLUE" | "EXPIREE";
+  actionDisponible: { label: string; href: string } | null;
+  createdAt: string;
+};
+
+// Carte d'Attention — parcours "je vois -> je comprends -> j'agir" (mandat
+// section 20, UX Research) : priorité visible en premier, raison en second
+// plan (progressive disclosure), action explicite en dernier. `onLire` est
+// appelé au premier rendu visible d'une Attention OUVERTE par l'appelant
+// (jamais ici — cette primitive reste sans effet de bord, voir
+// app/client/attentions/page.tsx pour le déclenchement réel).
+export function AttentionCard({ attention, onMarquerLu, onResoudre }: { attention: AttentionCardData; onMarquerLu?: () => void; onResoudre?: () => void }) {
+  const peutResoudre = attention.categorie === "INFORMATION" || attention.categorie === "RECOMMANDATION";
+  return (
+    <Card
+      style={{
+        opacity: attention.statut === "RESOLUE" || attention.statut === "EXPIREE" ? 0.6 : 1,
+        borderLeft: attention.statut === "OUVERTE" ? `3px solid ${COULEUR_PRIORITE[attention.priorite] === "error" ? rouge : COULEUR_PRIORITE[attention.priorite] === "warning" ? orange : bleu}` : `1px solid ${bordure}`,
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 6 }}>
+        <PriorityBadge priorite={attention.priorite} categorie={attention.categorie} />
+        <span style={{ fontSize: 11, color: grisTexte, whiteSpace: "nowrap" }}>{new Date(attention.createdAt).toLocaleDateString("fr-FR")}</span>
+      </div>
+      <p style={{ margin: "0 0 4px", fontWeight: 700, fontSize: 14, color: "#111" }}>{attention.titre}</p>
+      <p style={{ margin: "0 0 4px", fontSize: 13, color: grisTexte }}>{attention.resume}</p>
+      <p style={{ margin: "0 0 10px", fontSize: 12, color: "#94a0b3" }}>{attention.raison}</p>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        {attention.actionDisponible && (
+          <a href={attention.actionDisponible.href} style={{ textDecoration: "none" }}>
+            <Bouton variant="primary">{attention.actionDisponible.label}</Bouton>
+          </a>
+        )}
+        {attention.statut === "OUVERTE" && onMarquerLu && (
+          <Bouton variant="secondary" onClick={onMarquerLu}>
+            Marquer comme lu
+          </Bouton>
+        )}
+        {peutResoudre && attention.statut !== "RESOLUE" && attention.statut !== "EXPIREE" && onResoudre && (
+          <Bouton variant="tertiary" onClick={onResoudre}>
+            Ignorer
+          </Bouton>
+        )}
+      </div>
     </Card>
   );
 }
