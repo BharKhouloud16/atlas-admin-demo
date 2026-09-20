@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Cookie } from "@playwright/test";
 
 // B15 — Correction : /admin/missions n'offrait aucune UI pour créer une
 // mission (l'endpoint POST /api/missions existait déjà, voir
@@ -10,13 +10,22 @@ import { test, expect } from "@playwright/test";
 // était traité comme un Ingénieur et perdait ce formulaire).
 const MOT_DE_PASSE = "Demo1234";
 
-test.describe("Admin — création d'une mission depuis /admin/missions", () => {
+// FIX (20/09/2026, correctif CI #44 élargi) : les 2 tests se connectaient
+// chacun séparément en Admin — aucun des deux ne teste le login lui-même,
+// tous les deux ne s'en servent que comme précondition pour tester le
+// formulaire de création de mission. Regroupés en série (même motif que
+// tests/e2e/qualite.spec.ts) : le 1er effectue la seule connexion UI réelle
+// et capture les cookies de session ; le 2nd les réutilise.
+test.describe.serial("Admin — création d'une mission depuis /admin/missions", () => {
+  let cookiesAdmin: Cookie[] | undefined;
+
   test("le formulaire crée une mission avec un client et un profil existants", async ({ page }) => {
     await page.goto("/connexion");
     await page.getByPlaceholder("Email").fill("admin-demo@example.com");
     await page.getByPlaceholder("Mot de passe").fill(MOT_DE_PASSE);
     await page.getByRole("button", { name: /se connecter/i }).click();
     await expect(page).toHaveURL(/\/admin/);
+    cookiesAdmin = await page.context().cookies();
 
     await page.goto("/admin/missions");
     await expect(page.getByRole("heading", { name: /missions/i })).toBeVisible();
@@ -51,11 +60,8 @@ test.describe("Admin — création d'une mission depuis /admin/missions", () => 
   });
 
   test("le formulaire refuse la création sans nombre de jours ni TJM (validation existante côté API)", async ({ page }) => {
-    await page.goto("/connexion");
-    await page.getByPlaceholder("Email").fill("admin-demo@example.com");
-    await page.getByPlaceholder("Mot de passe").fill(MOT_DE_PASSE);
-    await page.getByRole("button", { name: /se connecter/i }).click();
-    await expect(page).toHaveURL(/\/admin/);
+    expect(cookiesAdmin, "le 1er test doit avoir établi la session Admin avant celui-ci (mode serial)").toBeTruthy();
+    await page.context().addCookies(cookiesAdmin!);
 
     await page.goto("/admin/missions");
     await page.getByRole("button", { name: /nouvelle mission/i }).click();
