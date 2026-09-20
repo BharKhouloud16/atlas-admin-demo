@@ -82,9 +82,7 @@ test.describe("COMPANY ATLAS LOT 7 — Mission Outcome → Client Profile Bridge
     });
 
     test("isolation : les missions évaluées d'un autre client n'apparaissent jamais dans le signal du client courant", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
-      const creationClient = await request.post("/api/clients", { data: { nom: `Client LOT7 Isolation ${Date.now()}` } });
-      const autreClient = await creationClient.json();
+      const autreClient = await prisma.client.create({ data: { nom: `Client LOT7 Isolation ${Date.now()}` } });
       const profil = await creerProfil();
       const foreign1 = await creerMissionEvaluee(autreClient.id, profil.id, 5);
       const foreign2 = await creerMissionEvaluee(autreClient.id, profil.id, 5);
