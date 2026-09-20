@@ -1,10 +1,18 @@
 import { test, expect, type Page } from "@playwright/test";
 import { prisma } from "@/lib/prisma";
+import { CLIENT_STATE } from "../setup/storage-state";
 
 // COMPANY ATLAS — V2.1-D (16/09/2026) : parcours Client réel de C3 Solution
 // Intelligence — un besoin VALIDÉ affiche une recommandation compréhensible
 // (aucun jargon IA, aucun score technique), et le Client peut la choisir.
-const MOT_DE_PASSE = "Demo1234";
+
+// FIX ARCHITECTURAL (20/09/2026, correctif CI #44 — volet durable) : ni l'un
+// ni l'autre de ces 2 tests ne teste le login lui-même — les deux ne s'en
+// servent que comme précondition pour tester le parcours Solutions
+// possibles. Session Client pré-authentifiée consommée directement (voir
+// tests/setup/auth.setup.ts) — 0 connexion réelle dans ce fichier, contre 2
+// auparavant.
+test.use({ storageState: CLIENT_STATE });
 
 // FIX CI (17/09/2026) : app/client/besoins/page.tsx (code pré-existant du
 // LOT 2, non modifié par V2.1-D) affiche le texte du besoin deux fois —
@@ -45,12 +53,6 @@ test.describe("Client — Solutions possibles (C3)", () => {
         faits: { create: [{ cle: "COMPETENCE", valeur: "Terraform", statut: "DECLARE" }] },
       },
     });
-
-    await page.goto("/connexion");
-    await page.getByPlaceholder("Email").fill("client-demo@example.com");
-    await page.getByPlaceholder("Mot de passe").fill(MOT_DE_PASSE);
-    await page.getByRole("button", { name: /se connecter/i }).click();
-    await expect(page).toHaveURL(/\/client/);
 
     await page.goto("/client/besoins");
     await localiserTitreBesoin(page, `Besoin e2e V2.1-D ${suffixe}`).click();
@@ -106,12 +108,6 @@ test.describe("Client — Solutions possibles (C3)", () => {
     await prisma.clientNeed.create({
       data: { clientId: client!.id, correlationId: `v21d-${suffixe}`, texteOriginal: `Besoin non validé ${suffixe}`, statut: "SOUMIS" },
     });
-
-    await page.goto("/connexion");
-    await page.getByPlaceholder("Email").fill("client-demo@example.com");
-    await page.getByPlaceholder("Mot de passe").fill(MOT_DE_PASSE);
-    await page.getByRole("button", { name: /se connecter/i }).click();
-    await expect(page).toHaveURL(/\/client/);
 
     await page.goto("/client/besoins");
     await localiserTitreBesoin(page, `Besoin non validé ${suffixe}`).click();
