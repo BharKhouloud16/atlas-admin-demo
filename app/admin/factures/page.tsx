@@ -59,12 +59,31 @@ function solde(f: Facture): number {
   return nombre(f.montantTTC) - paye;
 }
 
+// V2.2-C (mandat CEO section 16, "rechercher ; filtrer ; ... identifier les
+// anomalies") — recherche/filtre appliqués côté client sur la liste déjà
+// chargée (pas de nouvelle route : la volumétrie de ce dépôt ne justifie
+// pas une pagination/recherche serveur, voir mandat section 23 "pas
+// d'optimisation prématurée" — à revoir si le volume réel de Factures le
+// justifie un jour).
+const FILTRES_STATUT: { valeur: string; label: string }[] = [
+  { valeur: "TOUS", label: "Tous les statuts" },
+  { valeur: "BROUILLON", label: LABEL_STATUT_FACTURE.BROUILLON },
+  { valeur: "VALIDEE", label: LABEL_STATUT_FACTURE.VALIDEE },
+  { valeur: "ENVOYEE", label: LABEL_STATUT_FACTURE.ENVOYEE },
+  { valeur: "ECHUE", label: LABEL_STATUT_FACTURE.ECHUE },
+  { valeur: "PARTIELLEMENT_PAYEE", label: LABEL_STATUT_FACTURE.PARTIELLEMENT_PAYEE },
+  { valeur: "PAYEE", label: LABEL_STATUT_FACTURE.PAYEE },
+  { valeur: "ANNULEE", label: LABEL_STATUT_FACTURE.ANNULEE },
+];
+
 export default function FacturesAdminPage() {
   const [factures, setFactures] = useState<Facture[]>([]);
   const [feuilles, setFeuilles] = useState<Feuille[]>([]);
   const [chargement, setChargement] = useState(true);
   const [enCours, setEnCours] = useState<string | null>(null);
   const [paiementForm, setPaiementForm] = useState<Record<string, { montant: string; reference: string; methode: string }>>({});
+  const [recherche, setRecherche] = useState("");
+  const [filtreStatut, setFiltreStatut] = useState("TOUS");
 
   function recharger() {
     Promise.all([fetch("/api/factures").then((r) => r.json()), fetch("/api/feuilles-de-temps").then((r) => r.json())]).then(
@@ -126,6 +145,23 @@ export default function FacturesAdminPage() {
     (f) => f.statut === "ValideeClient" && !factures.some((fa) => fa.feuilleDeTempsId === f.id)
   );
 
+  const facturesAvecStatutAffiche = factures.map((f) => ({
+    facture: f,
+    statutAff: statutAffiche(f.statut, f.dateEcheance ? new Date(f.dateEcheance) : null),
+  }));
+  const enRetard = facturesAvecStatutAffiche.filter((x) => x.statutAff === "ECHUE");
+
+  const termeRecherche = recherche.trim().toLowerCase();
+  const facturesAffichees = facturesAvecStatutAffiche.filter(({ facture: f, statutAff }) => {
+    if (filtreStatut !== "TOUS" && statutAff !== filtreStatut) return false;
+    if (!termeRecherche) return true;
+    return (
+      f.numeroFacture.toLowerCase().includes(termeRecherche) ||
+      f.client.nom.toLowerCase().includes(termeRecherche) ||
+      (f.mission.repere ?? "").toLowerCase().includes(termeRecherche)
+    );
+  });
+
   return (
     <div>
       <h1 style={{ marginBottom: 4, color: bleuFonce }}>Facturation</h1>
@@ -158,10 +194,42 @@ export default function FacturesAdminPage() {
       </div>
 
       <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Factures ({factures.length})</p>
+
+      {enRetard.length > 0 && (
+        <div style={{ background: "#fdf1f0", border: `1px solid ${rouge}`, borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: rouge, fontWeight: 600 }}>
+          {enRetard.length} facture{enRetard.length > 1 ? "s" : ""} en retard de paiement (échéance dépassée)
+        </div>
+      )}
+
+      {factures.length > 0 && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+          <input
+            type="text"
+            placeholder="Rechercher (numéro, client, mission)…"
+            value={recherche}
+            onChange={(e) => setRecherche(e.target.value)}
+            style={{ fontSize: 13, padding: "7px 10px", border: "1px solid #e4e7ee", borderRadius: 6, width: 260 }}
+          />
+          <select
+            value={filtreStatut}
+            onChange={(e) => setFiltreStatut(e.target.value)}
+            style={{ fontSize: 13, padding: "7px 10px", border: "1px solid #e4e7ee", borderRadius: 6 }}
+          >
+            {FILTRES_STATUT.map((opt) => (
+              <option key={opt.valeur} value={opt.valeur}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {factures.length === 0 && <p style={{ fontSize: 13, color: "#888" }}>Aucune facture créée pour l&apos;instant.</p>}
+      {factures.length > 0 && facturesAffichees.length === 0 && (
+        <p style={{ fontSize: 13, color: "#888" }}>Aucune facture ne correspond à cette recherche/ce filtre.</p>
+      )}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {factures.map((f) => {
-          const statutAff = statutAffiche(f.statut, f.dateEcheance ? new Date(f.dateEcheance) : null);
+        {facturesAffichees.map(({ facture: f, statutAff }) => {
           const restant = solde(f);
           return (
             <div key={f.id} style={{ border: "1px solid #e4e7ee", borderRadius: 8, padding: 14 }}>
