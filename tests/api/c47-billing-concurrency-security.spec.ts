@@ -47,7 +47,7 @@ async function creerClientDeTest(suffixe: string) {
 // tests/api/b42-billing-api.spec.ts (feuilleDeTest), poussé jusqu'à
 // Facture pour ces tests qui exercent spécifiquement les transitions et le
 // document, jamais la création elle-même (déjà couverte ailleurs).
-async function factureDeTest(mois: string, statut: "BROUILLON" | "VALIDEE" = "BROUILLON") {
+async function factureDeTest(mois: string, statut: "BROUILLON" | "VALIDEE" | "ENVOYEE" = "BROUILLON") {
   const [clientId, profilId] = await Promise.all([idClientDemoReel(), idProfilIngenieurDemo()]);
   const tjmVente = 600;
   const joursTravailles = 5;
@@ -81,10 +81,30 @@ async function factureDeTest(mois: string, statut: "BROUILLON" | "VALIDEE" = "BR
       devise: "EUR",
     },
   });
-  if (statut === "VALIDEE") {
+  if (statut === "VALIDEE" || statut === "ENVOYEE") {
     const dateEcheance = new Date(maintenant);
     dateEcheance.setDate(dateEcheance.getDate() + 30);
-    await prisma.facture.update({ where: { id: facture.id }, data: { statut: "VALIDEE", dateEmission: maintenant, dateEcheance } });
+    await prisma.facture.update({
+      where: { id: facture.id },
+      data: {
+        statut,
+        dateEmission: maintenant,
+        dateEcheance,
+        // FIX CI (20/09/2026) — ENVOYEE construit directement via Prisma
+        // (même discipline "état donné" que BROUILLON/VALIDEE ci-dessus) :
+        // les 2 tests IDOR ci-dessous exercent uniquement la restriction de
+        // LECTURE Client (déjà le seul comportement sous test), jamais la
+        // transition elle-même (couverte par les 4 tests de concurrence de
+        // ce même fichier et par tests/api/b42-billing-api.spec.ts) — passer
+        // par PATCH /transition (connexion Admin + écriture réelle) pour
+        // n'en lire ensuite que le résultat était une connexion HTTP
+        // inutile. Root cause CI du 20/09/2026 : le volume cumulé de
+        // connexions de toute la suite (voir commentaire RATE_LIMIT_LOGIN_MAX_IP
+        // dans .github/workflows/ci.yml) est sensible à chaque connexion
+        // évitable ajoutée par un nouveau fichier de test.
+        ...(statut === "ENVOYEE" ? { dateEnvoi: maintenant } : {}),
+      },
+    });
   }
   return { factureId: facture.id, clientId, montantTTC };
 }
@@ -221,13 +241,14 @@ test.describe("V2.2-C — Sécurité complémentaire (mandat CEO section 20)", (
   test("IDOR — le Client A ne peut jamais lister les paiements d'une Facture ENVOYEE du Client B (404)", async ({ request }) => {
     const clientB = await creerClientDeTest(`${Date.now()}-paiements`);
     try {
-      const { factureId } = await factureDeTest("2028-07", "VALIDEE");
+      const { factureId } = await factureDeTest("2028-07", "ENVOYEE");
       await prisma.facture.update({ where: { id: factureId }, data: { clientId: clientB.id } });
-      await connecter(request, "admin-demo@example.com");
-      const envoi = await request.patch(`/api/factures/${factureId}/transition`, { data: { action: "envoyer" } });
-      expect(envoi.ok()).toBeTruthy();
-      await request.post(`/api/factures/${factureId}/paiements`, {
-        data: { montant: 100, devise: "EUR", reference: `REF-${Date.now()}`, methode: "Virement" },
+      // Le paiement est construit directement (statut CONFIRME déjà connu,
+      // même valeur que POST /api/factures/[id]/paiements produirait) —
+      // seule la restriction de LECTURE Client est sous test ici, jamais
+      // l'enregistrement du paiement (voir tests/api/b42-billing-api.spec.ts).
+      await prisma.paiement.create({
+        data: { factureId, montant: 100, devise: "EUR", datePaiement: new Date(), reference: `REF-${Date.now()}`, methode: "Virement", statut: "CONFIRME" },
       });
 
       await connecter(request, "client-demo@example.com");
@@ -243,11 +264,8 @@ test.describe("V2.2-C — Sécurité complémentaire (mandat CEO section 20)", (
   test("IDOR — le Client A ne peut jamais télécharger le document d'une Facture ENVOYEE du Client B (404)", async ({ request }) => {
     const clientB = await creerClientDeTest(`${Date.now()}-document`);
     try {
-      const { factureId } = await factureDeTest("2028-08", "VALIDEE");
+      const { factureId } = await factureDeTest("2028-08", "ENVOYEE");
       await prisma.facture.update({ where: { id: factureId }, data: { clientId: clientB.id } });
-      await connecter(request, "admin-demo@example.com");
-      const envoi = await request.patch(`/api/factures/${factureId}/transition`, { data: { action: "envoyer" } });
-      expect(envoi.ok()).toBeTruthy();
 
       await connecter(request, "client-demo@example.com");
       const document = await request.get(`/api/factures/${factureId}/document`);
