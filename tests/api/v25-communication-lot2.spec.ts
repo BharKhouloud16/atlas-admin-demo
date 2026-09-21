@@ -1,7 +1,8 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect } from "@playwright/test";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { ADMIN_STATE } from "../setup/storage-state";
+import { contexteConnecte } from "../setup/session-token";
 
 // COMPANY ATLAS — V2.5 : Communication Intelligence (Lot 2 — Message →
 // Attention, 21/09/2026).
@@ -13,21 +14,15 @@ import { ADMIN_STATE } from "../setup/storage-state";
 // (règle #7 — jamais un signal partagé par rôle), IDOR/BOLA sur les routes
 // Admin existantes désormais individuelles.
 //
-// FIX CI (21/09/2026, même correctif que tests/api/v23-attention-api.spec.ts) :
-// ce fichier ne teste jamais le mécanisme de connexion lui-même — seule une
-// connexion réelle par rôle réellement testé est nécessaire. Sur ce dépôt,
-// toutes les requêtes `next start` en CI partagent une IP (lib/rate-limit.ts),
-// donc UN compteur RATE_LIMIT_LOGIN_MAX_IP pour la suite entière : 12
-// connexions réelles par ce seul fichier ont contribué à dépasser le seuil
-// (600) et cassé des tests sans rapport (connexion.spec.ts). Migré vers la
-// session Admin pré-authentifiée partagée (storageState) — seules exceptions
-// gardées en connexion réelle : les 2 tests qui basculent explicitement
-// Admin -> Client au sein d'un même test (même règle que v23-attention-api).
-
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
-}
+// FIX CI (21/09/2026) : ce fichier ne teste jamais le mécanisme de connexion
+// lui-même. Sur ce dépôt, toutes les requêtes `next start` en CI partagent
+// une IP (lib/rate-limit.ts), donc UN compteur RATE_LIMIT_LOGIN_MAX_IP pour
+// la suite entière — des connexions réelles répétées dans ce fichier ont
+// contribué à dépasser le seuil (600) et cassé des tests sans rapport
+// (connexion.spec.ts). Migré vers storageState pour l'Admin démo (session
+// pré-authentifiée partagée) et vers tests/setup/session-token.ts (session
+// signée directement, sans HTTP) pour les 2 tests qui basculent Admin ->
+// Client fraîchement créé au sein d'un même test.
 
 async function userIdDemo(email: string) {
   const user = await prisma.user.findUnique({ where: { email } });
@@ -221,36 +216,42 @@ test.describe("V2.5 Lot 2 — Admin (session pré-authentifiée)", () => {
   });
 });
 
-// Bascule Admin -> Client au sein d'un même test : gardé en connexions
-// réelles (même règle que tests/api/v23-attention-api.spec.ts) — un Client
-// fraîchement créé n'a pas de session pré-authentifiée partagée possible.
+// Bascule Admin -> Client au sein d'un même test : les deux côtés utilisent
+// tests/setup/session-token.ts (session signée directement, jamais
+// POST /api/auth/login) — un Client fraîchement créé n'a pas de session
+// pré-authentifiée partagée possible, mais rien n'oblige non plus à
+// consommer le compteur de rate-limit partagé pour l'obtenir.
 test.describe("V2.5 Lot 2 — Résolution automatique à la lecture effective, côté Client (bascule de rôle)", () => {
-  test("marquer le fil lu (Client) résout la MESSAGE_NON_LU CLIENT, source=Message sourceId=clientId", async ({ request }) => {
+  test("marquer le fil lu (Client) résout la MESSAGE_NON_LU CLIENT, source=Message sourceId=clientId", async () => {
     const { client, email } = await creerClientConnecte(`resolution-${Date.now()}`);
 
-    await connecter(request, "admin-demo@example.com");
-    await request.post(`/api/clients/${client.id}/messages`, { data: { contenu: "Réponse admin non lue" } });
+    const ctxAdmin = await contexteConnecte({ email: "admin-demo@example.com", role: "ADMIN" });
+    await ctxAdmin.post(`/api/clients/${client.id}/messages`, { data: { contenu: "Réponse admin non lue" } });
+    await ctxAdmin.dispose();
 
     const avant = await messageNonLu(client.id, client.id);
     expect(avant).toBeTruthy();
     expect(avant!.statut).toBe("OUVERTE");
     expect(avant!.recipientType).toBe("CLIENT");
 
-    await connecter(request, email);
-    const lu = await request.post("/api/client/messages/lu");
+    const ctxClient = await contexteConnecte({ email, role: "CLIENT", clientId: client.id });
+    const lu = await ctxClient.post("/api/client/messages/lu");
     expect(lu.ok()).toBeTruthy();
+    await ctxClient.dispose();
 
     const apres = await messageNonLu(client.id, client.id);
     expect(apres!.statut).toBe("RESOLUE");
   });
 
-  test("un nouveau message après résolution rouvre MESSAGE_NON_LU (jamais figée RESOLUE)", async ({ request }) => {
+  test("un nouveau message après résolution rouvre MESSAGE_NON_LU (jamais figée RESOLUE)", async () => {
     const { client, email } = await creerClientConnecte(`reouverture-${Date.now()}`);
-    await connecter(request, email);
-    await request.post("/api/client/messages/lu"); // curseur à jour, rien à lire
+    const ctxClient = await contexteConnecte({ email, role: "CLIENT", clientId: client.id });
+    await ctxClient.post("/api/client/messages/lu"); // curseur à jour, rien à lire
+    await ctxClient.dispose();
 
-    await connecter(request, "admin-demo@example.com");
-    await request.post(`/api/clients/${client.id}/messages`, { data: { contenu: "Nouveau message après lecture" } });
+    const ctxAdmin = await contexteConnecte({ email: "admin-demo@example.com", role: "ADMIN" });
+    await ctxAdmin.post(`/api/clients/${client.id}/messages`, { data: { contenu: "Nouveau message après lecture" } });
+    await ctxAdmin.dispose();
 
     const attention = await messageNonLu(client.id, client.id);
     expect(attention!.statut).toBe("OUVERTE");
