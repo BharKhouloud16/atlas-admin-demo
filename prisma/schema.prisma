@@ -1227,12 +1227,16 @@ enum MessageAuteurRole {
 }
 
 model Message {
-  id         String            @id @default(cuid())
-  client     Client            @relation(fields: [clientId], references: [id])
-  clientId   String
-  auteurRole MessageAuteurRole
-  contenu    String
-  createdAt  DateTime          @default(now())
+  id           String            @id @default(cuid())
+  client       Client            @relation(fields: [clientId], references: [id])
+  clientId     String
+  auteurRole   MessageAuteurRole
+  contenu      String
+  createdAt    DateTime          @default(now())
+  // V2.4 — Pièces jointes sécurisées (21/09/2026, Lot 0 : schéma
+  // uniquement — voir PieceJointe ci-dessous). Relation additive pure :
+  // aucun champ existant modifié.
+  pieceJointes PieceJointe[]
 
   @@index([clientId])
 }
@@ -1983,4 +1987,46 @@ model Attention {
   @@unique([type, source, sourceId])
   @@index([recipientType, recipientId, statut])
   @@index([createdAt])
+}
+
+// COMPANY ATLAS — V2.4 : Pièces jointes sécurisées (21/09/2026, Lot 0 —
+// schéma uniquement, aucune API/upload/téléchargement dans ce lot).
+//
+// Aucun clientId sur ce modèle : l'ownership est TOUJOURS dérivé
+// transitivement via messageId -> Message.clientId, jamais une seconde
+// source de vérité sur l'appartenance (l'audit V2.4 a identifié ce
+// couplage comme le défaut structurel du modèle Document existant —
+// clientId obligatoire + relation Facture 1:1 morte pour ce cas d'usage
+// — délibérément évité ici). Toute vérification d'accès doit donc
+// remonter par `pieceJointe.message.clientId`, jamais un champ propre.
+//
+// Historique additif, même discipline que Message lui-même (aucune
+// édition en V1) : `supprimeLe` marque une suppression LOGIQUE
+// uniquement — jamais un DELETE, jamais un appel à supprimerFichier()
+// dans ce lot (aucune logique d'accès/suppression n'est ajoutée ici,
+// strictement le schéma).
+model PieceJointe {
+  id           String                @id @default(cuid())
+  message      Message               @relation(fields: [messageId], references: [id])
+  messageId    String
+  nomFichier   String
+  mimeType     String
+  tailleOctets Int
+  hash         String
+  fileUrl      String
+  // Interface future de malware scanning préparée sans scanner construit
+  // (mandat V2.4 explicite) : aucune route ni logique ne lit ce champ
+  // dans ce lot — NON_SCANNE par défaut, jamais un statut inventé.
+  statutScan   StatutScanPieceJointe @default(NON_SCANNE)
+  createdAt    DateTime              @default(now())
+  supprimeLe   DateTime?
+
+  @@index([messageId])
+}
+
+enum StatutScanPieceJointe {
+  NON_SCANNE
+  PROPRE
+  SUSPECT
+  ERREUR_SCAN
 }
