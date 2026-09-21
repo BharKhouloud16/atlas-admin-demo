@@ -4,7 +4,7 @@ import { getSession } from "@/lib/auth";
 import { validerContenuMessage } from "@/lib/client-messages";
 import { resoudreUserId } from "@/lib/session-user";
 import { compterMessagesNonLus } from "@/lib/message-lecture";
-import { synchroniserAttentionsClient } from "@/lib/attention/synchronisation";
+import { synchroniserEtNotifierMessage } from "@/lib/message-attention-email";
 
 // CLIENT COMPLETION PROGRAM — C8 : Communication (16/09/2026).
 //
@@ -60,12 +60,13 @@ export async function POST(req: NextRequest) {
     data: { clientId: session.clientId, auteurRole: "CLIENT", contenu },
   });
 
-  // V2.5 — Communication Intelligence (Lot 2, 21/09/2026) : déclenche la
+  // V2.5 — Communication Intelligence (Lots 2/4, 21/09/2026) : déclenche la
   // resynchronisation Attention scopée dès l'envoi (jamais une nouvelle
   // synchronisation — voir lib/attention/synchronisation.ts,
   // construireEntitesMessage) pour que MESSAGE_NON_LU apparaisse côté Admin
-  // sans attendre son prochain chargement de liste.
-  await synchroniserAttentionsClient(session.clientId);
+  // sans attendre son prochain chargement de liste, et notifie par email
+  // (best-effort) les destinataires dont le fil vient de basculer non lu.
+  await synchroniserEtNotifierMessage(session.clientId);
 
   return NextResponse.json({ message }, { status: 201 });
 }

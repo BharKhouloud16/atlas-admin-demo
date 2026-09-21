@@ -6,7 +6,7 @@ import { enregistrerEvenementSecurite, nouveauCorrelationId } from "@/lib/securi
 import { validerContenuMessage } from "@/lib/client-messages";
 import { resoudreUserId } from "@/lib/session-user";
 import { compterMessagesNonLus } from "@/lib/message-lecture";
-import { synchroniserAttentionsClient } from "@/lib/attention/synchronisation";
+import { synchroniserEtNotifierMessage } from "@/lib/message-attention-email";
 
 // CLIENT COMPLETION PROGRAM — C8 : Communication (16/09/2026).
 //
@@ -94,9 +94,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     data: { clientId: id, auteurRole: "ADMIN", contenu },
   });
 
-  // V2.5 — Communication Intelligence (Lot 2, 21/09/2026) : voir
+  // V2.5 — Communication Intelligence (Lots 2/4, 21/09/2026) : voir
   // app/api/client/messages/route.ts pour la justification.
-  await synchroniserAttentionsClient(id);
+  await synchroniserEtNotifierMessage(id);
 
   return NextResponse.json({ message }, { status: 201 });
 }
