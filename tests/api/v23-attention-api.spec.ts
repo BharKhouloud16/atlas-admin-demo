@@ -1,12 +1,33 @@
 import { test, expect, APIRequestContext } from "@playwright/test";
 import { prisma } from "@/lib/prisma";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
+import { synchroniserAttentionsClient } from "@/lib/attention/synchronisation";
 
 // COMPANY ATLAS — V2.3 (20/09/2026) : Communication Intelligence + Attention
 // Center — API Client/Admin.
 //
-// Même discipline anti-volume-de-connexions que les fichiers V2.2-B/C/D/E
-// précédents : état "donné" construit directement via Prisma, une seule
-// connexion HTTP par test pour ce qui est effectivement sous test.
+// FIX CI (correctif CI #46, 20/09/2026) : ce fichier n'existait pas encore
+// quand l'architecture storageState partagée a été construite (voir
+// tests/setup/auth.setup.ts) — chaque test se reconnectait donc
+// individuellement, alors qu'aucun d'entre eux ne teste le mécanisme de
+// connexion lui-même (c'est le rôle exclusif de tests/e2e/connexion.spec.ts) :
+// tous ne s'en servaient que comme précondition pour atteindre les routes
+// Attention réellement sous test. Migré vers les sessions pré-authentifiées
+// partagées — seule exception : le test IDOR qui bascule Admin -> Client au
+// sein d'un même test garde ses 2 connexions réelles inchangées (correction
+// minimale, pas de nouveau mécanisme de double-contexte introduit pour un
+// seul cas).
+//
+// FIX CI (21/09/2026, élargissement du correctif) : le test IDOR "GET
+// /api/client/attentions du Client réel..." supposait qu'une Attention
+// existait déjà pour un Client tiers créé dans le test, alors que rien ne la
+// synchronisait jamais — synchroniserAttentionsClient (voir
+// lib/attention/synchronisation.ts) ne synchronise QUE le Client de la
+// session en cours, jamais un tiers. Bug pré-existant, sans rapport avec le
+// volume de logins (reproduit à l'identique avec son connecter() d'origine),
+// corrigé en appelant directement la fonction pure de synchronisation pour
+// le Client tiers — même résultat qu'un vrai GET authentifié comme ce
+// Client, sans ajouter de connexion réelle ni de route HTTP supplémentaire.
 
 async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
   const reponse = await request.post("/api/auth/login", { data: { email, password } });
@@ -68,16 +89,22 @@ async function besoinDeTest(clientId: string, statut: string) {
 }
 
 test.describe("V2.3 — RBAC : Attention réservée Client/Admin, jamais Ingénieur", () => {
-  test("un Ingénieur ne peut jamais lister ses Attention (il n'en a structurellement aucune)", async ({ request }) => {
-    await connecter(request, "ingenieur-demo@example.com");
-    const reponse = await request.get("/api/client/attentions");
-    expect(reponse.status()).toBe(403);
+  test.describe("Ingénieur", () => {
+    test.use({ storageState: INGENIEUR_STATE });
+
+    test("un Ingénieur ne peut jamais lister ses Attention (il n'en a structurellement aucune)", async ({ request }) => {
+      const reponse = await request.get("/api/client/attentions");
+      expect(reponse.status()).toBe(403);
+    });
   });
 
-  test("un Client ne peut jamais accéder à la liste Admin", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
-    const reponse = await request.get("/api/admin/attentions");
-    expect(reponse.status()).toBe(403);
+  test.describe("Client", () => {
+    test.use({ storageState: CLIENT_STATE });
+
+    test("un Client ne peut jamais accéder à la liste Admin", async ({ request }) => {
+      const reponse = await request.get("/api/admin/attentions");
+      expect(reponse.status()).toBe(403);
+    });
   });
 
   test("non authentifié -> 403 sur les deux routes", async ({ request }) => {
@@ -87,6 +114,8 @@ test.describe("V2.3 — RBAC : Attention réservée Client/Admin, jamais Ingéni
 });
 
 test.describe("V2.3 — Synchronisation Billing -> Attention (delta réel de ce lot)", () => {
+  test.use({ storageState: ADMIN_STATE });
+
   test("une Facture en retard produit une Attention FACTURE_ECHUE visible par son Client", async ({ request }) => {
     const client = await creerClientDeTest("echue");
     const facture = await factureDeTest(client.id, { statut: "ENVOYEE" });
@@ -94,7 +123,6 @@ test.describe("V2.3 — Synchronisation Billing -> Attention (delta réel de ce 
     // Synchronisation déclenchée par la route Admin (balayage global) —
     // jamais besoin de connecter le Client de test lui-même (aucun compte
     // n'existe pour lui, seul le Client Prisma a été créé).
-    await connecter(request, "admin-demo@example.com");
     const reponse = await request.get(`/api/admin/attentions?clientId=${client.id}&historique=1`);
     const corps = await reponse.json();
     const attention = corps.attentions.find((a: { type: string; sourceId: string }) => a.type === "FACTURE_ECHUE" && a.sourceId === facture.id);
@@ -106,7 +134,6 @@ test.describe("V2.3 — Synchronisation Billing -> Attention (delta réel de ce 
     const client = await creerClientDeTest("resolution");
     const facture = await factureDeTest(client.id, { statut: "ENVOYEE", montantTTC: 500 });
 
-    await connecter(request, "admin-demo@example.com");
     await request.get(`/api/admin/attentions?clientId=${client.id}&historique=1`); // 1ère sync : FACTURE_ECHUE ouverte
 
     await request.post(`/api/factures/${facture.id}/paiements`, { data: { montant: 500, devise: "EUR", reference: `REF-${Date.now()}`, methode: "Virement" } });
@@ -124,7 +151,6 @@ test.describe("V2.3 — Synchronisation Billing -> Attention (delta réel de ce 
     const client = await creerClientDeTest("idempotence");
     const facture = await factureDeTest(client.id, { statut: "ENVOYEE" });
 
-    await connecter(request, "admin-demo@example.com");
     await request.get(`/api/admin/attentions?clientId=${client.id}&historique=1`);
     await request.get(`/api/admin/attentions?clientId=${client.id}&historique=1`);
     await request.get(`/api/admin/attentions?clientId=${client.id}&historique=1`);
@@ -137,7 +163,6 @@ test.describe("V2.3 — Synchronisation Billing -> Attention (delta réel de ce 
     const client = await creerClientDeTest("concurrence");
     const facture = await factureDeTest(client.id, { statut: "ENVOYEE" });
 
-    await connecter(request, "admin-demo@example.com");
     await Promise.all([
       request.get(`/api/admin/attentions?clientId=${client.id}&historique=1`),
       request.get(`/api/admin/attentions?clientId=${client.id}&historique=1`),
@@ -157,7 +182,6 @@ test.describe("V2.3 — Synchronisation Billing -> Attention (delta réel de ce 
     // detecterAnomalies().
     await prisma.facture.update({ where: { id: facture.id }, data: { montantTTC: -1 } });
 
-    await connecter(request, "admin-demo@example.com");
     const reponseAdmin = await request.get(`/api/admin/attentions?clientId=${client.id}&historique=1`);
     const corpsAdmin = await reponseAdmin.json();
     expect(corpsAdmin.attentions.some((a: { type: string }) => a.type === "ANOMALIE_FINANCIERE")).toBeTruthy();
@@ -172,7 +196,6 @@ test.describe("V2.3 — Synchronisation Billing -> Attention (delta réel de ce 
     const client = await creerClientDeTest("besoin");
     const besoin = await besoinDeTest(client.id, "A_CLARIFIER");
 
-    await connecter(request, "admin-demo@example.com");
     const reponse = await request.get(`/api/admin/attentions?clientId=${client.id}&historique=1`);
     const corps = await reponse.json();
     const attention = corps.attentions.find((a: { sourceId: string }) => a.sourceId === besoin.id);
@@ -182,22 +205,31 @@ test.describe("V2.3 — Synchronisation Billing -> Attention (delta réel de ce 
 });
 
 test.describe("V2.3 — IDOR/BOLA : un Client ne voit et ne modifie jamais l'Attention d'un autre Client (mandat section 6)", () => {
-  test("GET /api/client/attentions du Client réel ne renvoie jamais l'Attention d'un autre Client", async ({ request }) => {
-    const autreClient = await creerClientDeTest("idor-autre");
-    await factureDeTest(autreClient.id, { statut: "ENVOYEE" });
+  test.describe("Client", () => {
+    test.use({ storageState: CLIENT_STATE });
 
-    await connecter(request, "client-demo@example.com");
-    const reponse = await request.get("/api/client/attentions?historique=1");
-    const corps = await reponse.json();
-    // Toutes les Attention renvoyées doivent être scopées au Client
-    // connecté — vérifié indirectement : aucune ne référence la Facture de
-    // l'autre Client (impossible à distinguer autrement depuis la réponse
-    // Client-safe, qui n'expose jamais clientId — voir adapterAttentionClient).
-    const factureAutreClient = await prisma.attention.findFirst({ where: { recipientId: autreClient.id } });
-    expect(factureAutreClient).toBeTruthy();
-    expect(corps.attentions.some((a: { id: string }) => a.id === factureAutreClient!.id)).toBeFalsy();
+    test("GET /api/client/attentions du Client réel ne renvoie jamais l'Attention d'un autre Client", async ({ request }) => {
+      const autreClient = await creerClientDeTest("idor-autre");
+      await factureDeTest(autreClient.id, { statut: "ENVOYEE" });
+      // Simule ce que produirait un GET authentifié comme ce Client tiers —
+      // jamais une seconde connexion réelle, jamais une Attention fabriquée
+      // à la main (voir commentaire d'en-tête).
+      await synchroniserAttentionsClient(autreClient.id);
+
+      const reponse = await request.get("/api/client/attentions?historique=1");
+      const corps = await reponse.json();
+      // Toutes les Attention renvoyées doivent être scopées au Client
+      // connecté — vérifié indirectement : aucune ne référence la Facture de
+      // l'autre Client (impossible à distinguer autrement depuis la réponse
+      // Client-safe, qui n'expose jamais clientId — voir adapterAttentionClient).
+      const factureAutreClient = await prisma.attention.findFirst({ where: { recipientId: autreClient.id } });
+      expect(factureAutreClient).toBeTruthy();
+      expect(corps.attentions.some((a: { id: string }) => a.id === factureAutreClient!.id)).toBeFalsy();
+    });
   });
 
+  // Bascule Admin -> Client au sein d'un même test : gardé en connexions
+  // réelles inchangées (voir note d'en-tête — correction minimale).
   test("PATCH /api/client/attentions/[id] sur une Attention d'un autre Client -> 404 (jamais 403 : aucune fuite d'existence)", async ({ request }) => {
     const autreClient = await creerClientDeTest("idor-patch-autre");
     await factureDeTest(autreClient.id, { statut: "ENVOYEE" });
@@ -215,33 +247,36 @@ test.describe("V2.3 — IDOR/BOLA : un Client ne voit et ne modifie jamais l'Att
     expect(enBase!.readAt).toBeNull(); // jamais modifiée par la tentative refusée
   });
 
-  test("PATCH Admin sur une Attention CLIENT -> 404 (cette route n'agit jamais sur une Attention destinée à un Client)", async ({ request }) => {
-    const client = await creerClientDeTest("idor-admin-sur-client");
-    await factureDeTest(client.id, { statut: "ENVOYEE" });
+  test.describe("Admin", () => {
+    test.use({ storageState: ADMIN_STATE });
 
-    await connecter(request, "admin-demo@example.com");
-    await request.get(`/api/admin/attentions?clientId=${client.id}&historique=1`);
-    const attentionClient = await prisma.attention.findFirst({ where: { recipientType: "CLIENT", recipientId: client.id } });
-    expect(attentionClient).toBeTruthy();
+    test("PATCH Admin sur une Attention CLIENT -> 404 (cette route n'agit jamais sur une Attention destinée à un Client)", async ({ request }) => {
+      const client = await creerClientDeTest("idor-admin-sur-client");
+      await factureDeTest(client.id, { statut: "ENVOYEE" });
 
-    const reponse = await request.patch(`/api/admin/attentions/${attentionClient!.id}`, { data: { action: "lire" } });
-    expect(reponse.status()).toBe(404);
-  });
+      await request.get(`/api/admin/attentions?clientId=${client.id}&historique=1`);
+      const attentionClient = await prisma.attention.findFirst({ where: { recipientType: "CLIENT", recipientId: client.id } });
+      expect(attentionClient).toBeTruthy();
 
-  test("PATCH sur une Attention inexistante -> 404", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
-    const reponse = await request.patch("/api/admin/attentions/id-inexistant", { data: { action: "lire" } });
-    expect(reponse.status()).toBe(404);
+      const reponse = await request.patch(`/api/admin/attentions/${attentionClient!.id}`, { data: { action: "lire" } });
+      expect(reponse.status()).toBe(404);
+    });
+
+    test("PATCH sur une Attention inexistante -> 404", async ({ request }) => {
+      const reponse = await request.patch("/api/admin/attentions/id-inexistant", { data: { action: "lire" } });
+      expect(reponse.status()).toBe(404);
+    });
   });
 });
 
 test.describe("V2.3 — Read/unread et résolution manuelle", () => {
+  test.use({ storageState: ADMIN_STATE });
+
   test("marquer une Attention Admin comme lue met à jour son statut et readAt, jamais resolvedAt", async ({ request }) => {
     const client = await creerClientDeTest("lecture");
     const facture = await factureDeTest(client.id, { statut: "ENVOYEE" });
     await prisma.facture.update({ where: { id: facture.id }, data: { montantTTC: -1 } });
 
-    await connecter(request, "admin-demo@example.com");
     await request.get(`/api/admin/attentions?clientId=${client.id}&historique=1`);
     const anomalie = await prisma.attention.findFirst({ where: { type: "ANOMALIE_FINANCIERE", sourceId: facture.id } });
 
@@ -258,7 +293,6 @@ test.describe("V2.3 — Read/unread et résolution manuelle", () => {
     const facture = await factureDeTest(client.id, { statut: "ENVOYEE" });
     await prisma.facture.update({ where: { id: facture.id }, data: { montantTTC: -1 } });
 
-    await connecter(request, "admin-demo@example.com");
     await request.get(`/api/admin/attentions?clientId=${client.id}&historique=1`);
     const anomalie = await prisma.attention.findFirst({ where: { type: "ANOMALIE_FINANCIERE", sourceId: facture.id } });
 
@@ -273,7 +307,6 @@ test.describe("V2.3 — Read/unread et résolution manuelle", () => {
     const facture = await factureDeTest(client.id, { statut: "ENVOYEE" });
     await prisma.facture.update({ where: { id: facture.id }, data: { montantTTC: -1 } }); // pour obtenir une Attention ADMIN valide
 
-    await connecter(request, "admin-demo@example.com");
     await request.get(`/api/admin/attentions?clientId=${client.id}&historique=1`);
     const attention = await prisma.attention.findFirst({ where: { sourceId: facture.id, recipientType: "ADMIN" } });
     expect(attention).toBeTruthy();
@@ -287,7 +320,6 @@ test.describe("V2.3 — Read/unread et résolution manuelle", () => {
     const facture = await factureDeTest(client.id, { statut: "ENVOYEE" });
     await prisma.facture.update({ where: { id: facture.id }, data: { montantTTC: -1 } });
 
-    await connecter(request, "admin-demo@example.com");
     await request.get(`/api/admin/attentions?clientId=${client.id}&historique=1`);
 
     const avant = await prisma.attention.findMany({ where: { sourceId: facture.id } });
@@ -303,12 +335,13 @@ test.describe("V2.3 — Read/unread et résolution manuelle", () => {
 });
 
 test.describe("V2.3 — Filtres Admin (mandat section 13)", () => {
+  test.use({ storageState: ADMIN_STATE });
+
   test("le filtre type restreint bien la liste retournée", async ({ request }) => {
     const client = await creerClientDeTest("filtre-type");
     await factureDeTest(client.id, { statut: "ENVOYEE" }); // FACTURE_ECHUE
     await besoinDeTest(client.id, "A_CLARIFIER"); // BESOIN_A_CLARIFIER
 
-    await connecter(request, "admin-demo@example.com");
     const reponse = await request.get(`/api/admin/attentions?clientId=${client.id}&type=BESOIN_A_CLARIFIER&historique=1`);
     const corps = await reponse.json();
     expect(corps.attentions.length).toBeGreaterThan(0);
@@ -316,7 +349,6 @@ test.describe("V2.3 — Filtres Admin (mandat section 13)", () => {
   });
 
   test("un type/priorité/statut invalide dans la query string est ignoré, jamais une erreur 500", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
     const reponse = await request.get("/api/admin/attentions?type=NIMPORTEQUOI&priorite=INEXISTANT&statut=FAUX");
     expect(reponse.ok()).toBeTruthy();
   });
