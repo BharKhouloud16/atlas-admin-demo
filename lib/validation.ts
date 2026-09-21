@@ -138,3 +138,51 @@ export const ajouterPreuveSchema = z.object({
   niveauObserve: z.number().int().min(1).max(5).nullable().optional(),
   statutPropose: z.enum(["VERIFIE", "DECLARE", "INFERE", "INCONNU"]).optional(),
 });
+
+// ENGINEER PROFILE V2 — Lot 2 : relie une ProfilCompetence existante (jamais
+// créée à la volée par cette route — voir POST /api/missions/[id]/
+// competences) à la Mission courante. Réutilise EXACTEMENT le même
+// vocabulaire que ajouterPreuveSchema (statutPropose/niveauObserve) : cette
+// route génère elle-même un SkillEvidence(source: MISSION) forcé — jamais un
+// autre `source` accepté depuis le corps, pour ne jamais permettre de
+// maquiller une preuve MISSION en preuve ADMIN/CV depuis cette route.
+export const lierCompetenceMissionSchema = z.object({
+  profilCompetenceId: z.string().trim().min(1),
+  detail: z.string().trim().max(300).nullable().optional(),
+  niveauObserve: z.number().int().min(1).max(5).nullable().optional(),
+  statutPropose: z.enum(["VERIFIE", "DECLARE", "INFERE", "INCONNU"]).optional(),
+});
+
+// ENGINEER PROFILE V2 — Lot 5 : auto-déclaration Ingénieur d'une
+// certification/langue (statut toujours DECLARE, jamais VERIFIE — voir
+// routes API). Même discipline "jamais inventé" que le reste du Skill
+// Graph : nom/langue non vides, dates optionnelles et jamais déduites.
+export const certificationSchema = z.object({
+  nom: z.string().trim().min(1).max(200),
+  organisme: z.string().trim().max(200).nullable().optional(),
+  obtenueLe: z.string().datetime().nullable().optional(),
+  expireLe: z.string().datetime().nullable().optional(),
+  detail: z.string().trim().max(300).nullable().optional(),
+});
+
+const NIVEAUX_LANGUE = ["A1", "A2", "B1", "B2", "C1", "C2", "Natif"] as const;
+
+export const langueSchema = z.object({
+  langue: z.string().trim().min(1).max(100),
+  niveau: z.enum(NIVEAUX_LANGUE).nullable().optional(),
+  detail: z.string().trim().max(300).nullable().optional(),
+});
+
+// Correction Admin explicite — seule voie légitime vers VERIFIE, exactement
+// comme corrigerCompetenceSchema pour ProfilCompetence.
+export const corrigerCertificationSchema = z.object({
+  statut: z.enum(["VERIFIE", "DECLARE", "INFERE", "INCONNU"]),
+  expireLe: z.string().datetime().nullable().optional(),
+  detail: z.string().trim().max(300).nullable().optional(),
+});
+
+export const corrigerLangueSchema = z.object({
+  statut: z.enum(["VERIFIE", "DECLARE", "INFERE", "INCONNU"]),
+  niveau: z.enum(NIVEAUX_LANGUE).nullable().optional(),
+  detail: z.string().trim().max(300).nullable().optional(),
+});

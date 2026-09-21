@@ -1091,6 +1091,8 @@ model Profil {
   compte           User?
   shortlistEntrees ShortlistEntree[]
   competencesGraph ProfilCompetence[]
+  certifications   Certification[] // ENGINEER PROFILE V2 — Lot 5 (voir Certification)
+  langues          LangueParlee[] // ENGINEER PROFILE V2 — Lot 5 (voir LangueParlee)
 }
 
 model VersionCv {
@@ -1134,6 +1136,7 @@ model Mission {
   documents       Document[]
   feuillesDeTemps FeuilleDeTemps[]
   evaluation      Evaluation?
+  competencesUtilisees MissionCompetence[] // ENGINEER PROFILE V2 — Lot 2 (voir MissionCompetence)
 
   // COMPANY ATLAS — LOT 6 : Mission Context Bridge (16/09/2026).
   //
@@ -1683,6 +1686,7 @@ model ProfilCompetence {
   statut           StatutPreuveCompetence @default(INCONNU)
   confiance        NiveauConfiance        @default(BASSE)
   preuves          SkillEvidence[]
+  missions         MissionCompetence[] // ENGINEER PROFILE V2 — Lot 2 (voir MissionCompetence)
   createdAt        DateTime               @default(now())
   updatedAt        DateTime               @updatedAt
 
@@ -1700,6 +1704,89 @@ model SkillEvidence {
   createdAt          DateTime               @default(now())
 
   @@index([profilCompetenceId])
+}
+
+// ==========================================================================
+// ENGINEER PROFILE V2 — ATLAS PROFESSIONAL CAPABILITY TWIN — Lot 2
+// ==========================================================================
+//
+// Table de jonction additive MINIMALE reliant une ProfilCompetence à une
+// Mission RÉELLE qui l'a mobilisée — le chaînon manquant identifié par
+// l'audit stratégique (Mission → Engineer existait déjà, jamais Mission →
+// Engineer → Compétence). Ne remplace ni ne duplique SkillEvidence : chaque
+// lien créé via POST /api/missions/[id]/competences génère AUSSI un
+// SkillEvidence(source: MISSION) classique sur la ProfilCompetence visée —
+// cette table n'est qu'une structure relationnelle explicite entre les deux
+// entités déjà existantes, jamais un second système de preuve. Aucun nouveau
+// statut de provenance : StatutPreuveCompetence (VERIFIE/DECLARE/INFERE/
+// INCONNU) reste l'unique vocabulaire, inchangé.
+//
+// @@unique([missionId, profilCompetenceId]) empêche un doublon exact (même
+// mission liée deux fois à la même compétence) sans empêcher qu'une même
+// Mission couvre plusieurs compétences, ni qu'une compétence soit prouvée
+// par plusieurs missions distinctes.
+model MissionCompetence {
+  id                 String           @id @default(cuid())
+  mission            Mission          @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  missionId          String
+  profilCompetence   ProfilCompetence @relation(fields: [profilCompetenceId], references: [id], onDelete: Cascade)
+  profilCompetenceId String
+  // Traçabilité de qui a établi ce lien — même convention que
+  // ShortlistEntree.valideParEmail (email, jamais un userId opaque).
+  creeParEmail       String
+  createdAt          DateTime         @default(now())
+
+  @@unique([missionId, profilCompetenceId])
+  @@index([missionId])
+  @@index([profilCompetenceId])
+}
+
+// ==========================================================================
+// ENGINEER PROFILE V2 — Lot 5 : Certifications & Langues
+// ==========================================================================
+//
+// Deux entités additives structurant ce qui n'existait auparavant que comme
+// texte libre (InfoCV) ou tag d'évidence (SourcePreuveCompetence.
+// CERTIFICATION, resté un simple qualificatif sur SkillEvidence, jamais une
+// entité). Réutilisent STRICTEMENT StatutPreuveCompetence — aucun nouveau
+// vocabulaire de provenance (voir écart déjà documenté et explicitement
+// désapprouvé pour StatutProfilFait/ClientProfileFact, à ne pas reproduire
+// ici). Une certification/langue détectée dans un CV n'est JAMAIS VERIFIE
+// automatiquement (voir routes API) — seule une correction Admin explicite
+// peut le faire, exactement comme ProfilCompetence.
+model Certification {
+  id          String                 @id @default(cuid())
+  profil      Profil                 @relation(fields: [profilId], references: [id], onDelete: Cascade)
+  profilId    String
+  nom         String
+  organisme   String?
+  source      SourcePreuveCompetence @default(PROFIL)
+  statut      StatutPreuveCompetence @default(DECLARE)
+  obtenueLe   DateTime?
+  expireLe    DateTime?
+  detail      String?
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+
+  @@index([profilId])
+}
+
+model LangueParlee {
+  id        String                 @id @default(cuid())
+  profil    Profil                 @relation(fields: [profilId], references: [id], onDelete: Cascade)
+  profilId  String
+  langue    String
+  // Vocabulaire fermé volontairement simple (CECRL + Natif) — appliqué et
+  // validé côté API (lib/validation.ts), jamais un niveau numérique inventé.
+  niveau    String?
+  source    SourcePreuveCompetence @default(PROFIL)
+  statut    StatutPreuveCompetence @default(DECLARE)
+  detail    String?
+  createdAt DateTime               @default(now())
+  updatedAt DateTime               @updatedAt
+
+  @@unique([profilId, langue])
+  @@index([profilId])
 }
 
 // ==========================================================================
