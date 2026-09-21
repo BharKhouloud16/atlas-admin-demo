@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { bleu, bleuFonce, grisTexte, bordure } from "@/lib/theme";
+import { bleu, bleuFonce, grisTexte, bordure, rouge } from "@/lib/theme";
 import { PAYS } from "@/lib/localisation";
 
 type Client = {
@@ -29,6 +29,7 @@ export default function ClientsPage() {
   const [champs, setChamps] = useState(CHAMPS_VIDES);
   const [envoi, setEnvoi] = useState(false);
   const [erreur, setErreur] = useState("");
+  const [messagesNonLus, setMessagesNonLus] = useState<Set<string>>(new Set());
 
   function charger() {
     fetch("/api/clients")
@@ -39,6 +40,16 @@ export default function ClientsPage() {
       });
   }
   useEffect(charger, []);
+
+  // V2.5 — Communication Intelligence (Lot 5, 21/09/2026) : un seul appel
+  // agrégé (voir GET /api/admin/messages/non-lus), jamais une requête par
+  // ligne de client — badge individuel à CET Admin (règle #7).
+  useEffect(() => {
+    fetch("/api/admin/messages/non-lus")
+      .then((r) => r.json())
+      .then((d) => setMessagesNonLus(new Set(d.clientIdsNonLus ?? [])))
+      .catch(() => {});
+  }, []);
 
   async function creer(e: React.FormEvent) {
     e.preventDefault();
@@ -161,8 +172,15 @@ export default function ClientsPage() {
                 <td style={{ padding: "6px 8px" }}>{c.telephone ?? "—"}</td>
                 <td style={{ padding: "6px 8px" }}>{new Date(c.createdAt).toLocaleDateString("fr-FR")}</td>
                 <td style={{ padding: "6px 8px" }}>
-                  <Link href={`/admin/clients/${c.id}/messages`} style={{ fontSize: 13, color: bleu, textDecoration: "none" }}>
+                  <Link href={`/admin/clients/${c.id}/messages`} style={{ fontSize: 13, color: bleu, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}>
                     Messages
+                    {messagesNonLus.has(c.id) && (
+                      <span
+                        aria-label="Messages non lus"
+                        title="Messages non lus"
+                        style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: rouge }}
+                      />
+                    )}
                   </Link>
                 </td>
               </tr>

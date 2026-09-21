@@ -184,6 +184,25 @@ export async function envoyerEmailCraRejete(params: {
   });
 }
 
+// V2.5 — Communication Intelligence (Lot 4, 21/09/2026). Déclenché depuis
+// lib/message-attention-email.ts uniquement lors d'une transition RÉELLE
+// vers "non lu" (jamais à chaque message — voir ce fichier pour la
+// déduplication), et seulement si PreferenceNotification l'autorise. Un
+// seul nouveau modèle d'email ajouté ici, aucune nouvelle infrastructure.
+export async function envoyerEmailMessageNonLu(params: { to: string; nom?: string; lien: string }) {
+  const { to, nom, lien } = params;
+  await envoyerEmail({
+    to,
+    subject: "Atlas Quality Partners — Nouveaux messages non lus",
+    html: `
+      <p>Bonjour${nom ? ` ${nom}` : ""},</p>
+      <p>Vous avez de nouveaux messages non lus sur votre espace Atlas Quality Partners.</p>
+      <p><a href="${lien}">Voir la conversation</a></p>
+      <p>À bientôt,<br/>L'équipe Atlas Quality Partners</p>
+    `,
+  });
+}
+
 // Notifie l'ingénieur dès qu'un client dépose une évaluation sur une de ses
 // missions terminées (voir app/api/evaluations/route.ts, POST).
 export async function envoyerEmailNouvelleEvaluation(params: {

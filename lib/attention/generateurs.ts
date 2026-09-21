@@ -55,6 +55,9 @@ export const TYPES_ATTENTION_FACTURE: AttentionType[] = [
 
 export const TYPES_ATTENTION_BESOIN: AttentionType[] = ["BESOIN_A_CLARIFIER"];
 
+// V2.5 — Communication Intelligence (Lot 2, 21/09/2026).
+export const TYPES_ATTENTION_MESSAGE: AttentionType[] = ["MESSAGE_NON_LU"];
+
 const JOURS_ECHEANCE_PROCHE = 7;
 const JOURS_MS = 24 * 60 * 60 * 1000;
 
@@ -251,6 +254,54 @@ export function comparerAttentions(
     return ORDRE_PRIORITE[a.priorite] - ORDRE_PRIORITE[b.priorite];
   }
   return b.createdAt.getTime() - a.createdAt.getTime();
+}
+
+// MESSAGE_NON_LU — V2.5 : Communication Intelligence (Lot 2, 21/09/2026).
+//
+// Agrégée par THREAD (règle #9 du mandat), jamais une Attention par
+// Message individuel : un seul candidat par (clientId, lecteur), quel que
+// soit le nombre de messages non lus. `nonLu` est un booléen d'EXISTENCE
+// (au moins un message non lu), jamais un compte exact — le compte exact
+// utile à l'UI (badge, Lot 5) reste calculé à la demande, scopé à UN seul
+// lecteur, par lib/message-lecture.ts::compterMessagesNonLus ; le repro-
+// duire ici pour chaque (client, lecteur) du dépôt entier exigerait une
+// requête par paire, ce que la synchronisation globale (voir
+// lib/attention/synchronisation.ts) s'interdit explicitement.
+//
+// sourceId distingue déjà le lecteur : `clientId` seul pour le Client
+// (règle #10, cas à un seul lecteur), `"${clientId}:${adminUserId}"` pour
+// un Admin (règle #7, lecture individuelle — l'extension minimale de la
+// règle #10 nécessaire pour ne jamais modifier la contrainte
+// @@unique([type, source, sourceId]) héritée d'Attention, qui est globale
+// et non scopée par recipientId).
+export type CandidatMessageParams = {
+  clientId: string;
+  recipientType: AttentionDestinataireType;
+  recipientId: string; // clientId (Client) ou User.id de l'Admin (jamais null — l'individualité est toujours explicite)
+  nonLu: boolean;
+};
+
+export function genererCandidatMessage(params: CandidatMessageParams): AttentionCandidat | null {
+  if (!params.nonLu) return null;
+  const sourceId = params.recipientType === "CLIENT" ? params.clientId : `${params.clientId}:${params.recipientId}`;
+  return {
+    type: "MESSAGE_NON_LU",
+    categorie: "ACTION_REQUISE",
+    priorite: "P2_NORMALE",
+    titre: "Nouveaux messages non lus",
+    resume: "Des messages n'ont pas encore été lus sur ce fil de conversation.",
+    raison: "Un message a été envoyé sur ce fil depuis la dernière lecture.",
+    source: "Message",
+    sourceId,
+    recipientType: params.recipientType,
+    recipientId: params.recipientType === "CLIENT" ? params.clientId : params.recipientId,
+    actionDisponible: {
+      label: "Voir la conversation",
+      href: params.recipientType === "CLIENT" ? "/client/communication" : `/admin/clients/${params.clientId}/messages`,
+    },
+    metadata: null,
+    expiresAt: null,
+  };
 }
 
 // BESOIN_A_CLARIFIER — mandat section 10 ("besoin nécessitant clarification")

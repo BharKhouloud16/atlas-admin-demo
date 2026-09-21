@@ -40,6 +40,7 @@ const RUBRIQUES: { href: string; label: string; disponible: boolean }[] = [
 export default function ClientNav() {
   const pathname = usePathname();
   const [nonLues, setNonLues] = useState(0);
+  const [messagesNonLus, setMessagesNonLus] = useState(0);
 
   // Compteur non-lus chargé une fois à l'affichage de la navigation — même
   // discipline que le reste de l'Espace Client (aucun mécanisme de
@@ -49,6 +50,18 @@ export default function ClientNav() {
     fetch("/api/client/attentions")
       .then((r) => r.json())
       .then((d) => setNonLues(d.nonLues ?? 0))
+      .catch(() => {});
+  }, [pathname]);
+
+  // V2.5 — Communication Intelligence (Lot 5, 21/09/2026) : badge distinct
+  // pour la messagerie (nonLus, voir GET /api/client/messages) — jamais
+  // fusionné avec le compteur Attention ci-dessus, qui reste scopé aux
+  // Attention elles-mêmes (Facture/Besoin/Message agrégé n'y apparaît que
+  // comme MESSAGE_NON_LU, un signal distinct de ce compteur direct).
+  useEffect(() => {
+    fetch("/api/client/messages")
+      .then((r) => r.json())
+      .then((d) => setMessagesNonLus(d.nonLus ?? 0))
       .catch(() => {});
   }, [pathname]);
 
@@ -80,6 +93,7 @@ export default function ClientNav() {
           >
             {r.label}
             {r.href === "/client/attentions" && <UnreadBadge count={nonLues} />}
+            {r.href === "/client/communication" && <UnreadBadge count={messagesNonLus} />}
             {!r.disponible && (
               <span style={{ fontSize: 9, fontWeight: 700, color: "#b7bfcc", textTransform: "uppercase" }}>bientôt</span>
             )}

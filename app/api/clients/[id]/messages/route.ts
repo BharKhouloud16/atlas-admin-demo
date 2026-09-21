@@ -4,6 +4,9 @@ import { getSession } from "@/lib/auth";
 import { adresseIp } from "@/lib/rate-limit";
 import { enregistrerEvenementSecurite, nouveauCorrelationId } from "@/lib/security/events";
 import { validerContenuMessage } from "@/lib/client-messages";
+import { resoudreUserId } from "@/lib/session-user";
+import { compterMessagesNonLus } from "@/lib/message-lecture";
+import { synchroniserEtNotifierMessage } from "@/lib/message-attention-email";
 
 // CLIENT COMPLETION PROGRAM — C8 : Communication (16/09/2026).
 //
@@ -60,7 +63,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     },
   });
 
-  return NextResponse.json({ messages });
+  // V2.5 — Communication Intelligence (Lot 1, 21/09/2026) : nonLus = messages
+  // CLIENT postérieurs au curseur de lecture propre à CET Admin (règle #7 —
+  // chaque Admin a son propre curseur, jamais partagé par rôle).
+  const userId = await resoudreUserId(session.email);
+  const nonLus = userId ? await compterMessagesNonLus(id, userId, "CLIENT") : 0;
+
+  return NextResponse.json({ messages, nonLus });
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -84,6 +93,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const message = await prisma.message.create({
     data: { clientId: id, auteurRole: "ADMIN", contenu },
   });
+
+  // V2.5 — Communication Intelligence (Lots 2/4, 21/09/2026) : voir
+  // app/api/client/messages/route.ts pour la justification.
+  await synchroniserEtNotifierMessage(id);
 
   return NextResponse.json({ message }, { status: 201 });
 }
