@@ -4,6 +4,7 @@ import { getSession } from "@/lib/auth";
 import { AttentionType, AttentionPriorite, AttentionStatut, type Prisma } from "@prisma/client";
 import { synchroniserAttentionsGlobal } from "@/lib/attention/synchronisation";
 import { comparerAttentions } from "@/lib/attention/generateurs";
+import { resoudreUserId } from "@/lib/session-user";
 
 // COMPANY ATLAS — V2.3 : Communication Intelligence + Attention Center —
 // API Admin.
@@ -58,18 +59,45 @@ export async function GET(req: NextRequest) {
       prisma.clientNeed.findMany({ where: { clientId }, select: { id: true } }),
     ]);
     const sourceIds = [...factures.map((f) => f.id), ...besoins.map((b) => b.id)];
-    clientFilter = { OR: [{ recipientType: "CLIENT", recipientId: clientId }, ...(sourceIds.length ? [{ sourceId: { in: sourceIds } }] : [])] };
+    clientFilter = {
+      OR: [
+        { recipientType: "CLIENT", recipientId: clientId },
+        ...(sourceIds.length ? [{ sourceId: { in: sourceIds } }] : []),
+        // V2.5 — Communication Intelligence (Lot 2) : MESSAGE_NON_LU côté
+        // ADMIN a un sourceId qualifié par lecteur ("clientId:adminUserId",
+        // voir lib/attention/generateurs.ts) — jamais un simple sourceId
+        // égal au clientId comme Facture/ClientNeed, donc jamais matché par
+        // le `in: sourceIds` ci-dessus. startsWith reste sûr : aucun autre
+        // `source` n'utilise ce format de sourceId composite.
+        { source: "Message", sourceId: clientId },
+        { source: "Message", sourceId: { startsWith: `${clientId}:` } },
+      ],
+    };
   }
 
-  const where: Prisma.AttentionWhereInput = {
-    ...(historique ? {} : { statut: { in: ["OUVERTE", "LUE"] } }),
-    ...(clientFilter ?? {}),
-    ...(typeValide ? { type: typeValide } : {}),
-    ...(prioriteValide ? { priorite: prioriteValide } : {}),
-    ...(statutValide ? { statut: statutValide } : {}),
-    ...(source ? { source } : {}),
-    ...(depuisValide ? { createdAt: { gte: depuisValide } } : {}),
+  // V2.5 — Communication Intelligence (Lot 2, 21/09/2026) : MESSAGE_NON_LU
+  // introduit les premières Attention ADMIN à recipientId non-null
+  // (individuelles, règle #7 — un curseur/signal propre à CET Admin,
+  // jamais partagé). Avant V2.5, recipientId était toujours null côté
+  // ADMIN (ANOMALIE_FINANCIERE, globale) — cette liste n'avait donc jamais
+  // besoin de filtrer par identité de l'Admin connecté. Combiné en AND
+  // (jamais un spread OR, qui écraserait celui de clientFilter ci-dessus)
+  // pour ne jamais élargir la portée des autres filtres.
+  const userId = await resoudreUserId(session.email);
+  const visibiliteAdmin: Prisma.AttentionWhereInput = {
+    OR: [{ recipientType: "CLIENT" }, { recipientType: "ADMIN", recipientId: null }, ...(userId ? [{ recipientType: "ADMIN" as const, recipientId: userId }] : [])],
   };
+
+  const conditions: Prisma.AttentionWhereInput[] = [visibiliteAdmin];
+  if (!historique) conditions.push({ statut: { in: ["OUVERTE", "LUE"] } });
+  if (clientFilter) conditions.push(clientFilter);
+  if (typeValide) conditions.push({ type: typeValide });
+  if (prioriteValide) conditions.push({ priorite: prioriteValide });
+  if (statutValide) conditions.push({ statut: statutValide });
+  if (source) conditions.push({ source });
+  if (depuisValide) conditions.push({ createdAt: { gte: depuisValide } });
+
+  const where: Prisma.AttentionWhereInput = { AND: conditions };
 
   const attentions = await prisma.attention.findMany({ where });
   const triees = attentions.sort(comparerAttentions);

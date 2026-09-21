@@ -98,6 +98,12 @@ model User {
   totpSecret       String?
   totpActif        Boolean @default(false)
   totpCodesSecours String? // JSON string[] de codes à usage unique (hashés bcrypt)
+
+  // V2.5 — Communication Intelligence (21/09/2026). Relations additives
+  // pures : aucun champ existant modifié. Voir MessageLecture/
+  // PreferenceNotification ci-dessous pour le détail de conception.
+  messageLectures        MessageLecture[]
+  preferenceNotification PreferenceNotification?
 }
 
 // Throttle par IP sur les endpoints sensibles (connexion, inscription) —
@@ -1023,6 +1029,7 @@ model Client {
   messages              Message[] // CLIENT COMPLETION PROGRAM — C8 (16/09/2026) — voir Message
   solutionOptions       SolutionOption[] // V2.1-A — C3 Solution Intelligence (16/09/2026) — voir SolutionOption
   factures              Facture[] // V2.2-B — Billing Foundation (17/09/2026) — voir Facture
+  messageLectures       MessageLecture[] // V2.5 — Communication Intelligence (21/09/2026) — voir MessageLecture
 }
 
 // Fiche interne d'un profil d'ingénieur. Créée automatiquement, vide de
@@ -1903,6 +1910,10 @@ enum AttentionType {
   PAIEMENT_ANNULE
   ANOMALIE_FINANCIERE
   BESOIN_A_CLARIFIER
+  // V2.5 — Communication Intelligence (21/09/2026). Agrégée par THREAD
+  // (jamais une ligne par Message individuel — voir lib/attention/
+  // generateurs.ts, genererCandidatsMessage). source="Message".
+  MESSAGE_NON_LU
 }
 
 enum AttentionCategorie {
@@ -2029,4 +2040,57 @@ enum StatutScanPieceJointe {
   PROPRE
   SUSPECT
   ERREUR_SCAN
+}
+
+// COMPANY ATLAS — V2.5 : Communication Intelligence (21/09/2026).
+//
+// Curseur de lecture d'un fil Message, jamais un readAt/isRead posé sur
+// Message lui-même (Message reste append-only, décision non négociable du
+// mandat). Toujours scopé par (clientId, userId) où userId est le compte
+// RÉEL qui lit (toujours renseigné, jamais NULL) :
+// - Côté Client : userId = l'unique User (role CLIENT) rattaché à ce
+//   Client (User.clientId, @unique) — un seul curseur possible par client,
+//   cohérent avec "jamais de destinataire individuel" déjà en vigueur sur
+//   Message/Attention côté Client.
+// - Côté Admin : userId = le User (role ADMIN) qui lit CE fil précis —
+//   décision CEO explicite (lecture Admin individuelle, un curseur par
+//   Admin ET par client). Aujourd'hui un seul Admin existe (le CEO
+//   lui-même) ; l'architecture supporte plusieurs Admin sans migration
+//   future, chacun avec son propre curseur par fil.
+//
+// userId toujours non-NULL (jamais de valeur sentinelle) : la contrainte
+// @@unique ci-dessous reste fiable même si un jour plusieurs comptes
+// CLIENT existaient pour un même Client — chaque User a son propre
+// curseur, sans ambiguïté.
+model MessageLecture {
+  id          String   @id @default(cuid())
+  client      Client   @relation(fields: [clientId], references: [id])
+  clientId    String
+  user        User     @relation(fields: [userId], references: [id])
+  userId      String
+  dernierLuLe DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([clientId, userId])
+  @@index([clientId])
+}
+
+// Préférences de notification — individuelles par User (première
+// granularité par-utilisateur de ce domaine, jamais un remplacement du
+// scoping par rôle d'Attention/Message eux-mêmes). Additive pure : aucune
+// logique métier existante n'est modifiée si aucune ligne n'existe pour un
+// User (voir lib/preferences-notification.ts, valeurs par défaut
+// appliquées en code, jamais une hypothèse implicite côté base).
+model PreferenceNotification {
+  id              String               @id @default(cuid())
+  user            User                 @relation(fields: [userId], references: [id])
+  userId          String               @unique
+  emailActif      Boolean              @default(true)
+  // Catégories pour lesquelles un email est souhaité si emailActif=true.
+  // Défaut applicatif (jamais stocké tant qu'aucune préférence n'a été
+  // enregistrée) : ACTION_REQUISE + ALERTE actives, INFORMATION et
+  // RECOMMANDATION désactivables (mandat V2.5, Lot 3).
+  categoriesEmail AttentionCategorie[]
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
 }

@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { validerContenuMessage } from "@/lib/client-messages";
+import { resoudreUserId } from "@/lib/session-user";
+import { compterMessagesNonLus } from "@/lib/message-lecture";
+import { synchroniserAttentionsClient } from "@/lib/attention/synchronisation";
 
 // CLIENT COMPLETION PROGRAM — C8 : Communication (16/09/2026).
 //
@@ -32,7 +35,13 @@ export async function GET() {
     },
   });
 
-  return NextResponse.json({ messages });
+  // V2.5 — Communication Intelligence (Lot 1, 21/09/2026) : nonLus = messages
+  // ADMIN postérieurs au curseur de lecture de CE Client (userId réel,
+  // jamais un sentinel de rôle — voir lib/message-lecture.ts).
+  const userId = await resoudreUserId(session.email);
+  const nonLus = userId ? await compterMessagesNonLus(session.clientId, userId, "ADMIN") : 0;
+
+  return NextResponse.json({ messages, nonLus });
 }
 
 export async function POST(req: NextRequest) {
@@ -50,6 +59,13 @@ export async function POST(req: NextRequest) {
   const message = await prisma.message.create({
     data: { clientId: session.clientId, auteurRole: "CLIENT", contenu },
   });
+
+  // V2.5 — Communication Intelligence (Lot 2, 21/09/2026) : déclenche la
+  // resynchronisation Attention scopée dès l'envoi (jamais une nouvelle
+  // synchronisation — voir lib/attention/synchronisation.ts,
+  // construireEntitesMessage) pour que MESSAGE_NON_LU apparaisse côté Admin
+  // sans attendre son prochain chargement de liste.
+  await synchroniserAttentionsClient(session.clientId);
 
   return NextResponse.json({ message }, { status: 201 });
 }
