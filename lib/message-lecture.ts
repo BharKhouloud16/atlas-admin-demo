@@ -34,3 +34,26 @@ export async function compterMessagesNonLus(clientId: string, userId: string, au
     },
   });
 }
+
+// V2.5 — Communication Intelligence (Lot 5, 21/09/2026) : ensemble des
+// clientId dont le fil est non lu pour CET Admin (règle #7 — individuel),
+// utilisé pour le badge par ligne de app/admin/clients/page.tsx. Bornée à 2
+// requêtes DB, jamais une requête par Client (même discipline que
+// lib/attention/synchronisation.ts) : (1) dernier message CLIENT par
+// clientId, (2) tous les curseurs de CET Admin — le calcul "non lu" reste
+// ensuite en mémoire.
+export async function clientsAvecMessagesNonLusPourAdmin(userId: string): Promise<Set<string>> {
+  const [derniersMessagesClient, curseurs] = await Promise.all([
+    prisma.message.groupBy({ by: ["clientId"], where: { auteurRole: "CLIENT" }, _max: { createdAt: true } }),
+    prisma.messageLecture.findMany({ where: { userId }, select: { clientId: true, dernierLuLe: true } }),
+  ]);
+
+  const curseurParClient = new Map(curseurs.map((c) => [c.clientId, c.dernierLuLe]));
+  const nonLus = new Set<string>();
+  for (const g of derniersMessagesClient) {
+    if (!g._max.createdAt) continue;
+    const curseur = curseurParClient.get(g.clientId);
+    if (!curseur || g._max.createdAt > curseur) nonLus.add(g.clientId);
+  }
+  return nonLus;
+}

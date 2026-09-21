@@ -5,6 +5,7 @@ import { grisTexte, bleu, bordure } from "@/lib/theme";
 import { Card, Section, EmptyState, Bouton } from "@/components/client/primitives";
 import { CONTENU_MESSAGE_MAX } from "@/lib/client-messages";
 import { MIME_AUTORISES, TAILLE_MAX_OCTETS, formaterTailleOctets } from "@/lib/piece-jointe-constants";
+import { PreferenceNotificationPanel } from "@/components/PreferenceNotificationPanel";
 
 // CLIENT COMPLETION PROGRAM — C8 : Communication (16/09/2026).
 //
@@ -66,6 +67,10 @@ export default function CommunicationClientPage() {
 
   useEffect(() => {
     charger();
+    // V2.5 — Communication Intelligence (Lot 5, 21/09/2026) : ouverture du
+    // fil -> marquage lu (best-effort, jamais bloquant pour l'affichage —
+    // un échec ne doit jamais empêcher la lecture de la conversation).
+    fetch("/api/client/messages/lu", { method: "POST" }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -125,6 +130,7 @@ export default function CommunicationClientPage() {
 
   return (
     <Section title="Communication">
+      <PreferenceNotificationPanel apiUrl="/api/client/attentions/preferences" />
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ maxHeight: 480, overflowY: "auto", padding: 16 }}>
           {chargement && <EmptyState message="Chargement…" />}

@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { bleu, bleuFonce, grisTexte, bordure } from "@/lib/theme";
 import { MIME_AUTORISES, TAILLE_MAX_OCTETS, formaterTailleOctets } from "@/lib/piece-jointe-constants";
+import { PreferenceNotificationPanel } from "@/components/PreferenceNotificationPanel";
 
 // CLIENT COMPLETION PROGRAM — C8 : Communication (16/09/2026).
 //
@@ -71,6 +72,10 @@ export default function MessagesClientAdminPage() {
 
   useEffect(() => {
     charger();
+    // V2.5 — Communication Intelligence (Lot 5, 21/09/2026) : ouverture du
+    // fil -> marquage lu propre à CET Admin (règle #7, best-effort, jamais
+    // bloquant pour l'affichage).
+    fetch(`/api/clients/${id}/messages/lu`, { method: "POST" }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -145,6 +150,10 @@ export default function MessagesClientAdminPage() {
         <h1 style={{ marginTop: 8, marginBottom: 4, color: bleuFonce }}>
           Messages{client ? ` — ${client.nom}` : ""}
         </h1>
+      </div>
+
+      <div style={{ maxWidth: 720 }}>
+        <PreferenceNotificationPanel apiUrl="/api/admin/attentions/preferences" />
       </div>
 
       <div style={{ border: `1px solid ${bordure}`, borderRadius: 10, background: "#fff", maxWidth: 720 }}>
