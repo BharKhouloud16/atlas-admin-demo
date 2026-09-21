@@ -1,6 +1,7 @@
 import { test, expect, APIRequestContext } from "@playwright/test";
 import { prisma } from "@/lib/prisma";
 import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
+import { synchroniserAttentionsClient } from "@/lib/attention/synchronisation";
 
 // COMPANY ATLAS — V2.3 (20/09/2026) : Communication Intelligence + Attention
 // Center — API Client/Admin.
@@ -16,6 +17,17 @@ import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-sta
 // sein d'un même test garde ses 2 connexions réelles inchangées (correction
 // minimale, pas de nouveau mécanisme de double-contexte introduit pour un
 // seul cas).
+//
+// FIX CI (21/09/2026, élargissement du correctif) : le test IDOR "GET
+// /api/client/attentions du Client réel..." supposait qu'une Attention
+// existait déjà pour un Client tiers créé dans le test, alors que rien ne la
+// synchronisait jamais — synchroniserAttentionsClient (voir
+// lib/attention/synchronisation.ts) ne synchronise QUE le Client de la
+// session en cours, jamais un tiers. Bug pré-existant, sans rapport avec le
+// volume de logins (reproduit à l'identique avec son connecter() d'origine),
+// corrigé en appelant directement la fonction pure de synchronisation pour
+// le Client tiers — même résultat qu'un vrai GET authentifié comme ce
+// Client, sans ajouter de connexion réelle ni de route HTTP supplémentaire.
 
 async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
   const reponse = await request.post("/api/auth/login", { data: { email, password } });
@@ -199,6 +211,10 @@ test.describe("V2.3 — IDOR/BOLA : un Client ne voit et ne modifie jamais l'Att
     test("GET /api/client/attentions du Client réel ne renvoie jamais l'Attention d'un autre Client", async ({ request }) => {
       const autreClient = await creerClientDeTest("idor-autre");
       await factureDeTest(autreClient.id, { statut: "ENVOYEE" });
+      // Simule ce que produirait un GET authentifié comme ce Client tiers —
+      // jamais une seconde connexion réelle, jamais une Attention fabriquée
+      // à la main (voir commentaire d'en-tête).
+      await synchroniserAttentionsClient(autreClient.id);
 
       const reponse = await request.get("/api/client/attentions?historique=1");
       const corps = await reponse.json();
