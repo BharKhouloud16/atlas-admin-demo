@@ -17,9 +17,19 @@ export async function GET() {
     return NextResponse.json({ error: "Accès non autorisé" }, { status: 403 });
   }
 
+  // V2.4 — Pièces jointes (Lot 1/2) : métadonnées uniquement, jamais
+  // fileUrl (voir lib/storage.ts), jamais les pièces supprimées
+  // logiquement (supprimeLe non null).
   const messages = await prisma.message.findMany({
     where: { clientId: session.clientId },
     orderBy: { createdAt: "asc" },
+    include: {
+      pieceJointes: {
+        where: { supprimeLe: null },
+        select: { id: true, nomFichier: true, mimeType: true, tailleOctets: true, createdAt: true },
+        orderBy: { createdAt: "asc" },
+      },
+    },
   });
 
   return NextResponse.json({ messages });

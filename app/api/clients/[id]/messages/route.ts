@@ -45,9 +45,19 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return NextResponse.json({ error: "Client introuvable." }, { status: 404 });
   }
 
+  // V2.4 — Pièces jointes (Lot 1/2) : métadonnées uniquement, jamais
+  // fileUrl (voir lib/storage.ts), jamais les pièces supprimées
+  // logiquement (supprimeLe non null).
   const messages = await prisma.message.findMany({
     where: { clientId: id },
     orderBy: { createdAt: "asc" },
+    include: {
+      pieceJointes: {
+        where: { supprimeLe: null },
+        select: { id: true, nomFichier: true, mimeType: true, tailleOctets: true, createdAt: true },
+        orderBy: { createdAt: "asc" },
+      },
+    },
   });
 
   return NextResponse.json({ messages });
