@@ -61,8 +61,12 @@ test.describe("Client — Vue d'ensemble : Actions requises + centre d'Attention
 
     // "besoin à clarifier" n'est structurellement plus jamais affiché dans
     // Actions requises depuis la V2.3 (voir commentaire ci-dessus) — jamais
-    // deux sections annonçant le même fait.
-    await expect(page.getByText(new RegExp(`Besoin "${besoin.titre}"`, "i"))).not.toBeVisible();
+    // deux sections annonçant le même fait. Scopé à la section "Actions
+    // requises" elle-même (pas à la page entière) : le même besoin apparaît
+    // légitimement dans la section "Attention" au-dessus (sa nouvelle
+    // destination V2.3), ce qui est le comportement attendu, pas une fuite.
+    const sectionActionsRequises = page.locator("section", { has: page.getByRole("heading", { name: "Actions requises", exact: true }) });
+    await expect(sectionActionsRequises.getByText(new RegExp(`Besoin "${besoin.titre}"`, "i"))).toHaveCount(0);
 
     // La vraie migration : la synchronisation déclenchée par la page a bien
     // produit l'Attention correspondante, jamais recréée manuellement ici.
