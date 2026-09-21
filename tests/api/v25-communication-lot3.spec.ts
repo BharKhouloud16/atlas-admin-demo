@@ -1,6 +1,7 @@
 import { test, expect, APIRequestContext } from "@playwright/test";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 
 // COMPANY ATLAS — V2.5 : Communication Intelligence (Lot 3 — Préférences,
 // 21/09/2026).
@@ -10,6 +11,14 @@ import { prisma } from "@/lib/prisma";
 // #12), jamais un userId accepté depuis le corps (mass assignment),
 // défauts mandatés (email actif, ACTION_REQUISE+ALERTE actives par
 // défaut), RBAC (Ingénieur exclu structurellement).
+//
+// FIX CI (21/09/2026, même correctif que tests/api/v23-attention-api.spec.ts) :
+// le bloc RBAC n'a besoin d'aucune individualité (comptes de démo partagés
+// suffisent) et est migré vers storageState — voir lib/rate-limit.ts (IP
+// partagée en CI) pour la justification complète. Les tests "Défauts
+// mandatés"/"PATCH" restent en connexion réelle : ils testent explicitement
+// des comptes FRAÎCHEMENT créés par test (individualité), jamais atteignables
+// via une session pré-authentifiée partagée.
 
 async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
   const reponse = await request.post("/api/auth/login", { data: { email, password } });
@@ -36,18 +45,29 @@ test.describe("V2.5 Lot 3 — RBAC", () => {
     expect((await request.patch("/api/admin/attentions/preferences", { data: {} })).status()).toBe(403);
   });
 
-  test("INGENIEUR -> 403 sur les deux routes (exclusion structurelle, règle #8)", async ({ request }) => {
-    await connecter(request, "ingenieur-demo@example.com");
-    expect((await request.get("/api/client/attentions/preferences")).status()).toBe(403);
-    expect((await request.get("/api/admin/attentions/preferences")).status()).toBe(403);
+  test.describe("Ingénieur", () => {
+    test.use({ storageState: INGENIEUR_STATE });
+
+    test("INGENIEUR -> 403 sur les deux routes (exclusion structurelle, règle #8)", async ({ request }) => {
+      expect((await request.get("/api/client/attentions/preferences")).status()).toBe(403);
+      expect((await request.get("/api/admin/attentions/preferences")).status()).toBe(403);
+    });
   });
 
-  test("ADMIN -> 403 sur la route Client, CLIENT -> 403 sur la route Admin", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
-    expect((await request.get("/api/client/attentions/preferences")).status()).toBe(403);
+  test.describe("Admin", () => {
+    test.use({ storageState: ADMIN_STATE });
 
-    await connecter(request, "client-demo@example.com");
-    expect((await request.get("/api/admin/attentions/preferences")).status()).toBe(403);
+    test("ADMIN -> 403 sur la route Client", async ({ request }) => {
+      expect((await request.get("/api/client/attentions/preferences")).status()).toBe(403);
+    });
+  });
+
+  test.describe("Client", () => {
+    test.use({ storageState: CLIENT_STATE });
+
+    test("CLIENT -> 403 sur la route Admin", async ({ request }) => {
+      expect((await request.get("/api/admin/attentions/preferences")).status()).toBe(403);
+    });
   });
 });
 

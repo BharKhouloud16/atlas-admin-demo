@@ -1,12 +1,19 @@
 import { test, expect, APIRequestContext } from "@playwright/test";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 
 // COMPANY ATLAS — V2.5 : Communication Intelligence (Lot 5 — UX, 21/09/2026).
 //
 // Couvre GET /api/admin/messages/non-lus (vue agrégée pour le badge par
 // ligne de app/admin/clients/page.tsx) : RBAC, individualité par Admin,
 // exactitude du calcul batché (jamais une requête par Client).
+//
+// FIX CI (21/09/2026, même correctif que tests/api/v23-attention-api.spec.ts) :
+// le test RBAC "CLIENT et INGENIEUR" n'a besoin d'aucune individualité et
+// migre vers storageState (lib/rate-limit.ts, IP partagée en CI). Les tests
+// d'individualité gardent des Admin fraîchement créés en connexion réelle
+// (inévitable : ils testent explicitement des comptes distincts).
 
 async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
   const reponse = await request.post("/api/auth/login", { data: { email, password } });
@@ -32,11 +39,18 @@ test.describe("V2.5 Lot 5 — GET /api/admin/messages/non-lus", () => {
     expect((await request.get("/api/admin/messages/non-lus")).status()).toBe(403);
   });
 
-  test("CLIENT et INGENIEUR -> 403", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
-    expect((await request.get("/api/admin/messages/non-lus")).status()).toBe(403);
-    await connecter(request, "ingenieur-demo@example.com");
-    expect((await request.get("/api/admin/messages/non-lus")).status()).toBe(403);
+  test.describe("Client", () => {
+    test.use({ storageState: CLIENT_STATE });
+    test("CLIENT -> 403", async ({ request }) => {
+      expect((await request.get("/api/admin/messages/non-lus")).status()).toBe(403);
+    });
+  });
+
+  test.describe("Ingénieur", () => {
+    test.use({ storageState: INGENIEUR_STATE });
+    test("INGENIEUR -> 403", async ({ request }) => {
+      expect((await request.get("/api/admin/messages/non-lus")).status()).toBe(403);
+    });
   });
 
   test("un client avec message CLIENT jamais lu apparaît dans clientIdsNonLus", async ({ request }) => {

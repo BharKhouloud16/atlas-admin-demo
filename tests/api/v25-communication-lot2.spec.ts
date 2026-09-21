@@ -1,6 +1,7 @@
 import { test, expect, APIRequestContext } from "@playwright/test";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { ADMIN_STATE } from "../setup/storage-state";
 
 // COMPANY ATLAS — V2.5 : Communication Intelligence (Lot 2 — Message →
 // Attention, 21/09/2026).
@@ -11,6 +12,17 @@ import { prisma } from "@/lib/prisma";
 // résolution automatique à la lecture effective, individualité Admin
 // (règle #7 — jamais un signal partagé par rôle), IDOR/BOLA sur les routes
 // Admin existantes désormais individuelles.
+//
+// FIX CI (21/09/2026, même correctif que tests/api/v23-attention-api.spec.ts) :
+// ce fichier ne teste jamais le mécanisme de connexion lui-même — seule une
+// connexion réelle par rôle réellement testé est nécessaire. Sur ce dépôt,
+// toutes les requêtes `next start` en CI partagent une IP (lib/rate-limit.ts),
+// donc UN compteur RATE_LIMIT_LOGIN_MAX_IP pour la suite entière : 12
+// connexions réelles par ce seul fichier ont contribué à dépasser le seuil
+// (600) et cassé des tests sans rapport (connexion.spec.ts). Migré vers la
+// session Admin pré-authentifiée partagée (storageState) — seules exceptions
+// gardées en connexion réelle : les 2 tests qui basculent explicitement
+// Admin -> Client au sein d'un même test (même règle que v23-attention-api).
 
 async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
   const reponse = await request.post("/api/auth/login", { data: { email, password } });
@@ -42,12 +54,13 @@ async function creerClientConnecte(suffixe: string) {
   return { client, email };
 }
 
-test.describe("V2.5 Lot 2 — Message envoyé -> MESSAGE_NON_LU pour le destinataire, agrégé par thread", () => {
+test.describe("V2.5 Lot 2 — Admin (session pré-authentifiée)", () => {
+  test.use({ storageState: ADMIN_STATE });
+
   test("un message Client crée une Attention ADMIN individuelle pour l'Admin démo, visible dans sa liste", async ({ request }) => {
     const client = await prisma.client.create({ data: { nom: `Client Lot2 A ${Date.now()}` } });
     const userAdmin = await userIdDemo("admin-demo@example.com");
 
-    await connecter(request, "admin-demo@example.com");
     // Précondition : ce client n'a pas encore de compte, on écrit le message
     // Client directement en base (contourne la contrainte de session Client
     // réelle, jamais atteignable pour un client sans compte).
@@ -68,7 +81,6 @@ test.describe("V2.5 Lot 2 — Message envoyé -> MESSAGE_NON_LU pour le destinat
 
   test("POST /api/clients/[id]/messages déclenche immédiatement la synchronisation (jamais besoin d'un second GET)", async ({ request }) => {
     const client = await prisma.client.create({ data: { nom: `Client Lot2 Immediat ${Date.now()}` } });
-    await connecter(request, "admin-demo@example.com");
 
     // Le message ADMIN cible le Client — mais aucun compte Client n'existe
     // ici, donc c'est le côté ADMIN qu'on vérifie via un message inverse :
@@ -85,7 +97,6 @@ test.describe("V2.5 Lot 2 — Message envoyé -> MESSAGE_NON_LU pour le destinat
 
   test("idempotence : plusieurs messages Client non lus n'accumulent jamais plusieurs MESSAGE_NON_LU pour le même Admin", async ({ request }) => {
     const client = await prisma.client.create({ data: { nom: `Client Lot2 Idempotence ${Date.now()}` } });
-    await connecter(request, "admin-demo@example.com");
 
     await prisma.message.create({ data: { clientId: client.id, auteurRole: "CLIENT", contenu: "1" } });
     await request.get(`/api/admin/attentions?clientId=${client.id}&historique=1`);
@@ -98,16 +109,13 @@ test.describe("V2.5 Lot 2 — Message envoyé -> MESSAGE_NON_LU pour le destinat
     const lignes = await prisma.attention.findMany({ where: { type: "MESSAGE_NON_LU", source: "Message", sourceId: `${client.id}:${userAdmin}` } });
     expect(lignes).toHaveLength(1);
   });
-});
 
-test.describe("V2.5 Lot 2 — Résolution automatique à la lecture effective (règle #11)", () => {
   test("marquer le fil lu (Admin) résout sa propre MESSAGE_NON_LU, jamais celle d'un autre Admin", async ({ request }) => {
     const client = await prisma.client.create({ data: { nom: `Client Lot2 Resolution ${Date.now()}` } });
     const secondAdmin = await prisma.user.create({
       data: { email: `admin-lot2-second-${Date.now()}@test.local`, passwordHash: "hash-de-test", role: "ADMIN" },
     });
 
-    await connecter(request, "admin-demo@example.com");
     await prisma.message.create({ data: { clientId: client.id, auteurRole: "CLIENT", contenu: "Message initial" } });
     await request.get(`/api/admin/attentions?clientId=${client.id}&historique=1`); // sync : ouvre les deux MESSAGE_NON_LU (premier + second Admin)
 
@@ -126,46 +134,12 @@ test.describe("V2.5 Lot 2 — Résolution automatique à la lecture effective (r
     expect(apresSecond!.statut).toBe("OUVERTE"); // jamais touchée : le second Admin n'a rien lu
   });
 
-  test("marquer le fil lu (Client) résout la MESSAGE_NON_LU CLIENT, source=Message sourceId=clientId", async ({ request }) => {
-    const { client, email } = await creerClientConnecte(`resolution-${Date.now()}`);
-
-    await connecter(request, "admin-demo@example.com");
-    await request.post(`/api/clients/${client.id}/messages`, { data: { contenu: "Réponse admin non lue" } });
-
-    const avant = await messageNonLu(client.id, client.id);
-    expect(avant).toBeTruthy();
-    expect(avant!.statut).toBe("OUVERTE");
-    expect(avant!.recipientType).toBe("CLIENT");
-
-    await connecter(request, email);
-    const lu = await request.post("/api/client/messages/lu");
-    expect(lu.ok()).toBeTruthy();
-
-    const apres = await messageNonLu(client.id, client.id);
-    expect(apres!.statut).toBe("RESOLUE");
-  });
-
-  test("un nouveau message après résolution rouvre MESSAGE_NON_LU (jamais figée RESOLUE)", async ({ request }) => {
-    const { client, email } = await creerClientConnecte(`reouverture-${Date.now()}`);
-    await connecter(request, email);
-    await request.post("/api/client/messages/lu"); // curseur à jour, rien à lire
-
-    await connecter(request, "admin-demo@example.com");
-    await request.post(`/api/clients/${client.id}/messages`, { data: { contenu: "Nouveau message après lecture" } });
-
-    const attention = await messageNonLu(client.id, client.id);
-    expect(attention!.statut).toBe("OUVERTE");
-  });
-});
-
-test.describe("V2.5 Lot 2 — IDOR/BOLA : individualité Admin sur les routes existantes", () => {
   test("PATCH /api/admin/attentions/[id] sur la MESSAGE_NON_LU d'un autre Admin -> 404 (jamais 403)", async ({ request }) => {
     const client = await prisma.client.create({ data: { nom: `Client Lot2 IDOR PATCH ${Date.now()}` } });
     const secondAdmin = await prisma.user.create({
       data: { email: `admin-lot2-idor-${Date.now()}@test.local`, passwordHash: "hash-de-test", role: "ADMIN" },
     });
 
-    await connecter(request, "admin-demo@example.com");
     await prisma.message.create({ data: { clientId: client.id, auteurRole: "CLIENT", contenu: "x" } });
     await request.get(`/api/admin/attentions?clientId=${client.id}&historique=1`);
 
@@ -185,7 +159,6 @@ test.describe("V2.5 Lot 2 — IDOR/BOLA : individualité Admin sur les routes ex
       data: { email: `admin-lot2-idor-get-${Date.now()}@test.local`, passwordHash: "hash-de-test", role: "ADMIN" },
     });
 
-    await connecter(request, "admin-demo@example.com");
     await prisma.message.create({ data: { clientId: client.id, auteurRole: "CLIENT", contenu: "x" } });
     await request.get(`/api/admin/attentions?clientId=${client.id}&historique=1`);
 
@@ -203,7 +176,6 @@ test.describe("V2.5 Lot 2 — IDOR/BOLA : individualité Admin sur les routes ex
       data: { email: `admin-lot2-toutlire-${Date.now()}@test.local`, passwordHash: "hash-de-test", role: "ADMIN" },
     });
 
-    await connecter(request, "admin-demo@example.com");
     await prisma.message.create({ data: { clientId: client.id, auteurRole: "CLIENT", contenu: "x" } });
     await request.get(`/api/admin/attentions?clientId=${client.id}&historique=1`);
 
@@ -243,9 +215,44 @@ test.describe("V2.5 Lot 2 — IDOR/BOLA : individualité Admin sur les routes ex
       },
     });
 
-    await connecter(request, "admin-demo@example.com");
     const reponse = await request.get(`/api/admin/attentions?clientId=${client.id}&historique=1`);
     const corps = await reponse.json();
     expect(corps.attentions.some((a: { type: string; sourceId: string }) => a.type === "ANOMALIE_FINANCIERE" && a.sourceId === facture.id)).toBe(true);
+  });
+});
+
+// Bascule Admin -> Client au sein d'un même test : gardé en connexions
+// réelles (même règle que tests/api/v23-attention-api.spec.ts) — un Client
+// fraîchement créé n'a pas de session pré-authentifiée partagée possible.
+test.describe("V2.5 Lot 2 — Résolution automatique à la lecture effective, côté Client (bascule de rôle)", () => {
+  test("marquer le fil lu (Client) résout la MESSAGE_NON_LU CLIENT, source=Message sourceId=clientId", async ({ request }) => {
+    const { client, email } = await creerClientConnecte(`resolution-${Date.now()}`);
+
+    await connecter(request, "admin-demo@example.com");
+    await request.post(`/api/clients/${client.id}/messages`, { data: { contenu: "Réponse admin non lue" } });
+
+    const avant = await messageNonLu(client.id, client.id);
+    expect(avant).toBeTruthy();
+    expect(avant!.statut).toBe("OUVERTE");
+    expect(avant!.recipientType).toBe("CLIENT");
+
+    await connecter(request, email);
+    const lu = await request.post("/api/client/messages/lu");
+    expect(lu.ok()).toBeTruthy();
+
+    const apres = await messageNonLu(client.id, client.id);
+    expect(apres!.statut).toBe("RESOLUE");
+  });
+
+  test("un nouveau message après résolution rouvre MESSAGE_NON_LU (jamais figée RESOLUE)", async ({ request }) => {
+    const { client, email } = await creerClientConnecte(`reouverture-${Date.now()}`);
+    await connecter(request, email);
+    await request.post("/api/client/messages/lu"); // curseur à jour, rien à lire
+
+    await connecter(request, "admin-demo@example.com");
+    await request.post(`/api/clients/${client.id}/messages`, { data: { contenu: "Nouveau message après lecture" } });
+
+    const attention = await messageNonLu(client.id, client.id);
+    expect(attention!.statut).toBe("OUVERTE");
   });
 });
