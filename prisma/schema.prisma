@@ -1030,6 +1030,7 @@ model Client {
   solutionOptions       SolutionOption[] // V2.1-A — C3 Solution Intelligence (16/09/2026) — voir SolutionOption
   factures              Facture[] // V2.2-B — Billing Foundation (17/09/2026) — voir Facture
   messageLectures       MessageLecture[] // V2.5 — Communication Intelligence (21/09/2026) — voir MessageLecture
+  serviceEngagements    ServiceEngagement[] // PHASE 7 — Service OS Foundation (22/09/2026) — voir ServiceEngagement
 }
 
 // Fiche interne d'un profil d'ingénieur. Créée automatiquement, vide de
@@ -1219,6 +1220,42 @@ model Document {
   // système). Back-relation requise par Prisma pour Facture.documentId,
   // aucun champ existant modifié.
   facture   Facture?
+
+  // PHASE 7 — Service OS Foundation (22/09/2026) : même pattern que
+  // missionId ci-dessus (nullable, jamais remplacé) — un Document peut
+  // être Client-level (les deux null), Mission-level (missionId seul) ou
+  // ServiceEngagement-level (serviceEngagementId seul), jamais les deux à
+  // la fois (contrainte CHECK ajoutée en migration, voir
+  // migration.sql — Decision Record Phase 6B, section "Decision C").
+  serviceEngagement   ServiceEngagement? @relation(fields: [serviceEngagementId], references: [id])
+  serviceEngagementId String?
+}
+
+// PHASE 7 — Service OS Foundation (22/09/2026). Premier objet réel du futur
+// Service OS, validé par le Decision Record Phase 6B — volontairement le
+// plus petit conteneur possible : un regroupement Client-scoped pour des
+// Document (source + rapport), sans profilId, sans champ billing, sans
+// champ Knowledge/AI. PARALLÈLE à Mission, jamais une fusion : Mission
+// reste strictement Talent-only (ADR Phase 4, inchangé par ce modèle).
+// `statut` en texte libre, comme Mission.statut — même convention
+// pragmatique, pas d'enum introduit ici sans preuve de besoin.
+//
+// N'introduit PAS de generic `Engagement` : voir Decision Record Phase 6B,
+// Decision B. L'existence réelle de ce modèle active le trigger
+// architectural défini en Phase 4 ("second engagement type") — à
+// réévaluer dans une phase architecturale ultérieure, jamais résolu ici.
+model ServiceEngagement {
+  id          String   @id @default(cuid())
+  client      Client   @relation(fields: [clientId], references: [id])
+  clientId    String
+  titre       String
+  description String?
+  statut      String   @default("En cours") // En cours / Terminée / Annulée — même vocabulaire que Mission.statut
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  documents   Document[]
+
+  @@index([clientId])
 }
 
 // CLIENT COMPLETION PROGRAM — C8 : Communication (16/09/2026).

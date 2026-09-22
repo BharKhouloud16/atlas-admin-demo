@@ -186,3 +186,22 @@ export const corrigerLangueSchema = z.object({
   niveau: z.enum(NIVEAUX_LANGUE).nullable().optional(),
   detail: z.string().trim().max(300).nullable().optional(),
 });
+
+// PHASE 7 — Service OS Foundation (22/09/2026). Premier objet réel non-
+// Talent — création réservée Admin (voir POST /api/service-engagements) :
+// clientId requis, titre requis, description optionnelle. Aucun champ
+// billing/AI/Knowledge — volontairement le plus petit schéma possible pour
+// le premier cas d'usage validé (Decision Record Phase 6B).
+export const creerServiceEngagementSchema = z.object({
+  clientId: z.string().trim().min(1, "clientId requis"),
+  titre: z.string().trim().min(1, "Titre requis").max(200),
+  description: z.string().trim().max(2000).nullable().optional(),
+});
+
+// Même statut libre que Mission ("En cours" / "Terminée" / "Annulée") —
+// jamais un enum introduit sans preuve de besoin (voir modèle Prisma).
+export const modifierServiceEngagementSchema = z.object({
+  titre: z.string().trim().min(1).max(200).optional(),
+  description: z.string().trim().max(2000).nullable().optional(),
+  statut: z.string().trim().min(1).max(50).optional(),
+});
