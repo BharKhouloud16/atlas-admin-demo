@@ -6,6 +6,22 @@ import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
+// PHASE 14B — Security Hardening (22/09/2026) : ce script crée un compte
+// ADMIN avec le mot de passe fixe "Demo1234" (en clair dans ce fichier,
+// versionné) — jamais un risque en développement/CI (DATABASE_URL y pointe
+// toujours vers une base jetable), mais dangereux si jamais exécuté par
+// erreur contre une vraie base de production (ex. commande copiée depuis
+// le README sans vérifier DATABASE_URL). Contrairement à
+// app/api/dev-seed/route.ts (seul mécanisme de seed de la démo en ligne,
+// donc volontairement actif en production, juste durci), ce script n'a
+// aucune raison de tourner en production : refus net plutôt qu'un mot de
+// passe aléatoire, pour rester le changement le plus simple possible.
+if (process.env.NODE_ENV === "production") {
+  throw new Error(
+    "prisma/seed.ts ne doit jamais être exécuté en production (mot de passe de démo fixe) — utilisez app/api/dev-seed/route.ts pour seeder un déploiement en ligne."
+  );
+}
+
 async function main() {
   await prisma.hypotheses.upsert({ where: { id: "singleton" }, update: {}, create: {} });
 

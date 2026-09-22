@@ -48,7 +48,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const uploade = await uploaderFichier(fichier.name, new Blob([octets], { type: fichier.type }), "service-engagements");
     url = uploade.url;
   } catch (e: any) {
-    return NextResponse.json({ error: e.message ?? "Échec de l'upload" }, { status: 500 });
+    // PHASE 14B — ne jamais renvoyer e.message au client (peut contenir des
+    // détails d'infrastructure, ex. "BLOB_READ_WRITE_TOKEN manquant", voir
+    // lib/storage.ts) — message générique côté client, détail en log serveur.
+    console.error(`Échec de l'upload du document (ServiceEngagement ${engagement.id}) :`, e.message ?? e);
+    return NextResponse.json({ error: "Une erreur est survenue lors de l'envoi du fichier." }, { status: 500 });
   }
 
   // serviceEngagementId seul, jamais missionId (contrainte CHECK en base,
