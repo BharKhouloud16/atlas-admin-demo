@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { journaliser } from "@/lib/audit";
 import { corrigerCompetenceSchema, premierMessageZod } from "@/lib/validation";
+import { rafraichirProjectionCompetences } from "@/lib/talent/skill-graph-sync";
 
 // ATLAS SKILL GRAPH V1 — correction humaine explicite d'une ProfilCompetence
 // par un Admin (ex: passer une compétence en VERIFIE après un entretien
@@ -74,6 +75,11 @@ export async function PATCH(
     cible: `profil:${params.id}:competence:${params.competenceId}`,
     detail: `${avant.competence}: statut ${avant.statut} -> ${apres.statut}, niveau ${avant.niveau ?? "null"} -> ${apres.niveau ?? "null"}`,
   });
+
+  // ENGINEER PROFILE V2 — Phase Skills Foundation (ADR-001) : une correction
+  // Admin peut changer l'éligibilité d'une compétence pour la projection
+  // (ex: INCONNU -> VERIFIE) — jamais laissée périmée.
+  await rafraichirProjectionCompetences(prisma, params.id);
 
   return NextResponse.json(apres);
 }

@@ -5,6 +5,7 @@ import { journaliser } from "@/lib/audit";
 import { lierCompetenceMissionSchema, premierMessageZod } from "@/lib/validation";
 import { fusionnerCompetence, niveauxHistoriques } from "@/lib/talent/skill-graph";
 import { calculerConfianceCompetence } from "@/lib/talent/evidence-confidence";
+import { rafraichirProjectionCompetences } from "@/lib/talent/skill-graph-sync";
 
 // ENGINEER PROFILE V2 — ATLAS PROFESSIONAL CAPABILITY TWIN — Lot 2.
 //
@@ -100,6 +101,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     cible: `mission:${mission.id}:competence:${competence.id}`,
     detail: `${competence.competence}: reliée à la mission ${mission.id} (statut ${competence.statut} -> ${apres.statut})`,
   });
+
+  // ENGINEER PROFILE V2 — Phase Skills Foundation (ADR-001) : un lien
+  // mission peut faire évoluer le statut (statutPropose) — la projection
+  // doit rester à jour.
+  await rafraichirProjectionCompetences(prisma, mission.profilId);
 
   const preuves = await prisma.skillEvidence.findMany({
     where: { profilCompetenceId: competence.id },

@@ -13,6 +13,7 @@ import {
 } from "@/lib/talent/skill-graph";
 import { calculerConfianceCompetences } from "@/lib/talent/evidence-confidence";
 import type { StatutPreuveCompetence, NiveauConfiance, SourcePreuveCompetence } from "@/lib/talent/skill-graph";
+import { rafraichirProjectionCompetences } from "@/lib/talent/skill-graph-sync";
 
 // ATLAS SKILL GRAPH V1 — réservé à l'Admin, comme /admin/profils et le
 // Matching Engine (voir app/api/talent/demandes/[id]/matching/route.ts) :
@@ -155,6 +156,12 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
     cible: `profil:${params.id}`,
     detail: `${creees} compétence(s) créée(s), ${misesAJour} mise(s) à jour, ${parCompetence.size} au total`,
   });
+
+  // ENGINEER PROFILE V2 — Phase Skills Foundation (ADR-001) : ce recalcul
+  // peut faire évoluer le statut de compétences existantes (fusion) — la
+  // projection Profil.competences[] doit rester à jour après ce recalcul,
+  // exactement comme après une déclaration Ingénieur.
+  await rafraichirProjectionCompetences(prisma, params.id);
 
   const competences = await prisma.profilCompetence.findMany({
     where: { profilId: params.id },

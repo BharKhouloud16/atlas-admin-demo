@@ -5,6 +5,7 @@ import { journaliser } from "@/lib/audit";
 import { ajouterPreuveSchema, premierMessageZod } from "@/lib/validation";
 import { fusionnerCompetence, niveauxHistoriques } from "@/lib/talent/skill-graph";
 import { calculerConfianceCompetence } from "@/lib/talent/evidence-confidence";
+import { rafraichirProjectionCompetences } from "@/lib/talent/skill-graph-sync";
 
 // ATLAS DYNAMIC SKILL GRAPH — ajoute une nouvelle preuve (SkillEvidence) à
 // une ProfilCompetence existante SANS JAMAIS supprimer ni écraser une preuve
@@ -84,6 +85,11 @@ export async function POST(
     cible: `profil:${params.id}:competence:${params.competenceId}`,
     detail: `${existante.competence}: preuve ${donnees.source} ajoutée (statut ${existante.statut} -> ${apres.statut}, niveau ${existante.niveau ?? "null"} -> ${apres.niveau ?? "null"})`,
   });
+
+  // ENGINEER PROFILE V2 — Phase Skills Foundation (ADR-001) : une preuve
+  // ajoutée peut faire évoluer le statut via fusionnerCompetence — la
+  // projection doit refléter ce changement immédiatement.
+  await rafraichirProjectionCompetences(prisma, params.id);
 
   const preuves = await prisma.skillEvidence.findMany({
     where: { profilCompetenceId: params.competenceId },
