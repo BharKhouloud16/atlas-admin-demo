@@ -39,33 +39,49 @@ export async function PATCH(
   // compétence (ex: correction d'une erreur).
   const confiance = donnees.statut === "VERIFIE" ? "HAUTE" : donnees.statut === "INCONNU" ? "BASSE" : "MOYENNE";
 
-  const apres = await prisma.profilCompetence.update({
-    where: { id: params.competenceId },
-    data: {
-      statut: donnees.statut,
-      confiance,
-      niveau: donnees.niveau ?? (donnees.statut === "VERIFIE" ? avant.niveau : null),
-      anneesExperience: donnees.anneesExperience ?? avant.anneesExperience,
-      contexte: donnees.contexte ?? avant.contexte,
-      secteur: donnees.secteur ?? avant.secteur,
-    },
-  });
+  // CONFIDENTIALITÉ/SKILLS FOUNDATION — audit atomicité (mandat "Mode
+  // autonome contrôlé") : l'écriture ProfilCompetence + sa preuve ADMIN + le
+  // rafraîchissement de la projection Profil.competences[] doivent former un
+  // seul événement atomique, jamais 3 requêtes indépendantes — sinon un
+  // crash entre elles laisserait la projection périmée jusqu'à la prochaine
+  // écriture. `journaliser` reste hors transaction (voir lib/audit.ts,
+  // volontairement best-effort, jamais bloquant pour l'action elle-même).
+  const apres = await prisma.$transaction(async (tx) => {
+    const resultat = await tx.profilCompetence.update({
+      where: { id: params.competenceId },
+      data: {
+        statut: donnees.statut,
+        confiance,
+        niveau: donnees.niveau ?? (donnees.statut === "VERIFIE" ? avant.niveau : null),
+        anneesExperience: donnees.anneesExperience ?? avant.anneesExperience,
+        contexte: donnees.contexte ?? avant.contexte,
+        secteur: donnees.secteur ?? avant.secteur,
+      },
+    });
 
-  // La correction elle-même devient une preuve ADMIN — jamais fabriquée :
-  // seulement si l'Admin a effectivement agi via cette route.
-  // ATLAS DYNAMIC SKILL GRAPH — le niveau fixé par cette correction Admin est
-  // désormais aussi enregistré SUR la preuve elle-même (niveau observé par
-  // CETTE preuve), en plus du niveau courant sur ProfilCompetence, pour
-  // pouvoir reconstituer l'historique (voir niveauxHistoriques() dans
-  // lib/talent/skill-graph.ts). Jamais un niveau inventé : uniquement celui
-  // explicitement fourni par l'Admin dans cette requête.
-  await prisma.skillEvidence.create({
-    data: {
-      profilCompetenceId: params.competenceId,
-      source: "ADMIN",
-      detail: donnees.detail ?? `Statut fixé à ${donnees.statut} par ${session.email}`,
-      niveau: donnees.niveau ?? null,
-    },
+    // La correction elle-même devient une preuve ADMIN — jamais fabriquée :
+    // seulement si l'Admin a effectivement agi via cette route.
+    // ATLAS DYNAMIC SKILL GRAPH — le niveau fixé par cette correction Admin
+    // est désormais aussi enregistré SUR la preuve elle-même (niveau observé
+    // par CETTE preuve), en plus du niveau courant sur ProfilCompetence,
+    // pour pouvoir reconstituer l'historique (voir niveauxHistoriques() dans
+    // lib/talent/skill-graph.ts). Jamais un niveau inventé : uniquement
+    // celui explicitement fourni par l'Admin dans cette requête.
+    await tx.skillEvidence.create({
+      data: {
+        profilCompetenceId: params.competenceId,
+        source: "ADMIN",
+        detail: donnees.detail ?? `Statut fixé à ${donnees.statut} par ${session.email}`,
+        niveau: donnees.niveau ?? null,
+      },
+    });
+
+    // ENGINEER PROFILE V2 — Phase Skills Foundation (ADR-001) : une
+    // correction Admin peut changer l'éligibilité d'une compétence pour la
+    // projection (ex: INCONNU -> VERIFIE) — jamais laissée périmée.
+    await rafraichirProjectionCompetences(tx, params.id);
+
+    return resultat;
   });
 
   await journaliser({
@@ -75,11 +91,6 @@ export async function PATCH(
     cible: `profil:${params.id}:competence:${params.competenceId}`,
     detail: `${avant.competence}: statut ${avant.statut} -> ${apres.statut}, niveau ${avant.niveau ?? "null"} -> ${apres.niveau ?? "null"}`,
   });
-
-  // ENGINEER PROFILE V2 — Phase Skills Foundation (ADR-001) : une correction
-  // Admin peut changer l'éligibilité d'une compétence pour la projection
-  // (ex: INCONNU -> VERIFIE) — jamais laissée périmée.
-  await rafraichirProjectionCompetences(prisma, params.id);
 
   return NextResponse.json(apres);
 }

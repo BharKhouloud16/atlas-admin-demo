@@ -60,21 +60,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: "Cette compétence est déjà reliée à cette mission" }, { status: 409 });
   }
 
-  await prisma.missionCompetence.create({
-    data: { missionId: mission.id, profilCompetenceId: competence.id, creeParEmail: session.email },
-  });
-
-  // Preuve MISSION toujours créée, additive — jamais de suppression d'une
-  // preuve précédente (même règle que .../competences/[id]/preuves).
-  await prisma.skillEvidence.create({
-    data: {
-      profilCompetenceId: competence.id,
-      source: "MISSION",
-      detail: donnees.detail ?? `Compétence mobilisée sur la mission ${mission.id}`,
-      niveau: donnees.niveauObserve ?? null,
-    },
-  });
-
   const resultat = fusionnerCompetence(
     { competence: competence.competence, statut: competence.statut, confiance: competence.confiance, niveau: competence.niveau },
     {
@@ -89,9 +74,37 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     }
   );
 
-  const apres = await prisma.profilCompetence.update({
-    where: { id: competence.id },
-    data: { statut: resultat.statut, confiance: resultat.confiance, niveau: resultat.niveau },
+  // CONFIDENTIALITÉ/SKILLS FOUNDATION — audit atomicité : lien mission +
+  // preuve + mise à jour du statut + rafraîchissement de la projection dans
+  // un seul événement atomique (même correctif que les routes soeurs PATCH
+  // et .../preuves).
+  const apres = await prisma.$transaction(async (tx) => {
+    await tx.missionCompetence.create({
+      data: { missionId: mission.id, profilCompetenceId: competence.id, creeParEmail: session.email },
+    });
+
+    // Preuve MISSION toujours créée, additive — jamais de suppression d'une
+    // preuve précédente (même règle que .../competences/[id]/preuves).
+    await tx.skillEvidence.create({
+      data: {
+        profilCompetenceId: competence.id,
+        source: "MISSION",
+        detail: donnees.detail ?? `Compétence mobilisée sur la mission ${mission.id}`,
+        niveau: donnees.niveauObserve ?? null,
+      },
+    });
+
+    const resultatMaj = await tx.profilCompetence.update({
+      where: { id: competence.id },
+      data: { statut: resultat.statut, confiance: resultat.confiance, niveau: resultat.niveau },
+    });
+
+    // ENGINEER PROFILE V2 — Phase Skills Foundation (ADR-001) : un lien
+    // mission peut faire évoluer le statut (statutPropose) — la projection
+    // doit rester à jour.
+    await rafraichirProjectionCompetences(tx, mission.profilId);
+
+    return resultatMaj;
   });
 
   await journaliser({
@@ -101,11 +114,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     cible: `mission:${mission.id}:competence:${competence.id}`,
     detail: `${competence.competence}: reliée à la mission ${mission.id} (statut ${competence.statut} -> ${apres.statut})`,
   });
-
-  // ENGINEER PROFILE V2 — Phase Skills Foundation (ADR-001) : un lien
-  // mission peut faire évoluer le statut (statutPropose) — la projection
-  // doit rester à jour.
-  await rafraichirProjectionCompetences(prisma, mission.profilId);
 
   const preuves = await prisma.skillEvidence.findMany({
     where: { profilCompetenceId: competence.id },
