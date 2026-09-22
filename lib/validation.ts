@@ -205,3 +205,10 @@ export const modifierServiceEngagementSchema = z.object({
   description: z.string().trim().max(2000).nullable().optional(),
   statut: z.string().trim().min(1).max(50).optional(),
 });
+
+// PHASE 14C — Core Client & Talent Onboarding (22/09/2026). Ne valide que
+// l'email (seul champ conditionnant la création du compte de connexion
+// associé, voir POST /api/clients) — les autres champs du formulaire
+// Client restent volontairement en texte libre optionnel, comme avant
+// cette phase, pas de refonte de validation.
+export const emailClientSchema = z.string().trim().toLowerCase().email("Adresse email invalide.");
