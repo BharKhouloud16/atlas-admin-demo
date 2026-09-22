@@ -12,7 +12,23 @@
 // 4) after ~8h (durée max d'une session), retirer SESSION_SECRET_PREVIOUS.
 const encodeur = new TextEncoder();
 
-export const secretCourant = encodeur.encode(process.env.SESSION_SECRET);
+// PHASE 14 — Production Readiness (22/09/2026) : si SESSION_SECRET est
+// absent, TextEncoder.encode(undefined) produit une clé de 0 octet — jose
+// signe et vérifie alors des JWT HS256 avec une clé vide sans lever
+// d'erreur (vérifié empiriquement), ce qui permettrait de forger un cookie
+// de session pour n'importe quel rôle (y compris ADMIN) sans connaître
+// aucun secret. Échouer immédiatement au chargement du module (Edge et
+// Node) plutôt que de dégrader silencieusement vers une clé forgeable.
+// 32 caractères = la longueur d'un secret généré par `openssl rand -base64
+// 32` (recommandé par .env.example), pas une valeur arbitraire.
+const secret = process.env.SESSION_SECRET;
+if (!secret || secret.length < 32) {
+  throw new Error(
+    "SESSION_SECRET manquant ou trop court (minimum 32 caractères, voir .env.example : openssl rand -base64 32) — refus de démarrer avec une clé de session non sûre."
+  );
+}
+
+export const secretCourant = encodeur.encode(secret);
 
 export const secretsVerification: Uint8Array[] = [
   secretCourant,
