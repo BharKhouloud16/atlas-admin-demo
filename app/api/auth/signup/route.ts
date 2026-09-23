@@ -77,10 +77,12 @@ export async function POST(req: NextRequest) {
         message:
           "Compte créé. Confirmez votre adresse email (lien envoyé) puis attendez la validation par l'administrateur.",
         id: user.id,
-        // ⚠️ Démo : aucun fournisseur d'email n'est branché (voir lib/email.ts), le
-        // lien n'arrive donc pas réellement en boîte de réception pour l'instant —
-        // il est renvoyé ici pour permettre de tester le parcours de vérification.
-        lienVerificationDemo: `/verifier-email?token=${tokenVerification}`,
+        // ⚠️ Démo : uniquement quand aucun fournisseur d'email n'est branché
+        // (voir lib/email.ts) — corrigé lors de l'audit RC V1 (fuite du token
+        // de vérification dans la réponse HTTP sinon).
+        ...(process.env.RESEND_API_KEY
+          ? {}
+          : { lienVerificationDemo: `/verifier-email?token=${tokenVerification}` }),
       },
       { status: 201 }
     );
@@ -120,7 +122,9 @@ export async function POST(req: NextRequest) {
       message:
         "Compte créé. Confirmez votre adresse email (lien envoyé) puis attendez la validation par l'administrateur.",
       id: user.id,
-      lienVerificationDemo: `/verifier-email?token=${tokenVerification}`,
+      ...(process.env.RESEND_API_KEY
+        ? {}
+        : { lienVerificationDemo: `/verifier-email?token=${tokenVerification}` }),
     },
     { status: 201 }
   );

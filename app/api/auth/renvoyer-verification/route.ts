@@ -33,11 +33,11 @@ export async function POST(req: NextRequest) {
 
   await envoyerEmailVerificationAdresse({ to: email, nom: email, token });
 
-  // ⚠️ Démo : le lien est renvoyé directement (voir signup/route.ts pour la
-  // même remarque) tant qu'aucun fournisseur d'email n'est branché.
+  // ⚠️ Démo : uniquement quand aucun fournisseur d'email n'est branché (voir
+  // signup/route.ts pour la même remarque) — corrigé lors de l'audit RC V1.
   return NextResponse.json({
     ok: true,
     message: "Nouveau lien de vérification envoyé.",
-    lienVerificationDemo: `/verifier-email?token=${token}`,
+    ...(process.env.RESEND_API_KEY ? {} : { lienVerificationDemo: `/verifier-email?token=${token}` }),
   });
 }
