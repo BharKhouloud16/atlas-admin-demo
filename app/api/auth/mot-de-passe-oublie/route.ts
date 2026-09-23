@@ -65,12 +65,17 @@ export async function POST(req: NextRequest) {
 
   await envoyerEmailReinitialisationMotDePasse({ to: email, token });
 
-  return NextResponse.json({
-    ...messageGenerique,
-    // ⚠️ Démo : aucun fournisseur d'email n'est branché (voir lib/email.ts) —
-    // le lien n'arrive pas réellement en boîte de réception, il est renvoyé
-    // ici pour permettre de tester le parcours (même convention que
-    // lienVerificationDemo sur /api/auth/signup).
-    lienReinitialisationDemo: `/reinitialiser-mot-de-passe?token=${token}`,
-  });
+  // ⚠️ Démo : uniquement quand aucun fournisseur d'email n'est branché (voir
+  // lib/email.ts) — sinon le lien de réinitialisation N'EST JAMAIS renvoyé
+  // dans la réponse HTTP (permettrait sinon une prise de contrôle de compte
+  // par simple connaissance de l'adresse email, sans jamais accéder à la
+  // boîte de réception — corrigé lors de l'audit RC V1).
+  if (!process.env.RESEND_API_KEY) {
+    return NextResponse.json({
+      ...messageGenerique,
+      lienReinitialisationDemo: `/reinitialiser-mot-de-passe?token=${token}`,
+    });
+  }
+
+  return NextResponse.json(messageGenerique);
 }

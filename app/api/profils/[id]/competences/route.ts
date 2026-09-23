@@ -13,6 +13,7 @@ import {
 } from "@/lib/talent/skill-graph";
 import { calculerConfianceCompetences } from "@/lib/talent/evidence-confidence";
 import type { StatutPreuveCompetence, NiveauConfiance, SourcePreuveCompetence } from "@/lib/talent/skill-graph";
+import { rafraichirProjectionCompetences } from "@/lib/talent/skill-graph-sync";
 
 // ATLAS SKILL GRAPH V1 — réservé à l'Admin, comme /admin/profils et le
 // Matching Engine (voir app/api/talent/demandes/[id]/matching/route.ts) :
@@ -104,6 +105,18 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
   let creees = 0;
   let misesAJour = 0;
 
+  // SKILLS ATOMICITY REMEDIATION (mandat "Skills Closure") — une transaction
+  // UNIQUE englobant toute cette boucle a été testée et abandonnée : sur un
+  // recalcul portant sur un nombre de compétences non borné (déclarées +
+  // inférées par le CV), elle a provoqué des timeouts et 10 échecs de
+  // régression sous charge soutenue (voir commit 59edd83). Ici, chaque
+  // compétence est traitée dans SA PROPRE transaction courte et bornée
+  // (upsert + ses preuves uniquement, jamais plus de 2-3 requêtes) — l'écrit
+  // ProfilCompetence + SkillEvidence d'UNE compétence est donc toujours
+  // atomique entre eux, sans jamais retenir une connexion pendant toute la
+  // durée du recalcul global. La cohérence globale de la PROJECTION est
+  // assurée séparément, dans sa propre transaction courte, une fois la
+  // boucle terminée (voir plus bas) — jamais lue/dérivée d'un état partiel.
   for (const [competence, { entree, preuves }] of parCompetence) {
     const existante = existantesParNom.get(competence) ?? null;
     const existanteLegere: ProfilCompetenceExistante | null = existante
@@ -113,39 +126,41 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
     // "forte") par un Admin — voir fusionnerCompetence.
     const resultat = fusionnerCompetence(existanteLegere, entree);
 
-    const profilCompetence = await prisma.profilCompetence.upsert({
-      where: { profilId_competence: { profilId: params.id, competence } },
-      create: {
-        profilId: params.id,
-        competence,
-        statut: resultat.statut,
-        confiance: resultat.confiance,
-        niveau: resultat.niveau,
-        anneesExperience: entree.anneesExperience,
-        contexte: entree.contexte,
-        secteur: entree.secteur,
-      },
-      update: {
-        statut: resultat.statut,
-        confiance: resultat.confiance,
-        niveau: resultat.niveau,
-      },
+    await prisma.$transaction(async (tx) => {
+      const profilCompetence = await tx.profilCompetence.upsert({
+        where: { profilId_competence: { profilId: params.id, competence } },
+        create: {
+          profilId: params.id,
+          competence,
+          statut: resultat.statut,
+          confiance: resultat.confiance,
+          niveau: resultat.niveau,
+          anneesExperience: entree.anneesExperience,
+          contexte: entree.contexte,
+          secteur: entree.secteur,
+        },
+        update: {
+          statut: resultat.statut,
+          confiance: resultat.confiance,
+          niveau: resultat.niveau,
+        },
+      });
+
+      // Preuves additives uniquement — jamais de suppression d'un historique
+      // déjà là — et jamais de doublon exact (même source + même détail)
+      // pour ne pas empiler la même preuve à chaque reconstruction.
+      const preuvesExistantes = new Set((existante?.preuves ?? []).map((p) => `${p.source}::${p.detail ?? ""}`));
+      for (const preuve of preuves) {
+        const cle = `${preuve.source}::${preuve.detail ?? ""}`;
+        if (preuvesExistantes.has(cle)) continue;
+        preuvesExistantes.add(cle);
+        await tx.skillEvidence.create({
+          data: { profilCompetenceId: profilCompetence.id, source: preuve.source, detail: preuve.detail },
+        });
+      }
     });
     if (existante) misesAJour++;
     else creees++;
-
-    // Preuves additives uniquement — jamais de suppression d'un historique
-    // déjà là — et jamais de doublon exact (même source + même détail) pour
-    // ne pas empiler la même preuve à chaque reconstruction.
-    const preuvesExistantes = new Set((existante?.preuves ?? []).map((p) => `${p.source}::${p.detail ?? ""}`));
-    for (const preuve of preuves) {
-      const cle = `${preuve.source}::${preuve.detail ?? ""}`;
-      if (preuvesExistantes.has(cle)) continue;
-      preuvesExistantes.add(cle);
-      await prisma.skillEvidence.create({
-        data: { profilCompetenceId: profilCompetence.id, source: preuve.source, detail: preuve.detail },
-      });
-    }
   }
 
   await journaliser({
@@ -154,6 +169,16 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
     action: "talent.skillgraph.recalcule",
     cible: `profil:${params.id}`,
     detail: `${creees} compétence(s) créée(s), ${misesAJour} mise(s) à jour, ${parCompetence.size} au total`,
+  });
+
+  // ENGINEER PROFILE V2 — Phase Skills Foundation (ADR-001) : ce recalcul
+  // peut faire évoluer le statut de compétences existantes (fusion) — la
+  // projection Profil.competences[] doit rester à jour après ce recalcul,
+  // exactement comme après une déclaration Ingénieur. Rafraîchie depuis
+  // l'état FINAL (après toute la boucle ci-dessus), dans sa propre
+  // transaction courte — jamais un état intermédiaire.
+  await prisma.$transaction(async (tx) => {
+    await rafraichirProjectionCompetences(tx, params.id);
   });
 
   const competences = await prisma.profilCompetence.findMany({

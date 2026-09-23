@@ -141,13 +141,15 @@ export default function EspaceIngenieur() {
           {onglet === "Mon compte" && <OngletCompte missionActive={missionActive} />}
         </div>
 
-        <nav style={{ width: 220, flexShrink: 0 }}>
-          <ul style={{ listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+        <nav style={{ width: 220, flexShrink: 0 }} aria-label="Sections de l'espace ingénieur">
+          <ul role="tablist" style={{ listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: 4 }}>
             {ONGLETS.map((o) => {
               const verrouille = o === "Emploi du temps" && !missionActive;
               return (
-                <li key={o}>
+                <li key={o} role="presentation">
                   <button
+                    role="tab"
+                    aria-selected={onglet === o}
                     onClick={() => !verrouille && setOnglet(o)}
                     disabled={verrouille}
                     title={verrouille ? "Disponible dès que vous êtes en mission avec Atlas" : undefined}

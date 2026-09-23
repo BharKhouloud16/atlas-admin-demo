@@ -5,9 +5,11 @@ Deux modules publics sur le site :
 - **`/inscription`** — publique, pour Ingénieur ou Client uniquement (l'Admin
   n'est jamais créé par inscription, voir `prisma/create-admin.ts`)
 
-**Statut : starter à assembler, pas prêt à déployer tel quel** — voir la
-section "Ce qui reste à faire" plus bas. Non testé en conditions réelles
-(pas d'accès réseau dans l'environnement où ce code a été écrit).
+**Statut (mis à jour lors de l'audit Release Candidate V1) : fonctionnel et
+testé (694 tests API + 781 tests unitaires, suite Service OS 11/11, build de
+production propre) — voir la section "Ce qui reste à faire" plus bas pour
+les points de configuration restants avant le premier déploiement réel.**
+Encore jamais déployé en production avec un vrai Client à ce jour.
 
 ## Les 3 profils
 
@@ -48,21 +50,29 @@ Ce filtrage est appliqué à trois niveaux, jamais côté affichage seul :
 - Génération de contrats Word réservée à l'Admin (`/api/generate-contract`,
   5 modèles déjà préparés avec balises dans `/templates`)
 
-## Ce qui reste à faire avant mise en production
+## Ce qui reste à faire avant le premier déploiement réel
 
-1. **`npm install`**, créer une base PostgreSQL (Supabase/Neon/Render),
-   copier `.env.example` → `.env`, `npm run prisma:migrate`.
-2. **Créer votre compte Admin** :
-   `npx tsx prisma/create-admin.ts vous@atlas-qa.com votre_mot_de_passe`
-3. **Brancher le stockage des documents** : `Document.fileUrl` suppose un
-   stockage externe (Supabase Storage, S3...) — il n'y a pas encore de route
-   d'upload ; à ajouter dans `/admin` pour que l'Admin dépose les rapports
-   et factures des clients.
-4. **Construire `/admin/clients` et `/admin/profils`** (formulaires
-   d'ajout/édition) — pour l'instant seules les routes API existent.
-5. **Emails transactionnels** : prévenir un utilisateur quand son compte est
-   validé (aujourd'hui, il doit revenir tester lui-même).
-6. **Déployer** sur Vercel (frontend/API) + Supabase/Neon (base).
+Le stockage de documents (Vercel Blob), les pages `/admin/clients` et
+`/admin/profils`, et les emails transactionnels (Resend, avec repli en
+mode démo si non configuré) sont déjà implémentés — voir `.env.example`
+pour la liste complète des variables. Ce qui reste réellement à valider
+avant d'accueillir un premier Client réel :
+
+1. **Déployer sur un projet Vercel dédié**, avec sa propre base
+   PostgreSQL — jamais le même `DATABASE_URL` qu'un déploiement Preview,
+   qui exécuterait `prisma migrate deploy` sur la même base à chaque build
+   (voir `package.json`).
+2. **Configurer `RESEND_API_KEY`** pour un envoi d'email réel — sans elle,
+   les emails sont seulement journalisés (voir `lib/email.ts`). Le parcours
+   Admin-crée-un-Client (`/admin/clients`) fonctionne sans email : le mot
+   de passe temporaire est affiché une fois dans l'interface.
+3. **Configurer `SENTRY_DSN`** pour capturer les erreurs serveur réelles
+   (voir `instrumentation.ts`) — sans elle, une erreur non instrumentée ne
+   laisse aucune trace durable.
+4. **Garder `SEED_TOKEN` secret** (ou ne pas le définir si `/api/dev-seed`
+   n'est pas nécessaire sur ce déploiement) — cette route reste active en
+   production par design (voir son commentaire) pour amorcer un
+   déploiement sans accès terminal.
 
 ## Sécurité — points à ne pas sauter
 

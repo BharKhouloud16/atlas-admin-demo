@@ -122,7 +122,7 @@ export default function MissionsClientPage() {
                     </Bouton>
                   )}
                 </div>
-                {ouverte && <ProfilVitrineDetail profil={m.profil} />}
+                {ouverte && <ProfilVitrineDetail profil={m.profil} missionId={m.id} />}
               </Card>
             );
           })}
@@ -136,11 +136,17 @@ export default function MissionsClientPage() {
 // réalisations et vidéo de présentation, en lecture seule — jamais de score
 // de matching ni de TJM (réservés à l'Admin, voir /api/client/missions).
 // Reprise à l'identique de l'ancien app/client/page.tsx.
-function ProfilVitrineDetail({ profil }: { profil: ProfilVitrine }) {
+//
+// ENGINEER PROFILE V2 — Lot 6 (Trust Client, MVP) : ajoute une section
+// "Compétences" chargée à la demande depuis GET /api/client/missions/[id]/
+// trust (voir ce fichier pour le contrat exact) — jamais un score, jamais
+// plus que ce que le contrat produit autorise.
+function ProfilVitrineDetail({ profil, missionId }: { profil: ProfilVitrine; missionId: string }) {
   const realisations = profil.realisations ?? [];
 
   return (
     <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #eee", display: "flex", flexDirection: "column", gap: 12 }}>
+      <CompetencesTrustClient missionId={missionId} />
       {profil.aVideo && (
         <div>
           <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 6px" }}>Vidéo de présentation</p>
@@ -170,6 +176,57 @@ function ProfilVitrineDetail({ profil }: { profil: ProfilVitrine }) {
             ))}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+type SignalTrustClient = {
+  competence: string;
+  provenance: { shortLabel: string; label: string; explanation: string };
+  mobilisation: { shortLabel: string; label: string; explanation: string } | null;
+};
+
+// ENGINEER PROFILE V2 — Lot 6 (Trust Client, MVP) : section "Compétences",
+// chargée à la demande (une seule fois par ouverture), jamais un
+// pré-chargement pour toutes les missions de la liste. État vide : la
+// section ne s'affiche simplement pas (jamais "Aucune compétence
+// confirmée" — texte négatif interdit par le contrat produit).
+function CompetencesTrustClient({ missionId }: { missionId: string }) {
+  const [signaux, setSignaux] = useState<SignalTrustClient[] | null>(null);
+
+  useEffect(() => {
+    let annule = false;
+    fetch(`/api/client/missions/${missionId}/trust`)
+      .then((r) => (r.ok ? r.json() : { signals: [] }))
+      .then((d) => {
+        if (!annule) setSignaux(Array.isArray(d.signals) ? d.signals : []);
+      })
+      .catch(() => {
+        if (!annule) setSignaux([]);
+      });
+    return () => {
+      annule = true;
+    };
+  }, [missionId]);
+
+  if (!signaux || signaux.length === 0) return null;
+
+  return (
+    <div>
+      <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 6px" }}>Compétences</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {signaux.map((s) => (
+          <div key={s.competence} style={{ border: "1px solid #eee", borderRadius: 6, padding: 8 }}>
+            <p style={{ margin: 0, fontSize: 12, fontWeight: 600 }}>{s.competence}</p>
+            <div style={{ marginTop: 4, display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <Badge variant="info">{s.provenance.shortLabel}</Badge>
+              {s.mobilisation && <Badge variant="info">{s.mobilisation.shortLabel}</Badge>}
+            </div>
+            <p style={{ margin: "4px 0 0", fontSize: 11, color: "#94a0b3" }}>{s.provenance.explanation}</p>
+            {s.mobilisation && <p style={{ margin: "2px 0 0", fontSize: 11, color: "#94a0b3" }}>{s.mobilisation.explanation}</p>}
+          </div>
+        ))}
       </div>
     </div>
   );

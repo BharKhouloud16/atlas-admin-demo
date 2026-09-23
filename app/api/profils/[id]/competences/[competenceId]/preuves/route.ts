@@ -5,6 +5,7 @@ import { journaliser } from "@/lib/audit";
 import { ajouterPreuveSchema, premierMessageZod } from "@/lib/validation";
 import { fusionnerCompetence, niveauxHistoriques } from "@/lib/talent/skill-graph";
 import { calculerConfianceCompetence } from "@/lib/talent/evidence-confidence";
+import { rafraichirProjectionCompetences } from "@/lib/talent/skill-graph-sync";
 
 // ATLAS DYNAMIC SKILL GRAPH — ajoute une nouvelle preuve (SkillEvidence) à
 // une ProfilCompetence existante SANS JAMAIS supprimer ni écraser une preuve
@@ -42,17 +43,6 @@ export async function POST(
 
   const donnees = analyse.data;
 
-  // La nouvelle preuve est TOUJOURS créée, quelle que soit la suite —
-  // l'historique s'accumule, il ne se substitue jamais à ce qui précède.
-  await prisma.skillEvidence.create({
-    data: {
-      profilCompetenceId: params.competenceId,
-      source: donnees.source,
-      detail: donnees.detail ?? null,
-      niveau: donnees.niveauObserve ?? null,
-    },
-  });
-
   // Fusion éventuelle du statut/niveau proposés avec l'existant — jamais de
   // régression (voir fusionnerCompetence, lib/talent/skill-graph.ts).
   // Lorsqu'aucun statutPropose n'est fourni, on ne compare qu'un niveau
@@ -72,9 +62,32 @@ export async function POST(
     }
   );
 
-  const apres = await prisma.profilCompetence.update({
-    where: { id: params.competenceId },
-    data: { statut: resultat.statut, confiance: resultat.confiance, niveau: resultat.niveau },
+  // CONFIDENTIALITÉ/SKILLS FOUNDATION — audit atomicité : preuve + mise à
+  // jour du statut + rafraîchissement de la projection dans un seul
+  // événement atomique (voir même correctif sur la route soeur PATCH).
+  const apres = await prisma.$transaction(async (tx) => {
+    // La nouvelle preuve est TOUJOURS créée, quelle que soit la suite —
+    // l'historique s'accumule, il ne se substitue jamais à ce qui précède.
+    await tx.skillEvidence.create({
+      data: {
+        profilCompetenceId: params.competenceId,
+        source: donnees.source,
+        detail: donnees.detail ?? null,
+        niveau: donnees.niveauObserve ?? null,
+      },
+    });
+
+    const resultatMaj = await tx.profilCompetence.update({
+      where: { id: params.competenceId },
+      data: { statut: resultat.statut, confiance: resultat.confiance, niveau: resultat.niveau },
+    });
+
+    // ENGINEER PROFILE V2 — Phase Skills Foundation (ADR-001) : une preuve
+    // ajoutée peut faire évoluer le statut via fusionnerCompetence — la
+    // projection doit refléter ce changement immédiatement.
+    await rafraichirProjectionCompetences(tx, params.id);
+
+    return resultatMaj;
   });
 
   await journaliser({

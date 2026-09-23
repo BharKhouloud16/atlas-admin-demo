@@ -30,6 +30,11 @@ export default function ClientsPage() {
   const [envoi, setEnvoi] = useState(false);
   const [erreur, setErreur] = useState("");
   const [messagesNonLus, setMessagesNonLus] = useState<Set<string>>(new Set());
+  // PHASE 14C — mot de passe temporaire renvoyé une seule fois par l'API
+  // quand un email est fourni (voir POST /api/clients) — jamais récupérable
+  // ensuite, doit être transmis au client par l'Admin via un canal existant
+  // (aucun fournisseur d'email branché, voir README).
+  const [compteCree, setCompteCree] = useState<{ email: string; motDePasse: string } | null>(null);
 
   function charger() {
     fetch("/api/clients")
@@ -54,6 +59,7 @@ export default function ClientsPage() {
   async function creer(e: React.FormEvent) {
     e.preventDefault();
     setErreur("");
+    setCompteCree(null);
     if (!champs.nom.trim()) {
       setErreur("Le nom du client est requis.");
       return;
@@ -64,11 +70,14 @@ export default function ClientsPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(champs),
     });
+    const d = await res.json().catch(() => ({}));
     setEnvoi(false);
     if (!res.ok) {
-      const d = await res.json().catch(() => ({}));
       setErreur(d.error ?? "Erreur, réessayez.");
       return;
+    }
+    if (d.motDePasseTemporaire) {
+      setCompteCree({ email: champs.email, motDePasse: d.motDePasseTemporaire });
     }
     setChamps(CHAMPS_VIDES);
     setFormulaireOuvert(false);
@@ -93,6 +102,21 @@ export default function ClientsPage() {
           {formulaireOuvert ? "Annuler" : "+ Nouveau client"}
         </button>
       </div>
+
+      {compteCree && (
+        <div
+          role="status"
+          style={{ border: `1px solid ${bleu}`, background: "#eef4ff", borderRadius: 8, padding: 14, marginBottom: 20, fontSize: 13 }}
+        >
+          <p style={{ margin: "0 0 6px", fontWeight: 600 }}>Compte de connexion créé pour {compteCree.email}</p>
+          <p style={{ margin: "0 0 6px" }}>
+            Mot de passe temporaire : <strong>{compteCree.motDePasse}</strong>
+          </p>
+          <p style={{ margin: 0, color: grisTexte }}>
+            À transmettre au client par un canal existant (téléphone, message direct...) — ne sera plus jamais affiché après ce message.
+          </p>
+        </div>
+      )}
 
       {formulaireOuvert && (
         <form
@@ -129,7 +153,8 @@ export default function ClientsPage() {
           />
           <input
             type="email"
-            placeholder="Email"
+            placeholder="Email (crée aussi son accès de connexion)"
+            title="Si renseigné, un compte de connexion Client est créé automatiquement."
             value={champs.email}
             onChange={(e) => setChamps({ ...champs, email: e.target.value })}
           />

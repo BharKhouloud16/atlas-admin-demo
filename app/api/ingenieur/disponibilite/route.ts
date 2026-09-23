@@ -4,6 +4,7 @@ import { getSession } from "@/lib/auth";
 import { DISPONIBILITES, STATUTS_EN_MISSION, MISSIONS_APRES, PREAVIS } from "@/lib/disponibilite";
 import { PAYS, NATIONALITES, DEVISES, calculerRegimeSuggere } from "@/lib/localisation";
 import { TOUTES_COMPETENCES } from "@/lib/competences";
+import { appliquerDeclarationCompetences } from "@/lib/talent/skill-graph-sync";
 
 // Questionnaire de disponibilité, à remplir par l'ingénieur juste après la
 // validation de son CV (voir /ingenieur/disponibilite), avant d'accéder à
@@ -109,26 +110,34 @@ export async function POST(req: NextRequest) {
     ? competences.filter((c: unknown): c is string => typeof c === "string" && TOUTES_COMPETENCES.includes(c))
     : [];
 
-  await prisma.profil.update({
-    where: { id: session.profilId },
-    data: {
-      disponibilite,
-      disponibilitePrevue: disponibilite === "Non disponible immédiatement" ? disponibilitePrevue.trim() : null,
-      changerMissionActuelle: enMission ? changerMissionActuelle : null,
-      missionApres: enMission ? missionApres : null,
-      preavis,
-      preavisPrecision: preavis === "Autre" ? preavisPrecision.trim() : null,
-      nationalite,
-      nationalitePrecision: nationalite === "Autre" ? nationalitePrecision.trim() : null,
-      paysResidence,
-      paysResidencePrecision: paysResidence === "Autre" ? paysResidencePrecision.trim() : null,
-      regimeSuggere: calculerRegimeSuggere(paysResidence, nationalite),
-      tjmSouhaite: tjmNombre,
-      tjmSouhaiteDevise,
-      competences: competencesValidees,
-      disponibiliteRenseigneeLe: new Date(),
-      questionnaireValide: true,
-    },
+  // ENGINEER PROFILE V2 — Phase Skills Foundation (ADR-001) : ProfilCompetence
+  // est désormais la source de vérité des compétences ; Profil.competences[]
+  // n'est plus écrit directement ici mais recalculé comme projection par
+  // appliquerDeclarationCompetences (lib/talent/skill-graph-sync.ts), dans
+  // la MÊME transaction que le reste du questionnaire — jamais un état où
+  // ProfilCompetence et Profil.competences divergeraient durablement.
+  await prisma.$transaction(async (tx) => {
+    await tx.profil.update({
+      where: { id: session.profilId! },
+      data: {
+        disponibilite,
+        disponibilitePrevue: disponibilite === "Non disponible immédiatement" ? disponibilitePrevue.trim() : null,
+        changerMissionActuelle: enMission ? changerMissionActuelle : null,
+        missionApres: enMission ? missionApres : null,
+        preavis,
+        preavisPrecision: preavis === "Autre" ? preavisPrecision.trim() : null,
+        nationalite,
+        nationalitePrecision: nationalite === "Autre" ? nationalitePrecision.trim() : null,
+        paysResidence,
+        paysResidencePrecision: paysResidence === "Autre" ? paysResidencePrecision.trim() : null,
+        regimeSuggere: calculerRegimeSuggere(paysResidence, nationalite),
+        tjmSouhaite: tjmNombre,
+        tjmSouhaiteDevise,
+        disponibiliteRenseigneeLe: new Date(),
+        questionnaireValide: true,
+      },
+    });
+    await appliquerDeclarationCompetences(tx, session.profilId!, competencesValidees);
   });
 
   return NextResponse.json({ ok: true });

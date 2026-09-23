@@ -241,7 +241,19 @@ function CarteBesoin({
   return (
     <Card>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-        <div style={{ cursor: "pointer", flex: 1 }} onClick={basculer}>
+        <div
+          role="button"
+          tabIndex={0}
+          aria-expanded={ouvert}
+          style={{ cursor: "pointer", flex: 1 }}
+          onClick={basculer}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              basculer();
+            }
+          }}
+        >
           <p style={{ margin: 0, fontWeight: 600 }}>{besoin.titre ?? besoin.texteOriginal.slice(0, 70)}</p>
           <p style={{ margin: "4px 0 0", fontSize: 13, color: grisTexte }}>{besoin.texteOriginal}</p>
         </div>

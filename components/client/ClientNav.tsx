@@ -26,7 +26,10 @@ const RUBRIQUES: { href: string; label: string; disponible: boolean }[] = [
   { href: "/client/besoins", label: "Besoins", disponible: true },
   { href: "/client/talent", label: "Talents", disponible: true },
   { href: "/client/missions", label: "Missions", disponible: true },
-  { href: "/client/atlas-os", label: "ATLAS OS / Services", disponible: false },
+  // PHASE 7 — Service OS Foundation (22/09/2026) : rubrique activée
+  // maintenant que ServiceEngagement existe réellement (Decision Record
+  // Phase 6B) — le "bientôt" en dérogation LOT 1 ne s'applique plus.
+  { href: "/client/atlas-os", label: "ATLAS OS / Services", disponible: true },
   { href: "/client/resultats", label: "Résultats", disponible: true },
   { href: "/client/documents", label: "Documents", disponible: true },
   { href: "/client/communication", label: "Communication", disponible: true },
