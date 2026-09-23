@@ -1254,6 +1254,7 @@ model ServiceEngagement {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   documents   Document[]
+  evidences   Evidence[] // ATLAS V1 — Intelligence Foundation (23/09/2026) — voir Evidence
 
   @@index([clientId])
 }
@@ -2217,4 +2218,205 @@ model PreferenceNotification {
   categoriesEmail AttentionCategorie[]
   createdAt       DateTime             @default(now())
   updatedAt       DateTime             @updatedAt
+}
+
+// ============================================================
+// ATLAS V1 — INTELLIGENCE FOUNDATION (23/09/2026)
+// ============================================================
+// Fondation de données uniquement (Research Engine / Knowledge OS /
+// Evidence Engine) — voir mandat "ATLAS V1 Master Production Release",
+// sections 16-25. Aucun crawler, aucun agent autonome, aucune IA, aucun
+// vector store : uniquement les tables permettant de rechercher, qualifier
+// et tracer une information professionnelle, et de relier une conclusion à
+// sa preuve. Réservé Admin partout (aucun accès Client/Engineer — jamais
+// automatique, jamais dérivé d'une donnée Client, voir Evidence
+// ci-dessous : Confidentiality Boundary, Phase 5/11).
+//
+// Frontière volontairement stricte, cohérente avec les Phases 11-13 de ce
+// même projet : un Document/ServiceEngagement Client ne devient JAMAIS
+// Knowledge automatiquement — seule une Evidence peut référencer le
+// contexte Client (ServiceEngagement), jamais l'inverse.
+
+enum StatutRechercheRequete {
+  EN_COURS
+  RESULTAT_TROUVE
+  SANS_RESULTAT
+}
+
+enum StatutVerificationRecherche {
+  UNVERIFIED
+  PARTIALLY_VERIFIED
+  VERIFIED
+  CONFLICTED
+  NEEDS_REVIEW
+  OUTDATED
+}
+
+// Une question de recherche posée par un Admin (ex. dans le cadre d'un
+// audit Service OS) — jamais liée automatiquement à un Client, le lien
+// éventuel avec un contexte Client passe uniquement par Evidence.
+model ResearchQuery {
+  id              String   @id @default(cuid())
+  question        String
+  contexte        String? // texte libre : pourquoi cette recherche (jamais une donnée Client copiée telle quelle)
+  demandeParEmail String
+  statut          StatutRechercheRequete @default(EN_COURS)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  sources         ResearchSource[]
+  observations    ResearchObservation[]
+
+  @@index([demandeParEmail])
+}
+
+// Une source externe consultée pour répondre à une ResearchQuery — garde
+// la provenance complète (Phase 12 : "scope" distinct de version/date,
+// cf. exemple Kubernetes upstream vs EKS).
+model ResearchSource {
+  id              String    @id @default(cuid())
+  query           ResearchQuery @relation(fields: [queryId], references: [id])
+  queryId         String
+  url             String
+  titre           String?
+  publisher       String?
+  datePublication DateTime?
+  dateAcces       DateTime  @default(now())
+  scope           String? // ex. plateforme/juridiction/périmètre précis de cette source
+  createdAt       DateTime  @default(now())
+  observations    ResearchObservation[]
+
+  @@index([queryId])
+}
+
+// Une information extraite d'une ResearchSource pour une ResearchQuery —
+// le statut de vérification est dénormalisé ici (dernière vérification
+// connue) ; l'historique complet des vérifications reste dans
+// ResearchVerification, jamais écrasé silencieusement.
+model ResearchObservation {
+  id                 String   @id @default(cuid())
+  query              ResearchQuery @relation(fields: [queryId], references: [id])
+  queryId            String
+  source             ResearchSource @relation(fields: [sourceId], references: [id])
+  sourceId           String
+  contenu            String
+  statutVerification StatutVerificationRecherche @default(UNVERIFIED)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  verifications      ResearchVerification[]
+  evidences          Evidence[]
+
+  @@index([queryId])
+  @@index([sourceId])
+}
+
+// Un acte de vérification sur une ResearchObservation — toujours additif
+// (jamais de suppression/écrasement, voir Phase 12 section M/N : une
+// "contradiction" apparente peut être une différence de scope, jamais
+// résolue automatiquement, toujours par un Admin).
+model ResearchVerification {
+  id              String   @id @default(cuid())
+  observation     ResearchObservation @relation(fields: [observationId], references: [id])
+  observationId   String
+  statut          StatutVerificationRecherche
+  verifieParEmail String
+  methode         String? // ex. "convergence avec une 2e source officielle", "source officielle unique"
+  detail          String?
+  createdAt       DateTime @default(now())
+
+  @@index([observationId])
+}
+
+enum TypeKnowledge {
+  FACT
+  STANDARD
+  REGULATION
+  REQUIREMENT
+  FRAMEWORK
+  GUIDELINE
+  BEST_PRACTICE
+  METHODOLOGY
+  HEURISTIC
+  OPINION
+  NEWS
+  OBSERVATION
+}
+
+enum StatutKnowledge {
+  DISCOVERED
+  VERIFIED
+  PUBLISHED
+  UPDATED
+  SUPERSEDED
+  ARCHIVED
+}
+
+// Mémoire professionnelle réutilisable d'ATLAS (OWASP, NIST, méthodologies
+// QA...) — JAMAIS dérivée automatiquement d'une donnée Client (voir
+// Evidence.serviceEngagementId ci-dessous, jamais l'inverse). Créée
+// exclusivement par un Admin, jamais par un pipeline automatique (aucun
+// crawler dans cette fondation V1).
+model Knowledge {
+  id              String    @id @default(cuid())
+  title           String
+  summary         String
+  type            TypeKnowledge
+  domain          String // texte libre (QA, Cybersecurity, Compliance...) — pas d'enum forcé, cf. Phase 11
+  source          String?
+  publisher       String?
+  version         String?
+  publicationDate DateTime?
+  effectiveDate   DateTime?
+  accessedAt      DateTime  @default(now())
+  scope           String? // juridiction / secteur / plateforme d'applicabilité
+  status          StatutKnowledge @default(DISCOVERED)
+  // Lien vers la version antérieure que cette entrée remplace — jamais une
+  // suppression, l'ancienne entrée reste lisible avec status=SUPERSEDED.
+  remplaceId      String?
+  remplace        Knowledge? @relation("KnowledgeSupersession", fields: [remplaceId], references: [id])
+  remplacePar     Knowledge[] @relation("KnowledgeSupersession")
+  createdByEmail  String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  evidences       Evidence[]
+
+  @@index([type])
+  @@index([domain])
+}
+
+enum TypeEvidence {
+  DOCUMENT
+  SOURCE
+  CODE
+  CONFIGURATION
+  LOG
+  SCREENSHOT
+  OBSERVATION
+  TEST_RESULT
+  EXTERNAL_REFERENCE
+  OTHER
+}
+
+// Trace une preuve reliée à SOIT un contexte Client (ServiceEngagement),
+// SOIT une Knowledge générique, SOIT une ResearchObservation — jamais les
+// trois à la fois côté applicatif (validé en API, pas de contrainte DB
+// stricte en V1 faute d'usage réel encore observé, cf. Phase 13). Un
+// contexte Client référencé ici ne devient jamais Knowledge automatiquement
+// (règle absolue, voir mandat section 22).
+model Evidence {
+  id                    String   @id @default(cuid())
+  type                  TypeEvidence
+  title                 String
+  detail                String?
+  serviceEngagementId   String?
+  serviceEngagement     ServiceEngagement? @relation(fields: [serviceEngagementId], references: [id])
+  knowledgeId           String?
+  knowledge             Knowledge? @relation(fields: [knowledgeId], references: [id])
+  researchObservationId String?
+  researchObservation   ResearchObservation? @relation(fields: [researchObservationId], references: [id])
+  createdByEmail        String
+  createdAt             DateTime @default(now())
+
+  @@index([serviceEngagementId])
+  @@index([knowledgeId])
+  @@index([researchObservationId])
 }
