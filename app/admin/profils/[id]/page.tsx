@@ -94,12 +94,44 @@ type TalentTrustReponse = {
   talentTrust: TalentTrustApi;
 };
 
+// PHASE 2B-1 — MISSION SKILL PROPOSAL.
+type StatutProposition = "EN_ATTENTE" | "VALIDEE" | "REFUSEE";
+
+type SkillProposalApi = {
+  id: string;
+  missionId: string;
+  competence: string;
+  niveauPropose: number | null;
+  contexte: string | null;
+  proposeParEmail: string;
+  proposeParRole: "ADMIN" | "INGENIEUR";
+  statut: StatutProposition;
+  decidePar: string | null;
+  decideLe: string | null;
+  motifRefus: string | null;
+  skillEvidenceId: string | null;
+  createdAt: string;
+  mission?: { id: string; repere: string | null; statut: string };
+};
+
 const LABEL_STATUT: Record<StatutPreuve, string> = {
   VERIFIE: "Vérifié",
   DECLARE: "Déclaré",
   INFERE: "Inféré",
   INCONNU: "Inconnu",
 };
+
+const LABEL_STATUT_PROPOSITION: Record<StatutProposition, string> = {
+  EN_ATTENTE: "À examiner",
+  VALIDEE: "Validée",
+  REFUSEE: "Refusée",
+};
+
+function couleurStatutProposition(statut: StatutProposition): string {
+  if (statut === "VALIDEE") return vert;
+  if (statut === "REFUSEE") return rouge;
+  return orange; // EN_ATTENTE
+}
 
 function couleurNiveau(niveau: "HAUTE" | "MOYENNE" | "BASSE" | "INCONNUE" | "DONNEES_INSUFFISANTES"): string {
   if (niveau === "HAUTE") return vert;
@@ -169,21 +201,34 @@ export default function ProfilIntelligencePage() {
   const [statutHttp, setStatutHttp] = useState<number | null>(null);
   const [competences, setCompetences] = useState<ProfilCompetenceApi[] | null>(null);
   const [trust, setTrust] = useState<TalentTrustReponse | null>(null);
+  const [propositions, setPropositions] = useState<SkillProposalApi[]>([]);
   const [competenceSelectionnee, setCompetenceSelectionnee] = useState<string | null>(null);
   const [construction, setConstruction] = useState(false);
   const [erreurConstruction, setErreurConstruction] = useState("");
 
+  // PHASE 2B-1 — niveau que l'Admin saisit/corrige AU MOMENT de la
+  // validation, par proposition (jamais présenté comme une vérité tant que
+  // non validé) — voir mandat section 17 : "ne jamais présenter le niveau
+  // proposé comme une vérité".
+  const [niveauValidation, setNiveauValidation] = useState<Record<string, string>>({});
+  const [decisionEnCours, setDecisionEnCours] = useState<string | null>(null);
+  const [erreurDecision, setErreurDecision] = useState("");
+
   async function charger() {
     setChargement(true);
-    const [resCompetences, resTrust] = await Promise.all([
+    const [resCompetences, resTrust, resPropositions] = await Promise.all([
       fetch(`/api/profils/${id}/competences`),
       fetch(`/api/profils/${id}/talent-trust`),
+      fetch(`/api/profils/${id}/skill-proposals`),
     ]);
 
-    // Les deux routes portent sur le même profil : un statut non-200 sur
-    // l'une (403 non-admin, 404 profil introuvable) s'applique à la page
-    // entière — jamais un affichage partiel avec des données manquantes
-    // silencieuses.
+    // Les deux routes déjà existantes portent sur le même profil : un
+    // statut non-200 sur l'une (403 non-admin, 404 profil introuvable)
+    // s'applique à la page entière — jamais un affichage partiel avec des
+    // données manquantes silencieuses. Les propositions restent
+    // volontairement hors de cette garde stricte : leur absence (ex. 403
+    // improbable ici, même Admin) ne doit jamais bloquer l'affichage du
+    // reste de la console déjà fonctionnelle.
     const statut = !resCompetences.ok ? resCompetences.status : !resTrust.ok ? resTrust.status : 200;
     setStatutHttp(statut);
 
@@ -194,6 +239,10 @@ export default function ProfilIntelligencePage() {
       setTrust(donneesTrust);
       if (competenceSelectionnee && !donneesCompetences.some((c) => c.id === competenceSelectionnee)) {
         setCompetenceSelectionnee(null);
+      }
+      if (resPropositions.ok) {
+        const donneesPropositions = await resPropositions.json();
+        setPropositions(donneesPropositions.propositions ?? []);
       }
     }
     setChargement(false);
@@ -212,6 +261,47 @@ export default function ProfilIntelligencePage() {
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       setErreurConstruction(data.error ?? "Échec de la construction du Skill Graph.");
+      return;
+    }
+    await charger();
+  }
+
+  // PHASE 2B-1 — validation/refus d'une MissionSkillProposal. Ne simule
+  // jamais localement la transition (mandat, cohérent avec Phase 2B-0) :
+  // recharge systématiquement depuis le serveur après succès.
+  async function validerProposition(propositionId: string) {
+    if (!confirm("Confirmer la validation de cette proposition ? Une SkillEvidence sera créée.")) return;
+    setErreurDecision("");
+    setDecisionEnCours(propositionId + "valider");
+    const brut = niveauValidation[propositionId];
+    const niveauObserve = brut && brut.trim() !== "" ? Number(brut) : undefined;
+    const res = await fetch(`/api/profils/${id}/skill-proposals/${propositionId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "valider", niveauObserve }),
+    });
+    setDecisionEnCours(null);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setErreurDecision(data.error ?? "Échec de la validation.");
+      return;
+    }
+    await charger();
+  }
+
+  async function refuserProposition(propositionId: string) {
+    const motif = prompt("Motif du refus (optionnel) :") ?? undefined;
+    setErreurDecision("");
+    setDecisionEnCours(propositionId + "refuser");
+    const res = await fetch(`/api/profils/${id}/skill-proposals/${propositionId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "refuser", motif: motif || undefined }),
+    });
+    setDecisionEnCours(null);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setErreurDecision(data.error ?? "Échec du refus.");
       return;
     }
     await charger();
@@ -364,6 +454,77 @@ export default function ProfilIntelligencePage() {
               </tbody>
             </table>
             <p style={{ fontSize: 12, color: GRIS_NEUTRE, marginTop: 8 }}>Cliquez une ligne pour voir ses preuves ci-dessous.</p>
+          </div>
+        )}
+      </Section>
+
+      {/* ───────────────────────── PROPOSITIONS DE COMPÉTENCES (Phase 2B-1) ───────────────────────── */}
+      <Section titre="Propositions de compétences">
+        {erreurDecision && <p style={{ color: rouge, fontSize: 13, marginBottom: 10 }}>{erreurDecision}</p>}
+        {propositions.length === 0 ? (
+          <p style={{ fontSize: 13, color: GRIS_NEUTRE }}>
+            Aucune proposition de compétence mobilisée sur une mission pour ce profil.
+          </p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {propositions.map((p) => (
+              <div key={p.id} style={{ border: `1px solid ${bordure}`, borderRadius: 8, padding: 12, fontSize: 13 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+                  <div>
+                    <p style={{ margin: 0, fontWeight: 600, color: bleuFonce }}>
+                      {p.competence}
+                      {p.niveauPropose != null && (
+                        <span style={{ fontWeight: 400, color: grisTexte }}> — niveau proposé : {p.niveauPropose}</span>
+                      )}
+                    </p>
+                    <p style={{ margin: "4px 0 0", fontSize: 12, color: GRIS_NEUTRE }}>
+                      Mission {p.mission?.repere ?? p.missionId} · proposé par {p.proposeParEmail} ({p.proposeParRole}) le{" "}
+                      {formatDate(p.createdAt)}
+                    </p>
+                    {p.contexte && <p style={{ margin: "6px 0 0" }}>{p.contexte}</p>}
+                    {p.statut === "REFUSEE" && p.motifRefus && (
+                      <p style={{ margin: "6px 0 0", color: rouge, fontSize: 12 }}>Motif du refus : {p.motifRefus}</p>
+                    )}
+                    {p.statut === "VALIDEE" && (
+                      <p style={{ margin: "6px 0 0", color: vert, fontSize: 12 }}>
+                        Validée par {p.decidePar} le {formatDate(p.decideLe)} — SkillEvidence créée.
+                      </p>
+                    )}
+                  </div>
+                  <Badge texte={LABEL_STATUT_PROPOSITION[p.statut]} couleur={couleurStatutProposition(p.statut)} />
+                </div>
+
+                {p.statut === "EN_ATTENTE" && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                    <label style={{ fontSize: 12, color: grisTexte, display: "flex", alignItems: "center", gap: 6 }}>
+                      Niveau retenu (optionnel, jamais le niveau proposé par défaut)
+                      <input
+                        type="number"
+                        min={1}
+                        max={5}
+                        value={niveauValidation[p.id] ?? ""}
+                        onChange={(e) => setNiveauValidation((v) => ({ ...v, [p.id]: e.target.value }))}
+                        style={{ width: 56, padding: 4 }}
+                      />
+                    </label>
+                    <button
+                      onClick={() => validerProposition(p.id)}
+                      disabled={decisionEnCours === p.id + "valider"}
+                      style={{ padding: "6px 12px", fontSize: 12, fontWeight: 600, background: vert, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
+                    >
+                      Valider
+                    </button>
+                    <button
+                      onClick={() => refuserProposition(p.id)}
+                      disabled={decisionEnCours === p.id + "refuser"}
+                      style={{ padding: "6px 12px", fontSize: 12, fontWeight: 600, background: "#fff", color: rouge, border: `1px solid ${rouge}`, borderRadius: 6, cursor: "pointer" }}
+                    >
+                      Refuser
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         )}
       </Section>

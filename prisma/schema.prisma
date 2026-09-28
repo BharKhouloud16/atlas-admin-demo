@@ -1091,6 +1091,8 @@ model Profil {
   compte           User?
   shortlistEntrees ShortlistEntree[]
   competencesGraph ProfilCompetence[]
+  // PHASE 2B-1 — Mission Skill Proposal (28/09/2026) — voir MissionSkillProposal
+  missionSkillProposals MissionSkillProposal[]
 }
 
 model VersionCv {
@@ -1163,6 +1165,9 @@ model Mission {
   modeTravail String?
 
   factures Facture[] // V2.2-B — Billing Foundation (17/09/2026) — voir Facture
+
+  // PHASE 2B-1 — Mission Skill Proposal (28/09/2026) — voir MissionSkillProposal
+  skillProposals MissionSkillProposal[]
 
   @@index([sourceDemandeId])
 }
@@ -1700,6 +1705,74 @@ model SkillEvidence {
   createdAt          DateTime               @default(now())
 
   @@index([profilCompetenceId])
+}
+
+// ATLAS — PHASE 2B-1 : MISSION SKILL PROPOSAL (28/09/2026).
+//
+// Pont MISSION -> PROPOSITION -> DÉCISION HUMAINE -> SkillEvidence. Une
+// Mission ne prouve jamais automatiquement qu'une compétence est maîtrisée
+// (voir mandat Phase 2B-1) : elle peut seulement produire une PROPOSITION
+// (Ingénieur ou Admin), qui reste un objet de WORKFLOW MUTABLE tant qu'elle
+// est EN_ATTENTE. Seule une décision Admin explicite (voir
+// app/api/profils/[id]/skill-proposals/[proposalId]/route.ts) peut la faire
+// passer à VALIDEE et créer, à cette occasion, une SkillEvidence(source:
+// MISSION) réelle — via le même helper que POST .../competences/
+// [competenceId]/preuves (voir lib/talent/skill-graph.ts,
+// creerPreuveCompetence()), jamais une seconde logique de création de
+// preuve.
+//
+// skillEvidenceId est une RÉFÉRENCE DE TRAÇABILITÉ, pas une relation Prisma
+// (pas de @relation) : ajouter une relation forcerait SkillEvidence — une
+// donnée historique immuable consommée telle quelle par tout lib/talent/*
+// — à porter un champ inverse dont elle n'a structurellement aucun besoin
+// (aucun code ne "remonte" d'une SkillEvidence vers la proposition qui l'a
+// produite ; la traçabilité complète existe déjà via journaliser(), voir
+// mission.skill_proposal.validated). Un simple String? évite ce couplage
+// inutile, documenté explicitement ici (voir audit Phase 2B-1, section C).
+//
+// StatutPropositionCompetence est un vocabulaire VOLONTAIREMENT séparé de
+// StatutPreuveCompetence — même principe déjà appliqué à StatutProfilFait
+// (voir plus haut, LOT 4) : un EN_ATTENTE/VALIDEE/REFUSEE de workflow n'a
+// rien à voir avec un VERIFIE/DECLARE/INFERE/INCONNU de preuve, et les
+// mélanger romprait le typage de lib/talent/skill-graph.ts sans aucun
+// bénéfice.
+enum StatutPropositionCompetence {
+  EN_ATTENTE
+  VALIDEE
+  REFUSEE
+}
+
+model MissionSkillProposal {
+  id        String  @id @default(cuid())
+  mission   Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  missionId String
+  // Toujours dérivé de mission.profilId côté serveur — jamais accepté depuis
+  // le body d'une requête (voir routes) : élimine structurellement tout IDOR
+  // par profilId falsifié.
+  profil    Profil  @relation(fields: [profilId], references: [id], onDelete: Cascade)
+  profilId  String
+
+  competence    String // valeur du vocabulaire fermé lib/competences.ts::TOUTES_COMPETENCES, jamais du texte libre non validé
+  niveauPropose Int? // déclaration de l'Ingénieur — jamais utilisé tel quel comme niveau de preuve (voir D3)
+  contexte      String?
+
+  proposeParEmail String
+  proposeParRole  Role // ADMIN ou INGENIEUR — jamais CLIENT (voir H8, aucune route Client sur ce modèle)
+
+  statut      StatutPropositionCompetence @default(EN_ATTENTE)
+  decidePar   String?
+  decideLe    DateTime?
+  motifRefus  String?
+
+  // Renseigné uniquement à la validation — le niveau RÉELLEMENT retenu par
+  // l'Admin peut différer de niveauPropose (D3) ; jamais l'inverse.
+  skillEvidenceId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([missionId])
+  @@index([profilId, statut])
 }
 
 // ==========================================================================

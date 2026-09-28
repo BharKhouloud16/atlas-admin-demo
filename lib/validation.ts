@@ -138,3 +138,44 @@ export const ajouterPreuveSchema = z.object({
   niveauObserve: z.number().int().min(1).max(5).nullable().optional(),
   statutPropose: z.enum(["VERIFIE", "DECLARE", "INFERE", "INCONNU"]).optional(),
 });
+
+// ATLAS — PHASE 2B-1 : MISSION SKILL PROPOSAL (28/09/2026). `competence` est
+// volontairement un string simple ici (pas un z.enum dynamique) — la
+// vérification contre le vocabulaire fermé (lib/competences.ts::
+// TOUTES_COMPETENCES) reste faite par la route elle-même, exactement comme
+// POST /api/ingenieur/disponibilite le fait déjà pour Profil.competences :
+// jamais un deuxième mécanisme de validation du même vocabulaire.
+// `niveauPropose` est une simple DÉCLARATION de l'Ingénieur (ou de l'Admin
+// proposant) — jamais utilisée telle quelle comme niveau de preuve (voir
+// D3, mandat Phase 2B-1) : seul `niveauObserve`, fourni par l'Admin à la
+// décision (missionSkillProposalDecisionSchema ci-dessous), alimente la
+// SkillEvidence créée.
+export const missionSkillProposalSchema = z.object({
+  competence: z.string().trim().min(1).max(100),
+  niveauPropose: z.number().int().min(1).max(5).nullable().optional(),
+  contexte: z.string().trim().max(300).nullable().optional(),
+});
+
+// D1 — modification d'une proposition tant qu'elle est EN_ATTENTE : mêmes
+// champs, tous optionnels (une modification partielle reste valide), mais
+// au moins un champ doit être fourni pour distinguer une vraie modification
+// d'un appel vide.
+export const missionSkillProposalModificationSchema = z
+  .object({
+    competence: z.string().trim().min(1).max(100).optional(),
+    niveauPropose: z.number().int().min(1).max(5).nullable().optional(),
+    contexte: z.string().trim().max(300).nullable().optional(),
+  })
+  .refine((donnees) => donnees.competence !== undefined || donnees.niveauPropose !== undefined || donnees.contexte !== undefined, {
+    message: "Au moins un champ à modifier (competence, niveauPropose ou contexte) est requis.",
+  });
+
+// Décision Admin (valider/refuser) — whitelist stricte d'actions, même
+// discipline que app/api/missions/[id]/transition/route.ts (Phase 2B-0) et
+// app/api/factures/[id]/transition/route.ts : jamais un `statut` accepté
+// tel quel depuis le body.
+export const missionSkillProposalDecisionSchema = z.object({
+  action: z.enum(["valider", "refuser"]),
+  niveauObserve: z.number().int().min(1).max(5).nullable().optional(),
+  motif: z.string().trim().max(300).nullable().optional(),
+});

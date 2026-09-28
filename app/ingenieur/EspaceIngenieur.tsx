@@ -990,6 +990,13 @@ const LABEL_TYPE_CONTRAT: Record<string, string> = {
 };
 
 function OngletHistorique({ missions, typeContrat }: { missions: Mission[]; typeContrat: string | null }) {
+  // PHASE 2B-1 — section légère "Compétences mobilisées" par mission,
+  // repliée par défaut (pas de nouvel écran, pas de dashboard — mandat
+  // section 18) : une mission sélectionnée déploie son panneau juste
+  // en-dessous du tableau, même idiome que la console Admin
+  // (app/admin/profils/[id]/page.tsx, clic sur une ligne -> détail).
+  const [missionOuverte, setMissionOuverte] = useState<string | null>(null);
+
   if (missions.length === 0) {
     return (
       <p style={{ fontSize: 14, color: "#4b5567" }}>
@@ -1013,6 +1020,7 @@ function OngletHistorique({ missions, typeContrat }: { missions: Mission[]; type
             <th style={{ padding: "6px 8px" }}>Fin (ou prévisionnelle)</th>
             <th style={{ padding: "6px 8px" }}>Jours</th>
             <th style={{ padding: "6px 8px" }}>Évaluation client</th>
+            <th style={{ padding: "6px 8px" }}>Compétences</th>
           </tr>
         </thead>
         <tbody>
@@ -1048,10 +1056,174 @@ function OngletHistorique({ missions, typeContrat }: { missions: Mission[]; type
                   <span style={{ color: "#aaa" }}>—</span>
                 )}
               </td>
+              <td style={{ padding: "6px 8px" }}>
+                <button
+                  onClick={() => setMissionOuverte((v) => (v === m.id ? null : m.id))}
+                  style={{ fontSize: 12, padding: "2px 8px", border: "1px solid #e4e7ee", background: "#fff", cursor: "pointer" }}
+                >
+                  {missionOuverte === m.id ? "Fermer" : "Proposer / voir"}
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {missionOuverte && <PropositionsCompetencesMission missionId={missionOuverte} />}
+    </div>
+  );
+}
+
+// PHASE 2B-1 — MISSION SKILL PROPOSAL — section Ingénieur (mandat section
+// 18). Volontairement minimale : proposer une compétence, voir l'état de
+// ses propositions déjà soumises, les modifier tant qu'EN_ATTENTE. Jamais
+// de validation ici (réservée Admin, voir app/admin/profils/[id]/page.tsx)
+// — une proposition reste une proposition tant qu'un Admin ne l'a pas
+// explicitement décidée.
+type PropositionCompetenceIngenieur = {
+  id: string;
+  competence: string;
+  niveauPropose: number | null;
+  contexte: string | null;
+  statut: "EN_ATTENTE" | "VALIDEE" | "REFUSEE";
+  motifRefus: string | null;
+  createdAt: string;
+};
+
+const LABEL_STATUT_PROPOSITION_INGENIEUR: Record<PropositionCompetenceIngenieur["statut"], string> = {
+  EN_ATTENTE: "À examiner par l'Admin",
+  VALIDEE: "Validée",
+  REFUSEE: "Refusée",
+};
+
+function PropositionsCompetencesMission({ missionId }: { missionId: string }) {
+  const [propositions, setPropositions] = useState<PropositionCompetenceIngenieur[] | null>(null);
+  const [competence, setCompetence] = useState("");
+  const [niveauPropose, setNiveauPropose] = useState("");
+  const [contexte, setContexte] = useState("");
+  const [envoi, setEnvoi] = useState(false);
+  const [erreur, setErreur] = useState("");
+  const [modificationId, setModificationId] = useState<string | null>(null);
+
+  function charger() {
+    fetch(`/api/missions/${missionId}/skill-proposals`)
+      .then((r) => (r.ok ? r.json() : { propositions: [] }))
+      .then((d) => setPropositions(d.propositions ?? []))
+      .catch(() => setPropositions([]));
+  }
+
+  useEffect(() => {
+    charger();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [missionId]);
+
+  async function proposer(e: React.FormEvent) {
+    e.preventDefault();
+    if (!competence) {
+      setErreur("Choisissez une compétence.");
+      return;
+    }
+    setErreur("");
+    setEnvoi(true);
+    const res = await fetch(`/api/missions/${missionId}/skill-proposals`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        competence,
+        niveauPropose: niveauPropose ? Number(niveauPropose) : undefined,
+        contexte: contexte.trim() || undefined,
+      }),
+    });
+    setEnvoi(false);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setErreur(data.error ?? "Échec de la proposition.");
+      return;
+    }
+    setCompetence("");
+    setNiveauPropose("");
+    setContexte("");
+    charger();
+  }
+
+  async function modifierNiveau(propositionId: string, nouveauNiveau: string) {
+    setModificationId(propositionId);
+    await fetch(`/api/missions/${missionId}/skill-proposals/${propositionId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ niveauPropose: nouveauNiveau ? Number(nouveauNiveau) : null }),
+    });
+    setModificationId(null);
+    charger();
+  }
+
+  return (
+    <div style={{ border: "1px solid #e4e7ee", borderTop: "none", padding: 14, background: "#fafbfc" }}>
+      <p style={{ margin: "0 0 10px", fontWeight: 600, fontSize: 13, color: "#1f2937" }}>Compétences mobilisées sur cette mission</p>
+
+      {propositions === null ? (
+        <p style={{ fontSize: 12, color: "#888" }}>Chargement...</p>
+      ) : propositions.length === 0 ? (
+        <p style={{ fontSize: 12, color: "#888", marginBottom: 12 }}>Aucune compétence proposée pour l&apos;instant.</p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+          {propositions.map((p) => (
+            <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, fontSize: 12, border: "1px solid #eee", borderRadius: 6, padding: 8, background: "#fff" }}>
+              <div>
+                <strong>{p.competence}</strong>
+                {p.statut === "EN_ATTENTE" ? (
+                  <>
+                    {" "}— niveau proposé :{" "}
+                    <input
+                      type="number"
+                      min={1}
+                      max={5}
+                      defaultValue={p.niveauPropose ?? ""}
+                      onBlur={(e) => e.target.value !== String(p.niveauPropose ?? "") && modifierNiveau(p.id, e.target.value)}
+                      disabled={modificationId === p.id}
+                      style={{ width: 44, padding: 2 }}
+                    />
+                  </>
+                ) : (
+                  p.niveauPropose != null && <span> — niveau proposé : {p.niveauPropose}</span>
+                )}
+                {p.contexte && <div style={{ color: "#666", marginTop: 2 }}>{p.contexte}</div>}
+                {p.statut === "REFUSEE" && p.motifRefus && <div style={{ color: "#b91c1c", marginTop: 2 }}>Motif : {p.motifRefus}</div>}
+              </div>
+              <span style={{ color: p.statut === "VALIDEE" ? "#16a34a" : p.statut === "REFUSEE" ? "#b91c1c" : "#d97706", fontWeight: 600, whiteSpace: "nowrap" }}>
+                {LABEL_STATUT_PROPOSITION_INGENIEUR[p.statut]}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <form onSubmit={proposer} style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+        <label style={{ fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
+          Compétence
+          <select value={competence} onChange={(e) => setCompetence(e.target.value)} style={{ padding: 6, minWidth: 180 }}>
+            <option value="">Choisir...</option>
+            {COMPETENCES_GROUPES.map((groupe) => (
+              <optgroup key={groupe.categorie} label={groupe.categorie}>
+                {groupe.competences.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </label>
+        <label style={{ fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
+          Niveau (optionnel)
+          <input type="number" min={1} max={5} value={niveauPropose} onChange={(e) => setNiveauPropose(e.target.value)} style={{ padding: 6, width: 70 }} />
+        </label>
+        <label style={{ fontSize: 12, display: "flex", flexDirection: "column", gap: 4, flex: 1, minWidth: 200 }}>
+          Contexte (optionnel)
+          <input value={contexte} onChange={(e) => setContexte(e.target.value)} style={{ padding: 6 }} />
+        </label>
+        <button type="submit" disabled={envoi} style={{ padding: "7px 14px", fontSize: 12, fontWeight: 600 }}>
+          {envoi ? "Envoi..." : "Proposer"}
+        </button>
+      </form>
+      {erreur && <p style={{ fontSize: 12, color: "#b91c1c", marginTop: 8 }}>{erreur}</p>}
     </div>
   );
 }
