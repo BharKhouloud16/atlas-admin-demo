@@ -1,11 +1,18 @@
 "use client";
 
-import { useEffect, useState, FormEvent } from "react";
+import { useEffect, useState, FormEvent, Fragment } from "react";
 import Link from "next/link";
 import { bleuFonce, bleu, grisTexte, bordure } from "@/lib/theme";
+import MissionClosureReview from "./MissionClosureReview";
 
 type Mission = {
   id: string;
+  // MISSION CLOSURE INTELLIGENCE : profilId est déjà renvoyé tel quel par
+  // GET /api/missions pour l'Admin (spread `...m` du Mission Prisma brut,
+  // voir app/api/missions/route.ts) — jamais un nouvel appel, jamais un
+  // profilId accepté depuis un formulaire : c'est la même valeur que le
+  // serveur utilise déjà pour construire ce même objet.
+  profilId: string;
   repere: string | null;
   nbJours: number;
   statut: string;
@@ -69,6 +76,17 @@ export default function MissionsPage() {
   // rechargé depuis le serveur après succès.
   const [transition, setTransition] = useState<string | null>(null);
   const [erreurTransition, setErreurTransition] = useState<string | null>(null);
+
+  // MISSION CLOSURE INTELLIGENCE (post-2B-1) : le clic "Terminer" ouvre
+  // désormais ce panneau au lieu d'appeler transitionnerMission()
+  // directement — transitionnerMission() reste utilisée telle quelle pour
+  // "Annuler", inchangée. La route app/api/missions/[id]/transition/route.ts
+  // elle-même n'est ni modifiée ni appelée différemment : c'est le panneau
+  // (MissionClosureReview.tsx) qui l'appelle pour "Terminer la mission",
+  // avec exactement le même contrat. Un seul panneau ouvert à la fois (un
+  // missionId, jamais un Set) : SOFT GATE, jamais bloquant, purement une
+  // couche UI autour du lifecycle existant.
+  const [revueOuverte, setRevueOuverte] = useState<string | null>(null);
 
   function rechargerMissions() {
     return fetch("/api/missions")
@@ -273,7 +291,8 @@ export default function MissionsPage() {
           </thead>
           <tbody>
             {missions.map((m) => (
-              <tr key={m.id} style={{ borderBottom: "1px solid #f0f0f0" }}>
+              <Fragment key={m.id}>
+              <tr style={{ borderBottom: "1px solid #f0f0f0" }}>
                 <td style={{ padding: "6px 8px" }}>{m.client.nom}</td>
                 <td style={{ padding: "6px 8px" }}>{nomIngenieur(m.profil)}</td>
                 <td style={{ padding: "6px 8px" }}>{m.repere ?? "—"}</td>
@@ -293,9 +312,14 @@ export default function MissionsPage() {
                   )}
                   {isAdmin && m.statut === "En cours" && (
                     <div style={{ marginTop: 4, display: "flex", gap: 8 }}>
+                      {/* MISSION CLOSURE INTELLIGENCE : "Terminer" ouvre désormais la
+                          Revue de clôture au lieu d'appeler la transition directement
+                          via confirm() — la transition elle-même n'a lieu que depuis le
+                          bouton "Terminer la mission" à l'intérieur du panneau (voir
+                          MissionClosureReview.tsx), qui appelle la même route PATCH
+                          .../transition, inchangée. */}
                       <button
-                        onClick={() => transitionnerMission(m.id, "terminer")}
-                        disabled={transition === m.id + "terminer"}
+                        onClick={() => setRevueOuverte(m.id)}
                         style={{ fontSize: 11, padding: "2px 6px", border: `1px solid ${bordure}`, background: "#fff", cursor: "pointer" }}
                       >
                         Terminer
@@ -306,6 +330,16 @@ export default function MissionsPage() {
                         style={{ fontSize: 11, padding: "2px 6px", border: `1px solid ${bordure}`, background: "#fff", cursor: "pointer" }}
                       >
                         Annuler
+                      </button>
+                    </div>
+                  )}
+                  {isAdmin && (m.statut === "Terminée" || m.statut === "Annulée") && (
+                    <div style={{ marginTop: 4 }}>
+                      <button
+                        onClick={() => setRevueOuverte((v) => (v === m.id ? null : m.id))}
+                        style={{ fontSize: 11, padding: "2px 6px", border: `1px solid ${bordure}`, background: "#fff", cursor: "pointer" }}
+                      >
+                        {revueOuverte === m.id ? "Fermer la revue" : "Revue de clôture"}
                       </button>
                     </div>
                   )}
@@ -335,6 +369,23 @@ export default function MissionsPage() {
                   </td>
                 )}
               </tr>
+              {revueOuverte === m.id && (
+                <tr>
+                  <td colSpan={isAdmin ? 12 : 7} style={{ padding: 0 }}>
+                    <MissionClosureReview
+                      mission={m}
+                      onFermer={() => setRevueOuverte(null)}
+                      onMissionTerminee={() => {
+                        // Le panneau reste ouvert (mandat section 9.D) : seule la
+                        // liste est rechargée, ce qui met m.statut à jour et fait
+                        // disparaître "Terminer la mission" au rendu suivant.
+                        rechargerMissions();
+                      }}
+                    />
+                  </td>
+                </tr>
+              )}
+              </Fragment>
             ))}
           </tbody>
         </table>
