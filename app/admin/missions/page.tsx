@@ -63,6 +63,13 @@ export default function MissionsPage() {
   const [creation, setCreation] = useState(false);
   const [erreurCreation, setErreurCreation] = useState<string | null>(null);
 
+  // Phase 2B-0 — Mission Lifecycle : transition minimale Terminer/Annuler,
+  // réservée Admin (voir app/api/missions/[id]/transition/route.ts). Ne
+  // simule jamais localement la transition : le tableau est toujours
+  // rechargé depuis le serveur après succès.
+  const [transition, setTransition] = useState<string | null>(null);
+  const [erreurTransition, setErreurTransition] = useState<string | null>(null);
+
   function rechargerMissions() {
     return fetch("/api/missions")
       .then((r) => r.json())
@@ -123,6 +130,27 @@ export default function MissionsPage() {
     setNbJours("");
     setTjmVente("");
     setAfficherFormulaire(false);
+    await rechargerMissions();
+  }
+
+  async function transitionnerMission(missionId: string, action: "terminer" | "annuler") {
+    const libelle = action === "terminer" ? "terminer" : "annuler";
+    if (!confirm(`Confirmer : ${libelle} cette mission ? Cette action est définitive.`)) return;
+
+    setErreurTransition(null);
+    setTransition(missionId + action);
+    const res = await fetch(`/api/missions/${missionId}/transition`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    });
+    setTransition(null);
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      setErreurTransition(err.error ?? "Erreur lors de la transition de la mission.");
+      return;
+    }
     await rechargerMissions();
   }
 
@@ -223,6 +251,8 @@ export default function MissionsPage() {
         </div>
       )}
 
+      {erreurTransition && <p style={{ fontSize: 12, color: "#b91c1c", marginBottom: 12 }}>{erreurTransition}</p>}
+
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
@@ -260,6 +290,24 @@ export default function MissionsPage() {
                         depuis besoin
                       </Link>
                     </>
+                  )}
+                  {isAdmin && m.statut === "En cours" && (
+                    <div style={{ marginTop: 4, display: "flex", gap: 8 }}>
+                      <button
+                        onClick={() => transitionnerMission(m.id, "terminer")}
+                        disabled={transition === m.id + "terminer"}
+                        style={{ fontSize: 11, padding: "2px 6px", border: `1px solid ${bordure}`, background: "#fff", cursor: "pointer" }}
+                      >
+                        Terminer
+                      </button>
+                      <button
+                        onClick={() => transitionnerMission(m.id, "annuler")}
+                        disabled={transition === m.id + "annuler"}
+                        style={{ fontSize: 11, padding: "2px 6px", border: `1px solid ${bordure}`, background: "#fff", cursor: "pointer" }}
+                      >
+                        Annuler
+                      </button>
+                    </div>
                   )}
                 </td>
                 {isAdmin && <td style={{ padding: "6px 8px" }}>{m.tjmVente != null ? Math.round(m.tjmVente) + " €" : "—"}</td>}
