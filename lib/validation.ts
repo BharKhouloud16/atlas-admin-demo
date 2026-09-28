@@ -179,3 +179,39 @@ export const missionSkillProposalDecisionSchema = z.object({
   niveauObserve: z.number().int().min(1).max(5).nullable().optional(),
   motif: z.string().trim().max(300).nullable().optional(),
 });
+
+// EVALUATION API HARDENING — contrat métier de POST /api/evaluations
+// STRICTEMENT inchangé (voir audit "Evaluation API Hardening & Test Audit") :
+// `note` accepte un entier OU une chaîne numérique (comportement déjà en
+// place avant ce schéma, préservé tel quel — un formulaire HTML envoie
+// souvent un nombre sous forme de chaîne) mais reste borné 1..5, entier,
+// jamais NaN/Infinity/décimal. Le `preprocess` ne laisse passer vers
+// `z.number()` que les entrées déjà `number`/`string` — un objet, tableau,
+// booléen ou `null` échoue donc le type de base, jamais une coercition
+// silencieuse. `missionId`/`profilId`/`clientId` ne sont jamais dérivables
+// depuis le body au-delà de `missionId` lui-même — la Mission/le Client
+// réels restent systématiquement dérivés côté serveur par la route (jamais
+// par ce schéma), même discipline que missionSkillProposalSchema ci-dessus.
+export const evaluationSchema = z.object({
+  missionId: z.string().trim().min(1, "missionId requis."),
+  note: z.preprocess(
+    (valeur) => (typeof valeur === "number" || typeof valeur === "string" ? Number(valeur) : valeur),
+    z
+      .number({ invalid_type_error: "Note invalide (1 à 5)." })
+      .int("Note invalide (1 à 5).")
+      .min(1, "Note invalide (1 à 5).")
+      .max(5, "Note invalide (1 à 5).")
+  ),
+  // Vide/blanc après trim -> null (jamais une chaîne vide stockée) ; un
+  // type non-string (objet, tableau, nombre) échoue le type de base avant
+  // même d'atteindre trim/max, jamais coercé silencieusement. 2000 : borne
+  // large mais explicite, cohérente avec le fait qu'aucune limite n'existait
+  // auparavant (voir audit, Finding 3).
+  commentaire: z
+    .string()
+    .trim()
+    .max(2000, "Commentaire trop long (2000 caractères maximum).")
+    .nullable()
+    .optional()
+    .transform((valeur) => (valeur ? valeur : null)),
+});
