@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
     // champs seront simplement vides à saisir manuellement (et on ne peut
     // alors pas vérifier le secteur — l'import n'est pas bloqué pour autant).
     console.error("Extraction IA du CV impossible :", e.message ?? e);
-    resultat = { horsSecteur: false, secteurDetecte: "", champs: modeleChampsVides() };
+    resultat = { horsSecteur: false, secteurDetecte: "", champs: modeleChampsVides(), extractionReussie: false };
   }
 
   if (resultat.horsSecteur) {
@@ -105,5 +105,9 @@ export async function POST(req: NextRequest) {
     }),
   ]);
 
-  return NextResponse.json({ ok: true, url });
+  // ATLAS ENGINEER INTELLIGENCE PROFILE — Phase 1 (28/09/2026) : signale
+  // explicitement à l'appelant si l'extraction IA a réellement fonctionné,
+  // pour qu'il puisse informer l'ingénieur plutôt que de lui présenter un
+  // profil vide comme si l'IA avait réussi (voir app/ingenieur/cv/page.tsx).
+  return NextResponse.json({ ok: true, url, extractionReussie: resultat.extractionReussie });
 }

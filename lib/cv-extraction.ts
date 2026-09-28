@@ -26,7 +26,23 @@ export type ResultatExtractionCV = {
   horsSecteur: boolean;
   secteurDetecte: string; // court résumé du métier/domaine détecté, pour affichage dans le message d'erreur
   champs: ChampCV[];
+  // ATLAS ENGINEER INTELLIGENCE PROFILE — Phase 1 (28/09/2026) : distingue
+  // explicitement un échec technique de l'extraction (clé absente, réseau,
+  // réponse inexploitable) d'un vrai succès avec des champs vides parce que
+  // le CV ne contenait pas l'information. Avant ce champ, les deux cas
+  // produisaient exactement la même sortie (champs vides) et étaient donc
+  // indiscernables pour l'appelant — voir app/api/ingenieur/cv/route.ts, qui
+  // propage cette valeur telle quelle dans sa réponse, jamais recalculée.
+  extractionReussie: boolean;
 };
+
+// Libellés référencés ailleurs (voir app/api/ingenieur/cv/finaliser/route.ts,
+// qui copie CES DEUX valeurs extraites — et uniquement celles-ci — vers
+// Profil.anneesExperience/seniorite à la finalisation). Exportées comme
+// source unique de vérité pour éviter toute divergence si ce libellé change
+// un jour ici sans que l'appelant soit mis à jour.
+export const LIBELLE_ANNEES_EXPERIENCE = "Années d'expérience";
+export const LIBELLE_SENIORITE = "Séniorité (Junior / Confirmé / Senior / Expert)";
 
 const MODELE_CHAMPS_CV: Omit<ChampCV, "valeur">[] = [
   { categorie: "identite", libelle: "Nom complet", ordre: 0 },
@@ -34,8 +50,8 @@ const MODELE_CHAMPS_CV: Omit<ChampCV, "valeur">[] = [
   { categorie: "contact", libelle: "Email", ordre: 2 },
   { categorie: "contact", libelle: "Téléphone", ordre: 3 },
   { categorie: "contact", libelle: "Localisation", ordre: 4 },
-  { categorie: "profil", libelle: "Années d'expérience", ordre: 5 },
-  { categorie: "profil", libelle: "Séniorité (Junior / Confirmé / Senior / Expert)", ordre: 6 },
+  { categorie: "profil", libelle: LIBELLE_ANNEES_EXPERIENCE, ordre: 5 },
+  { categorie: "profil", libelle: LIBELLE_SENIORITE, ordre: 6 },
   { categorie: "profil", libelle: "Résumé / profil professionnel", ordre: 7 },
   { categorie: "competence", libelle: "Compétences techniques principales", ordre: 8 },
   { categorie: "competence", libelle: "Compétences secondaires / outils", ordre: 9 },
@@ -61,7 +77,7 @@ export function modeleChampsVides(): ChampCV[] {
 // technique côté IA, seulement quand l'IA a effectivement pu analyser le CV
 // et a détecté qu'il n'était pas dans le secteur informatique/QA.
 function resultatNeutre(): ResultatExtractionCV {
-  return { horsSecteur: false, secteurDetecte: "", champs: modeleChampsVides() };
+  return { horsSecteur: false, secteurDetecte: "", champs: modeleChampsVides(), extractionReussie: false };
 }
 
 // Extrait les informations d'un CV (PDF) à partir de son contenu binaire, et
@@ -194,5 +210,6 @@ Pour "champs" : si une information est absente du CV, mets une chaîne vide "" p
     horsSecteur: objet?.secteurInformatique === false,
     secteurDetecte: typeof objet?.secteurDetecte === "string" ? objet.secteurDetecte : "",
     champs,
+    extractionReussie: true,
   };
 }
