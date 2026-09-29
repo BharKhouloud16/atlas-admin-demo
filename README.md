@@ -69,10 +69,10 @@ avant d'accueillir un premier Client réel :
 3. **Configurer `SENTRY_DSN`** pour capturer les erreurs serveur réelles
    (voir `instrumentation.ts`) — sans elle, une erreur non instrumentée ne
    laisse aucune trace durable.
-4. **Garder `SEED_TOKEN` secret** (ou ne pas le définir si `/api/dev-seed`
-   n'est pas nécessaire sur ce déploiement) — cette route reste active en
-   production par design (voir son commentaire) pour amorcer un
-   déploiement sans accès terminal.
+4. **Créer le premier compte ADMIN** via `npx tsx prisma/create-admin.ts
+   <email> <mot_de_passe>`, exécuté par un opérateur depuis un terminal
+   avec `DATABASE_URL` pointant vers la base réelle (LOT 15.2 : il n'existe
+   plus de route HTTP publique pour cela — `/api/dev-seed` a été retiré).
 
 ## Sécurité — points à ne pas sauter
 
