@@ -30,9 +30,16 @@ Tout se fait dans le navigateur : GitHub, Supabase, Vercel. 15-20 minutes.
    - `SESSION_SECRET` = n'importe quelle longue chaîne aléatoire (ex.
      tapez sur votre clavier n'importe quoi de 40 caractères)
    - `SEED_TOKEN` = une autre chaîne aléatoire, notez-la de côté
-3. Cliquez "Deploy". Vercel installe les dépendances, crée les tables
-   automatiquement (`prisma migrate deploy` est lancé au build) et vous
-   donne une URL du type `https://atlas-admin-demo.vercel.app`.
+3. Cliquez "Deploy". Vercel installe les dépendances et build
+   l'application, et vous donne une URL du type
+   `https://atlas-admin-demo.vercel.app`. **Important : ceci ne crée pas
+   encore les tables** — depuis un correctif du 24/09/2026, le build ne
+   lance plus `prisma migrate deploy` automatiquement (voir
+   `docs/PRODUCTION_MIGRATION_RUNBOOK.md`), pour éviter qu'un build
+   applique des migrations à l'insu de qui le déclenche. L'étape suivante
+   (données de démo) échouera tant que les tables n'existent pas — voir
+   avec la personne qui a préparé ce guide comment les créer dans votre
+   cas avant de continuer.
 
 ## 4. Remplir les données de démo (toujours sans terminal)
 
