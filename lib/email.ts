@@ -22,6 +22,26 @@ type EmailParams = {
 
 const EMAIL_FROM = process.env.EMAIL_FROM || "Atlas Quality Partners <contact@atlas-qa.com>";
 
+// LOT 14.1 — EMAIL PRODUCTION SAFETY HARDENING : base URL applicative pour
+// les liens envoyés par email (vérification d'adresse, réinitialisation de
+// mot de passe, connexion après validation de compte). Avant ce lot, ces
+// trois liens étaient codés en dur vers https://atlas-admin-demo.vercel.app,
+// sans jamais lire EMAIL_APP_BASE_URL — n'importe quel déploiement réel
+// aurait envoyé des liens vers ce domaine de démonstration tiers dès
+// RESEND_API_KEY configurée. Comportement fail-closed : si
+// EMAIL_APP_BASE_URL est absente, vide, ou ne contient que des espaces,
+// l'email concerné n'est PAS envoyé (jamais de repli silencieux vers le
+// domaine de démo) — mais ceci ne fait jamais échouer l'action métier
+// appelante (inscription, demande de réinitialisation, validation de
+// compte), conformément au principe best-effort déjà en vigueur dans ce
+// fichier. Un "/" final éventuel est retiré pour ne jamais produire de
+// double "/" avec les chemins ci-dessous, qui commencent déjà par "/".
+function resoudreBaseUrl(): string | null {
+  const valeur = process.env.EMAIL_APP_BASE_URL;
+  if (!valeur || valeur.trim() === "") return null;
+  return valeur.trim().replace(/\/+$/, "");
+}
+
 async function envoyerEmail({ to, subject, html }: EmailParams) {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
@@ -72,7 +92,14 @@ export async function envoyerEmailVerificationAdresse(params: {
   token: string;
 }) {
   const { to, nom, token } = params;
-  const lien = `https://atlas-admin-demo.vercel.app/verifier-email?token=${token}`;
+  const base = resoudreBaseUrl();
+  if (!base) {
+    // Jamais le token dans ce log — seulement le fait que l'envoi est
+    // abandonné et pourquoi.
+    console.error("[email:configuration] EMAIL_APP_BASE_URL manquant ou vide — email de vérification d'adresse non envoyé.");
+    return;
+  }
+  const lien = `${base}/verifier-email?token=${token}`;
   await envoyerEmail({
     to,
     subject: "Atlas Quality Partners — Confirmez votre adresse email",
@@ -94,7 +121,12 @@ export async function envoyerEmailReinitialisationMotDePasse(params: {
   token: string;
 }) {
   const { to, token } = params;
-  const lien = `https://atlas-admin-demo.vercel.app/reinitialiser-mot-de-passe?token=${token}`;
+  const base = resoudreBaseUrl();
+  if (!base) {
+    console.error("[email:configuration] EMAIL_APP_BASE_URL manquant ou vide — email de réinitialisation de mot de passe non envoyé.");
+    return;
+  }
+  const lien = `${base}/reinitialiser-mot-de-passe?token=${token}`;
   await envoyerEmail({
     to,
     subject: "Atlas Quality Partners — Réinitialisation de votre mot de passe",
@@ -114,14 +146,20 @@ export async function envoyerEmailCompteValide(params: {
   role: "INGENIEUR" | "CLIENT";
 }) {
   const { to, nom, role } = params;
+  const base = resoudreBaseUrl();
+  if (!base) {
+    console.error("[email:configuration] EMAIL_APP_BASE_URL manquant ou vide — email de compte validé non envoyé.");
+    return;
+  }
   const espace = role === "INGENIEUR" ? "ingénieur" : "partenaire";
+  const lien = `${base}/connexion?role=${role === "INGENIEUR" ? "ingenieur" : "client"}`;
   await envoyerEmail({
     to,
     subject: "Atlas Quality Partners — Votre compte est activé",
     html: `
       <p>Bonjour ${nom},</p>
       <p>Votre compte ${espace} a été validé. Vous pouvez dès à présent vous connecter :</p>
-      <p><a href="https://atlas-admin-demo.vercel.app/connexion?role=${role === "INGENIEUR" ? "ingenieur" : "client"}">Se connecter</a></p>
+      <p><a href="${lien}">Se connecter</a></p>
       <p>À bientôt,<br/>L'équipe Atlas Quality Partners</p>
     `,
   });
