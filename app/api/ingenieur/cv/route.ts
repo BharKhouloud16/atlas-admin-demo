@@ -80,7 +80,12 @@ export async function POST(req: NextRequest) {
     const uploade = await uploaderFichier(fichier.name, new Blob([octets], { type: fichier.type }), "cv");
     url = uploade.url;
   } catch (e: any) {
-    return NextResponse.json({ error: e.message ?? "Échec de l'upload" }, { status: 500 });
+    // LOT 12.1 — SECURITY HARDENING : ne jamais renvoyer e.message au
+    // client (message provider/stockage potentiellement interne) — message
+    // générique côté client, détail technique loggé côté serveur uniquement
+    // (identifiant de profil, jamais le contenu du fichier).
+    console.error("[cv] Échec de l'upload du CV.", { profilId: session.profilId, typeErreur: e?.constructor?.name ?? "Error" });
+    return NextResponse.json({ error: "Échec de l'upload du CV. Veuillez réessayer." }, { status: 500 });
   }
 
   // Historique des versions (voir prisma/schema.prisma, VersionCv) : avant

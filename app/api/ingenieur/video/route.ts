@@ -36,7 +36,10 @@ export async function POST(req: NextRequest) {
     const uploade = await uploaderFichier(fichier.name, new Blob([octets], { type: fichier.type }), "videos");
     url = uploade.url;
   } catch (e: any) {
-    return NextResponse.json({ error: e.message ?? "Échec de l'upload" }, { status: 500 });
+    // LOT 12.1 — SECURITY HARDENING : même correctif que cv/route.ts — ne
+    // jamais renvoyer e.message au client, log serveur contrôlé uniquement.
+    console.error("[video] Échec de l'upload de la vidéo.", { profilId: session.profilId, typeErreur: e?.constructor?.name ?? "Error" });
+    return NextResponse.json({ error: "Échec de l'upload de la vidéo. Veuillez réessayer." }, { status: 500 });
   }
 
   const ancien = await prisma.profil.findUnique({ where: { id: session.profilId }, select: { videoUrl: true } });
