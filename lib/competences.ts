@@ -37,7 +37,15 @@ export const COMPETENCES_GROUPES: { categorie: string; competences: string[] }[]
   },
   {
     categorie: "Data & IA",
-    competences: ["SQL", "Data / BI", "IA / Machine Learning", "Prompt engineering / RAG"],
+    // LOT 11.1 (29/09/2026) — "PostgreSQL" ajoutée comme compétence
+    // canonique DISTINCTE de "SQL" (décision produit explicite) : avant ce
+    // lot, seul "SQL" existait, et le moteur de résolution (voir
+    // lib/talent/skill-resolution.ts) traitait par erreur "PostgreSQL"
+    // comme une simple sous-chaîne de "SQL" (faux positif corrigé Lot 11).
+    // Les deux compétences restent volontairement indépendantes : détecter
+    // "PostgreSQL" ne doit jamais produire "SQL" comme preuve
+    // indépendante, et inversement (voir ALIAS dans skill-resolution.ts).
+    competences: ["SQL", "PostgreSQL", "Data / BI", "IA / Machine Learning", "Prompt engineering / RAG"],
   },
   {
     categorie: "Méthodologie & outils",

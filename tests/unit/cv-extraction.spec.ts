@@ -90,6 +90,81 @@ test.describe("cv-extraction — signal extractionReussie", () => {
     }
   });
 
+  // LOT 11.1 (29/09/2026) — §5 : un JSON TECHNIQUEMENT valide (structure
+  // correcte, `extractionReussie=true`) mais dont le CONTENU est vide
+  // (CV scanné, illisible, ou réellement sans information) ne doit jamais
+  // être confondu avec une extraction exploitable — voir
+  // lib/cv-extraction.ts::calculerQualite, additif à ce lot.
+  test("5/6. JSON techniquement valide MAIS champs tous vides -> extractionReussie=true, qualiteExtraction=VIDE, aucune compétence ne peut en être déduite", async () => {
+    const cleOriginale = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "cle-de-test-factice";
+    const fetchOriginal = global.fetch;
+    const nbChamps = modeleChampsVides().length;
+    global.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          content: [
+            {
+              text: JSON.stringify({
+                secteurInformatique: true,
+                secteurDetecte: "",
+                champs: Array.from({ length: nbChamps }, () => ""), // structure valide, contenu réellement vide
+              }),
+            },
+          ],
+        }),
+        { status: 200 }
+      )) as typeof fetch;
+
+    try {
+      const resultat = await extraireInfosCV("ignore");
+      // Succès TECHNIQUE réel (JSON exploitable reçu) ...
+      expect(resultat.extractionReussie).toBe(true);
+      // ... mais AUCUN contenu exploitable : les deux signaux sont
+      // désormais distincts, jamais confondus.
+      expect(resultat.champsNonVides).toBe(0);
+      expect(resultat.qualiteExtraction).toBe("VIDE");
+    } finally {
+      global.fetch = fetchOriginal;
+      if (cleOriginale !== undefined) process.env.ANTHROPIC_API_KEY = cleOriginale;
+      else delete process.env.ANTHROPIC_API_KEY;
+    }
+  });
+
+  test("6/6. JSON valide avec quelques champs seulement -> qualiteExtraction=PARTIELLE, jamais EXPLOITABLE à tort", async () => {
+    const cleOriginale = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "cle-de-test-factice";
+    const fetchOriginal = global.fetch;
+    const nbChamps = modeleChampsVides().length;
+    global.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          content: [
+            {
+              text: JSON.stringify({
+                secteurInformatique: true,
+                secteurDetecte: "Développement web",
+                // Un seul champ non vide sur nbChamps (largement < 1/3).
+                champs: Array.from({ length: nbChamps }, (_, i) => (i === 0 ? "Jean Dupont" : "")),
+              }),
+            },
+          ],
+        }),
+        { status: 200 }
+      )) as typeof fetch;
+
+    try {
+      const resultat = await extraireInfosCV("ignore");
+      expect(resultat.extractionReussie).toBe(true);
+      expect(resultat.champsNonVides).toBe(1);
+      expect(resultat.qualiteExtraction).toBe("PARTIELLE");
+    } finally {
+      global.fetch = fetchOriginal;
+      if (cleOriginale !== undefined) process.env.ANTHROPIC_API_KEY = cleOriginale;
+      else delete process.env.ANTHROPIC_API_KEY;
+    }
+  });
+
   test("4/4. JSON de réponse inexploitable -> résultat neutre avec extractionReussie=false", async () => {
     const cleOriginale = process.env.ANTHROPIC_API_KEY;
     process.env.ANTHROPIC_API_KEY = "cle-de-test-factice";
@@ -99,6 +174,8 @@ test.describe("cv-extraction — signal extractionReussie", () => {
     try {
       const resultat = await extraireInfosCV("ignore");
       expect(resultat.extractionReussie).toBe(false);
+      expect(resultat.qualiteExtraction).toBe("VIDE");
+      expect(resultat.champsNonVides).toBe(0);
     } finally {
       global.fetch = fetchOriginal;
       if (cleOriginale !== undefined) process.env.ANTHROPIC_API_KEY = cleOriginale;

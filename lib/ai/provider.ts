@@ -1,3 +1,5 @@
+import { resoudreCompetencesDepuisTexte } from "@/lib/talent/skill-resolution";
+
 // Abstraction provider-neutre pour toute fonctionnalité IA d'ATLAS TALENT
 // (AI Request Analyzer, et plus tard Matching Engine / Talent Agent — voir
 // lib/talent/). But : le système doit être "AI-native" (conçu pour l'IA dès
@@ -21,6 +23,14 @@ export type SuggestionAnalyse = {
   budgetTjmMax: number | null;
   budgetDevise: string | null;
   confiance: number; // 0-1 — jamais 1.0 pour un provider heuristique/local
+  // LOT 11 — ATLAS SKILL INTELLIGENCE V1 : détail de la méthode de détection
+  // PAR compétence (voir lib/talent/skill-resolution.ts), en plus de la
+  // liste plate `competences` ci-dessus (conservée telle quelle pour la
+  // compatibilité des appelants existants, ex. lib/talent/analyseur.ts qui
+  // ne lit jamais ce champ). Optionnel : un futur provider tiers qui ne
+  // l'implémenterait pas reste pleinement compatible (repli documenté dans
+  // lib/talent/skill-graph.ts::construireCompetencesInferees).
+  detailCompetences?: { competence: string; methode: "EXACT" | "ALIAS" }[];
 };
 
 // COMPANY ATLAS — LOT 2 : Client Need Intelligence Foundation (15/09/2026).
@@ -88,12 +98,16 @@ class AiProviderLocal implements AiProvider {
   async analyserTexte(texte: string, competencesConnues: string[]): Promise<SuggestionAnalyse> {
     const normalise = texte.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
-    const competences = competencesConnues.filter((c) => {
-      const cNormalise = c.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-      // une compétence composite ("Selenium WebDriver" n'existe pas ici,
-      // mais "TestNG / JUnit" oui) : on matche si l'un des segments "/" est présent
-      return cNormalise.split(" / ").some((segment) => normalise.includes(segment.trim()));
-    });
+    // LOT 11 -- remplace l'ancienne recherche de sous-chaine brute
+    // (`normalise.includes(segment)`) par lib/talent/skill-resolution.ts :
+    // correspondance par mot entier (elimine le faux positif "PostgreSQL"
+    // -> "SQL" documente au Lot 10) + reconnaissance explicite de quelques
+    // variantes d'ecriture usuelles (K8s, JS, TS, React.js, ReactJS).
+    const detailCompetences = resoudreCompetencesDepuisTexte(texte, competencesConnues).map((r) => ({
+      competence: r.competence,
+      methode: r.methode,
+    }));
+    const competences = detailCompetences.map((d) => d.competence);
 
     const SENIORITES: { motCle: string; valeur: string }[] = [
       { motCle: "junior", valeur: "Junior" },
@@ -118,7 +132,7 @@ class AiProviderLocal implements AiProvider {
     // l'Admin doit revoir avant tout matching (voir statut ANALYSEE).
     const confiance = competences.length > 0 || seniorite ? 0.4 : 0.15;
 
-    return { competences, seniorite, budgetTjmMax, budgetDevise, confiance };
+    return { competences, seniorite, budgetTjmMax, budgetDevise, confiance, detailCompetences };
   }
 
   // LOT 2 — Client Need Intelligence Foundation. Extraction heuristique

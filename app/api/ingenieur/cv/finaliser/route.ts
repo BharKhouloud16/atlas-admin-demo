@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { LIBELLE_ANNEES_EXPERIENCE, LIBELLE_SENIORITE } from "@/lib/cv-extraction";
+import { construireSkillGraph } from "@/lib/talent/skill-graph-service";
 
 // Appelé une fois que l'ingénieur a validé (OK) tous les champs extraits de
 // son CV. Marque le profil comme cvValide=true, ce qui débloque l'accès à
@@ -75,5 +76,28 @@ export async function POST() {
     },
   });
 
-  return NextResponse.json({ ok: true });
+  // LOT 11 — ATLAS SKILL INTELLIGENCE V1 : construit/actualise automatiquement
+  // le Skill Graph dès la finalisation du CV, en réutilisant la même fonction
+  // métier que la route Admin (lib/talent/skill-graph-service.ts) — jamais un
+  // appel HTTP interne. Best-effort STRICT (mandat, §3/§4) : la finalisation
+  // du CV reste acquise (déjà écrite ci-dessus) quoi qu'il arrive ici ; une
+  // panne de cette étape ne doit jamais transformer une absence de preuve en
+  // preuve fabriquée, ni empêcher l'ingénieur d'accéder à son espace. Aucune
+  // donnée personnelle ni contenu de CV dans le log — seulement l'identifiant
+  // de profil (déjà utilisé partout ailleurs dans les journaux ATLAS),
+  // l'étape et le type/message technique de l'erreur.
+  let skillGraph: "construit" | "echec" = "construit";
+  try {
+    await construireSkillGraph(session.profilId);
+  } catch (e: any) {
+    skillGraph = "echec";
+    console.error("[cv/finaliser] Construction du Skill Graph impossible — CV finalisé quand même.", {
+      profilId: session.profilId,
+      etape: "construction_skill_graph",
+      typeErreur: e?.constructor?.name ?? "Error",
+      message: e?.message ?? String(e),
+    });
+  }
+
+  return NextResponse.json({ ok: true, skillGraph });
 }

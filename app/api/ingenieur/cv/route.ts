@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { uploaderFichier } from "@/lib/storage";
-import { extraireInfosCV, modeleChampsVides, type ResultatExtractionCV } from "@/lib/cv-extraction";
+import { extraireInfosCV, resultatNeutre, type ResultatExtractionCV } from "@/lib/cv-extraction";
 
 // Upload du CV par l'ingénieur connecté. Le contenu du fichier est envoyé à
 // l'IA (Claude) pour pré-remplir les champs InfoCV avec les informations
@@ -43,7 +43,20 @@ export async function POST(req: NextRequest) {
     // champs seront simplement vides à saisir manuellement (et on ne peut
     // alors pas vérifier le secteur — l'import n'est pas bloqué pour autant).
     console.error("Extraction IA du CV impossible :", e.message ?? e);
-    resultat = { horsSecteur: false, secteurDetecte: "", champs: modeleChampsVides(), extractionReussie: false };
+    resultat = resultatNeutre();
+  }
+
+  // LOT 11 — ATLAS SKILL INTELLIGENCE V1 : observabilité minimale (§19 du
+  // mandat) — signale une extraction sans contenu exploitable pour pouvoir
+  // diagnostiquer un pipeline CV silencieusement inefficace (Lot 10),
+  // jamais un blocage de l'import ni une donnée personnelle/le contenu du
+  // CV dans le log (seul l'identifiant de profil, déjà utilisé partout
+  // ailleurs dans les journaux ATLAS).
+  if (resultat.qualiteExtraction === "VIDE") {
+    console.warn("[cv] Extraction sans contenu exploitable (champs vides).", {
+      profilId: session.profilId,
+      extractionReussie: resultat.extractionReussie,
+    });
   }
 
   if (resultat.horsSecteur) {
