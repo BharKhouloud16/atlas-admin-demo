@@ -68,7 +68,7 @@ export async function GET() {
     _avg: { note: true },
     _count: { note: true },
   });
-  const missionsTerminees = profil.missions.filter((m) => m.statut === "Terminée").length;
+  const missionsTerminees = profil.missions.filter((m) => m.statut === "TERMINEE").length;
 
   return NextResponse.json({
     ...profil,

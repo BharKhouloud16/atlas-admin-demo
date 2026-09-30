@@ -1,4 +1,5 @@
 import { test, expect, Locator, Page } from "@playwright/test";
+import { StatutMission } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { ADMIN_STATE } from "../setup/storage-state";
 
@@ -26,7 +27,7 @@ test.use({ storageState: ADMIN_STATE });
 
 const SUFFIXE = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-async function missionDediee(statut: string = "En cours") {
+async function missionDediee(statut: StatutMission = StatutMission.EN_COURS) {
   const client = await prisma.client.findFirst({ where: { nom: "Client Démo SAS" } });
   if (!client) throw new Error("Client Démo SAS introuvable — voir prisma/seed.ts");
   const suffixe = SUFFIXE();
@@ -57,7 +58,7 @@ function ligneDe(page: Page, repere: string): Locator {
 
 test.describe("Admin — Mission Closure Review (/admin/missions)", () => {
   test("le clic 'Terminer' ouvre le panneau sans transitionner la mission (SOFT GATE)", async ({ page }) => {
-    const { mission } = await missionDediee("En cours");
+    const { mission } = await missionDediee(StatutMission.EN_COURS);
     await page.goto("/admin/missions");
 
     const ligne = ligneDe(page, mission.repere!);
@@ -69,12 +70,12 @@ test.describe("Admin — Mission Closure Review (/admin/missions)", () => {
 
     // L'ouverture seule n'a transitionné ni créé quoi que ce soit.
     const enBase = await prisma.mission.findUniqueOrThrow({ where: { id: mission.id } });
-    expect(enBase.statut).toBe("En cours");
+    expect(enBase.statut).toBe("EN_COURS");
     expect(await prisma.missionSkillProposal.count({ where: { missionId: mission.id } })).toBe(0);
   });
 
   test("fermer le panneau sans action ne modifie aucune donnée", async ({ page }) => {
-    const { mission } = await missionDediee("En cours");
+    const { mission } = await missionDediee(StatutMission.EN_COURS);
     await page.goto("/admin/missions");
     const ligne = ligneDe(page, mission.repere!);
     await ligne.getByRole("button", { name: "Terminer", exact: true }).click();
@@ -89,7 +90,7 @@ test.describe("Admin — Mission Closure Review (/admin/missions)", () => {
     await expect(page.getByText(new RegExp(`Mission ${mission.repere}`))).toHaveCount(0);
 
     const enBase = await prisma.mission.findUniqueOrThrow({ where: { id: mission.id } });
-    expect(enBase.statut).toBe("En cours");
+    expect(enBase.statut).toBe("EN_COURS");
   });
 
   test("'Terminer la mission' dans le panneau appelle la transition existante ; le panneau reste ouvert", async ({ page }) => {
@@ -97,7 +98,7 @@ test.describe("Admin — Mission Closure Review (/admin/missions)", () => {
     // missions (GET /api/missions, potentiellement volumineuse en base de
     // démonstration) : même marge que le test de proposition ci-dessous.
     test.setTimeout(60000);
-    const { mission } = await missionDediee("En cours");
+    const { mission } = await missionDediee(StatutMission.EN_COURS);
     await page.goto("/admin/missions");
     const ligne = ligneDe(page, mission.repere!);
     await ligne.getByRole("button", { name: "Terminer", exact: true }).click();
@@ -113,11 +114,11 @@ test.describe("Admin — Mission Closure Review (/admin/missions)", () => {
     await expect(panneau.getByRole("button", { name: "Terminer la mission" })).toHaveCount(0);
 
     const enBase = await prisma.mission.findUniqueOrThrow({ where: { id: mission.id } });
-    expect(enBase.statut).toBe("Terminée");
+    expect(enBase.statut).toBe("TERMINEE");
   });
 
   test("une mission déjà Terminée expose 'Revue de clôture' (lecture, aucune transition)", async ({ page }) => {
-    const { mission } = await missionDediee("Terminée");
+    const { mission } = await missionDediee(StatutMission.TERMINEE);
     await page.goto("/admin/missions");
     const ligne = ligneDe(page, mission.repere!);
 
@@ -129,7 +130,7 @@ test.describe("Admin — Mission Closure Review (/admin/missions)", () => {
   });
 
   test("une mission Annulée expose aussi 'Revue de clôture'", async ({ page }) => {
-    const { mission } = await missionDediee("Annulée");
+    const { mission } = await missionDediee(StatutMission.ANNULEE);
     await page.goto("/admin/missions");
     const ligne = ligneDe(page, mission.repere!);
     await ligne.getByRole("button", { name: "Revue de clôture" }).click();
@@ -138,7 +139,7 @@ test.describe("Admin — Mission Closure Review (/admin/missions)", () => {
   });
 
   test("'Aucune compétence supplémentaire' ne crée ni proposal ni evidence", async ({ page }) => {
-    const { mission } = await missionDediee("Terminée");
+    const { mission } = await missionDediee(StatutMission.TERMINEE);
     await page.goto("/admin/missions");
     const ligne = ligneDe(page, mission.repere!);
     await ligne.getByRole("button", { name: "Revue de clôture" }).click();
@@ -161,7 +162,7 @@ test.describe("Admin — Mission Closure Review (/admin/missions)", () => {
     // budget explicitement élargi pour CE test précis plutôt que d'assouplir
     // une assertion ou de masquer une marge insuffisante.
     test.setTimeout(60000);
-    const { mission, profil } = await missionDediee("Terminée");
+    const { mission, profil } = await missionDediee(StatutMission.TERMINEE);
     await page.goto("/admin/missions");
     const ligne = ligneDe(page, mission.repere!);
     await ligne.getByRole("button", { name: "Revue de clôture" }).click();
@@ -203,7 +204,7 @@ test.describe("Admin — Mission Closure Review (/admin/missions)", () => {
   });
 
   test("ouverture répétée du panneau (fermer/rouvrir) reste sans effet métier", async ({ page }) => {
-    const { mission } = await missionDediee("Terminée");
+    const { mission } = await missionDediee(StatutMission.TERMINEE);
     await page.goto("/admin/missions");
     const ligne = ligneDe(page, mission.repere!);
 
@@ -213,6 +214,6 @@ test.describe("Admin — Mission Closure Review (/admin/missions)", () => {
 
     expect(await prisma.missionSkillProposal.count({ where: { missionId: mission.id } })).toBe(0);
     const enBase = await prisma.mission.findUniqueOrThrow({ where: { id: mission.id } });
-    expect(enBase.statut).toBe("Terminée");
+    expect(enBase.statut).toBe("TERMINEE");
   });
 });

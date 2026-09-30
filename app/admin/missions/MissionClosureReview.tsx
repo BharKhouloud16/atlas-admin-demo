@@ -331,7 +331,7 @@ export default function MissionClosureReview({
           )}
         </div>
 
-        {mission.statut === "En cours" && (
+        {mission.statut === "EN_COURS" && (
           <div style={{ textAlign: "right" }}>
             <button
               onClick={terminerLaMission}

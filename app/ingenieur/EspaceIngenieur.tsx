@@ -93,7 +93,7 @@ export default function EspaceIngenieur() {
     return <main style={{ maxWidth: 900, margin: "60px auto", padding: 24 }}>Chargement...</main>;
   }
 
-  const missionActive = data.missions.some((m) => m.statut === "En cours");
+  const missionActive = data.missions.some((m) => m.statut === "EN_COURS");
 
   return (
     <>
@@ -262,8 +262,8 @@ function BadgeConfianceIngenieur({ data }: { data: ProfilData }) {
 // Chiffres tirés des missions réellement enregistrées côté Atlas (pas des
 // déclarations de l'ingénieur) + entretiensRealises, saisi par l'Admin.
 function Statistiques({ data }: { data: ProfilData }) {
-  const missionsValidees = data.missions.filter((m) => m.statut === "Terminée").length;
-  const missionsEnCours = data.missions.filter((m) => m.statut === "En cours").length;
+  const missionsValidees = data.missions.filter((m) => m.statut === "TERMINEE").length;
+  const missionsEnCours = data.missions.filter((m) => m.statut === "EN_COURS").length;
   const membreDepuis = new Date(data.createdAt);
   const moisAnciennete = Math.max(
     0,
@@ -937,7 +937,7 @@ function OngletHistorique({ missions, typeContrat }: { missions: Mission[]; type
               <td style={{ padding: "6px 8px" }}>{typeContrat ? LABEL_TYPE_CONTRAT[typeContrat] ?? typeContrat : "—"}</td>
               <td style={{ padding: "6px 8px" }}>
                 {m.statut}
-                {m.statut === "Terminée" && (
+                {m.statut === "TERMINEE" && (
                   <span
                     title="Mission menée à terme avec Atlas Quality Partners, historique vérifié — à distinguer de l'expérience déclarée depuis le CV"
                     style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: "#16a34a" }}
@@ -948,7 +948,7 @@ function OngletHistorique({ missions, typeContrat }: { missions: Mission[]; type
               </td>
               <td style={{ padding: "6px 8px" }}>{new Date(m.createdAt).toLocaleDateString("fr-FR")}</td>
               <td style={{ padding: "6px 8px" }}>
-                {m.statut === "En cours" ? "En cours" : new Date(m.updatedAt).toLocaleDateString("fr-FR")}
+                {m.statut === "EN_COURS" ? "En cours" : new Date(m.updatedAt).toLocaleDateString("fr-FR")}
               </td>
               <td style={{ padding: "6px 8px" }}>{m.nbJours}</td>
               <td style={{ padding: "6px 8px" }}>
@@ -1436,7 +1436,7 @@ function OngletEmploiDuTemps({ missionActive }: { missionActive: boolean }) {
   }
   if (chargement) return <p style={{ fontSize: 14, color: "#888" }}>Chargement...</p>;
 
-  const missionsEnCours = missions.filter((m) => m.statut === "En cours");
+  const missionsEnCours = missions.filter((m) => m.statut === "EN_COURS");
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>

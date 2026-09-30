@@ -123,8 +123,8 @@ test.describe("Candidate Intelligence V1 (lib/talent/candidate-intelligence)", (
   test("10. missions et évaluations : agrégées sans invention, INCONNU si absentes", () => {
     const profil = profilVide();
     profil.missions = [
-      { statut: "Terminée", nbJours: 20, createdAt: new Date("2025-01-01") },
-      { statut: "En cours", nbJours: 10, createdAt: new Date("2026-01-01") },
+      { statut: "TERMINEE", nbJours: 20, createdAt: new Date("2025-01-01") },
+      { statut: "EN_COURS", nbJours: 10, createdAt: new Date("2026-01-01") },
     ];
     profil.evaluations = [{ note: 4, createdAt: new Date("2025-06-01") }, { note: 5, createdAt: new Date("2025-12-01") }];
     const r = construireCandidateIntelligence(profil, MAINTENANT);

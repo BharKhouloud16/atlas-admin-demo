@@ -1,4 +1,5 @@
 import { test, expect, APIRequestContext } from "@playwright/test";
+import { StatutMission } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { versCompetencesPourMatching, type StatutPreuveCompetence } from "@/lib/talent/skill-graph";
 
@@ -39,7 +40,7 @@ async function profilIngenieurDemo() {
 // Mission du VRAI compte ingenieur-demo@example.com — uniquement pour les
 // tests qui doivent exercer une session Ingénieur authentifiée agissant sur
 // sa propre mission.
-async function creerMission(statut: string = "En cours") {
+async function creerMission(statut: StatutMission = StatutMission.EN_COURS) {
   const client = await clientDemo();
   const profilId = await profilIngenieurDemo();
   const suffixe = Date.now() + Math.random();
@@ -53,7 +54,7 @@ async function creerMission(statut: string = "En cours") {
 // pour tous les scénarios où l'acteur qui agit est l'Admin (ou un rôle
 // refusé avant toute vérification d'appartenance) : garantit un état de
 // départ strictement vide, sans dépendre du nom de compétence choisi.
-async function creerMissionDediee(statut: string = "En cours") {
+async function creerMissionDediee(statut: StatutMission = StatutMission.EN_COURS) {
   const client = await clientDemo();
   const suffixe = Date.now() + Math.random();
   const profil = await prisma.profil.create({ data: { nom: `Profil Dédié B47 ${suffixe}` } });

@@ -31,7 +31,7 @@ export async function GET() {
   if (session.role === "CLIENT") {
     if (!session.clientId) return NextResponse.json({ error: "Accès non autorisé" }, { status: 403 });
     const missions = await prisma.mission.findMany({
-      where: { clientId: session.clientId, statut: "Terminée" },
+      where: { clientId: session.clientId, statut: "TERMINEE" },
       select: {
         id: true,
         repere: true,
@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
   if (!mission || mission.clientId !== session.clientId) {
     return NextResponse.json({ error: "Mission introuvable." }, { status: 404 });
   }
-  if (mission.statut !== "Terminée") {
+  if (mission.statut !== "TERMINEE") {
     return NextResponse.json({ error: "Seule une mission terminée peut être évaluée." }, { status: 400 });
   }
 

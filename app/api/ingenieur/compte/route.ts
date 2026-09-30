@@ -22,7 +22,7 @@ export async function DELETE() {
   }
 
   if (profil.missions.length > 0) {
-    const enCours = profil.missions.some((m) => m.statut === "En cours");
+    const enCours = profil.missions.some((m) => m.statut === "EN_COURS");
     return NextResponse.json(
       {
         error: enCours

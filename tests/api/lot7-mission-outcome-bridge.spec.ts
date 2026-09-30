@@ -1,5 +1,6 @@
 import { test, expect, APIRequestContext } from "@playwright/test";
 import { prisma } from "@/lib/prisma";
+import { StatutMission } from "@prisma/client";
 
 // COMPANY ATLAS — LOT 7 : Mission Outcome → Client Profile Bridge (16/09/2026).
 // Couvre l'extension de GET /api/client/profil (signalResultatMission) et le
@@ -28,7 +29,7 @@ async function creerProfil() {
 
 async function creerMissionEvaluee(clientId: string, profilId: string, note: number) {
   const mission = await prisma.mission.create({
-    data: { clientId, profilId, nbJours: 5, tjmVente: 500, statut: "Terminée" },
+    data: { clientId, profilId, nbJours: 5, tjmVente: 500, statut: StatutMission.TERMINEE },
   });
   await prisma.evaluation.create({ data: { missionId: mission.id, note } });
   return mission;

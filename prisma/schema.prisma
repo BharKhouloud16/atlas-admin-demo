@@ -125,15 +125,29 @@ model TentativeIp {
 // voir lib/audit.ts. Attendu par tout client ESN/staffing sérieux : qui a
 // fait quoi, et quand. Consultable dans /admin/journal.
 model JournalActivite {
-  id          String   @id @default(cuid())
-  acteurEmail String
-  acteurRole  Role
-  action      String // ex. "validation_compte", "creation_profil", "rejet_cra"
-  cible       String? // id de l'entité concernée (userId, profilId, feuilleId...)
-  detail      String?
-  createdAt   DateTime @default(now())
+  id            String   @id @default(cuid())
+  acteurEmail   String
+  acteurRole    Role
+  action        String // ex. "validation_compte", "creation_profil", "rejet_cra"
+  cible         String? // id de l'entité concernée (userId, profilId, feuilleId...)
+  detail        String?
+  // LOT 16.2 — CONTROL PLANE HARDENING (audit Lot 16.1, section "Audit Log
+  // Audit") : seul maillon des 3 journaux d'audit (JournalActivite /
+  // EvenementSecurite / AuditEvent) sans identifiant de corrélation — les
+  // deux autres en portent déjà un (voir EvenementSecurite.correlationId,
+  // même format : lib/security/events.ts::nouveauCorrelationId(), UUID).
+  // Nullable et purement additif : n'importe quelle entrée historique reste
+  // valide (colonne absente jusqu'ici). Fourni par l'appelant lorsqu'une
+  // opération transverse possède déjà un identifiant de corrélation —
+  // jamais généré automatiquement ici (voir lib/audit.ts::journaliser) :
+  // ce lot n'introduit ni contexte global de requête, ni 4e système
+  // d'audit, seulement la capacité de JournalActivite à participer à une
+  // corrélation déjà décidée ailleurs dans le même flux.
+  correlationId String?
+  createdAt     DateTime @default(now())
 
   @@index([createdAt])
+  @@index([correlationId])
 }
 
 // ============================================================================
@@ -1079,14 +1093,14 @@ model Profil {
 
   realisations Json?
 
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
-  missions         Mission[]
-  infosCv          InfoCV[]
-  versionsCv       VersionCv[]
-  compte           User?
-  shortlistEntrees ShortlistEntree[]
-  competencesGraph ProfilCompetence[]
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  missions              Mission[]
+  infosCv               InfoCV[]
+  versionsCv            VersionCv[]
+  compte                User?
+  shortlistEntrees      ShortlistEntree[]
+  competencesGraph      ProfilCompetence[]
   // PHASE 2B-1 — Mission Skill Proposal (28/09/2026) — voir MissionSkillProposal
   missionSkillProposals MissionSkillProposal[]
 }
@@ -1115,6 +1129,24 @@ model InfoCV {
   createdAt DateTime @default(now())
 }
 
+// LOT 16.2 — CONTROL PLANE HARDENING (Mission.statut). Périmètre strict :
+// représente EXCLUSIVEMENT l'état opérationnel de la Mission — jamais à
+// confondre avec un futur statut de Requirement, de Relationship, de
+// Contract, de Facture (StatutFacture, déjà un enum séparé), de
+// Profil.disponibilite, ou de lib/disponibilite.ts::STATUTS_EN_MISSION
+// (vocabulaire totalement différent, jamais lu ni écrit sur ce champ).
+// Audit Lot 16.1 : exactement 3 valeurs réellement utilisées, exactement 2
+// transitions officielles (EN_COURS -> TERMINEE, EN_COURS -> ANNULEE, toutes
+// deux terminales), aucune écriture applicative hors
+// app/api/missions/[id]/transition/route.ts et app/api/missions/route.ts
+// (création) — voir prisma/migrations/.../migration.sql pour la conversion
+// des valeurs historiques.
+enum StatutMission {
+  EN_COURS
+  TERMINEE
+  ANNULEE
+}
+
 model Mission {
   id              String           @id @default(cuid())
   repere          String?
@@ -1126,7 +1158,7 @@ model Mission {
   margeCible      Float            @default(0.30)
   tjmVente        Float
   deviseVente     String           @default("EUR")
-  statut          String           @default("En cours") // En cours / Terminée / Annulée
+  statut          StatutMission    @default(EN_COURS)
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   documents       Document[]
@@ -1768,10 +1800,10 @@ model MissionSkillProposal {
   proposeParEmail String
   proposeParRole  Role // ADMIN ou INGENIEUR — jamais CLIENT (voir H8, aucune route Client sur ce modèle)
 
-  statut      StatutPropositionCompetence @default(EN_ATTENTE)
-  decidePar   String?
-  decideLe    DateTime?
-  motifRefus  String?
+  statut     StatutPropositionCompetence @default(EN_ATTENTE)
+  decidePar  String?
+  decideLe   DateTime?
+  motifRefus String?
 
   // Renseigné uniquement à la validation — le niveau RÉELLEMENT retenu par
   // l'Admin peut différer de niveauPropose (D3) ; jamais l'inverse.

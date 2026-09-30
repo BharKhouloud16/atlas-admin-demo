@@ -1,4 +1,5 @@
 import { test, expect, APIRequestContext } from "@playwright/test";
+import { StatutMission } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 // ATLAS — PHASE 2B-0 : MISSION LIFECYCLE V1 (28/09/2026).
@@ -30,7 +31,7 @@ async function profilIngenieurDemo() {
   return user.profilId;
 }
 
-async function creerMission(statut: string = "En cours") {
+async function creerMission(statut: StatutMission = StatutMission.EN_COURS) {
   const client = await clientDemo();
   const profilId = await profilIngenieurDemo();
   const suffixe = Date.now() + Math.random();
@@ -42,105 +43,105 @@ async function creerMission(statut: string = "En cours") {
 test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/transition)", () => {
   test("1. Admin peut terminer une mission En cours -> Terminée", async ({ request }) => {
     await connecter(request, "admin-demo@example.com");
-    const mission = await creerMission("En cours");
+    const mission = await creerMission(StatutMission.EN_COURS);
 
     const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "terminer" } });
     expect(reponse.status(), await reponse.text()).toBe(200);
     const apres = await reponse.json();
-    expect(apres.statut).toBe("Terminée");
+    expect(apres.statut).toBe("TERMINEE");
 
     const enBase = await prisma.mission.findUnique({ where: { id: mission.id } });
-    expect(enBase?.statut).toBe("Terminée");
+    expect(enBase?.statut).toBe("TERMINEE");
   });
 
   test("2. Admin peut annuler une mission En cours -> Annulée", async ({ request }) => {
     await connecter(request, "admin-demo@example.com");
-    const mission = await creerMission("En cours");
+    const mission = await creerMission(StatutMission.EN_COURS);
 
     const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "annuler" } });
     expect(reponse.status(), await reponse.text()).toBe(200);
     const apres = await reponse.json();
-    expect(apres.statut).toBe("Annulée");
+    expect(apres.statut).toBe("ANNULEE");
   });
 
   test("3. Terminée -> En cours (via action invalide 'reouvrir') : impossible, 400", async ({ request }) => {
     await connecter(request, "admin-demo@example.com");
-    const mission = await creerMission("Terminée");
+    const mission = await creerMission(StatutMission.TERMINEE);
 
     const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "reouvrir" } });
     expect(reponse.status()).toBe(400);
     const enBase = await prisma.mission.findUnique({ where: { id: mission.id } });
-    expect(enBase?.statut).toBe("Terminée");
+    expect(enBase?.statut).toBe("TERMINEE");
   });
 
   test("4. Terminée -> Annulée : impossible, 409 (état terminal)", async ({ request }) => {
     await connecter(request, "admin-demo@example.com");
-    const mission = await creerMission("Terminée");
+    const mission = await creerMission(StatutMission.TERMINEE);
 
     const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "annuler" } });
     expect(reponse.status()).toBe(409);
     const enBase = await prisma.mission.findUnique({ where: { id: mission.id } });
-    expect(enBase?.statut).toBe("Terminée");
+    expect(enBase?.statut).toBe("TERMINEE");
   });
 
   test("5. Annulée -> En cours (via action invalide 'reouvrir') : impossible, 400", async ({ request }) => {
     await connecter(request, "admin-demo@example.com");
-    const mission = await creerMission("Annulée");
+    const mission = await creerMission(StatutMission.ANNULEE);
 
     const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "reouvrir" } });
     expect(reponse.status()).toBe(400);
     const enBase = await prisma.mission.findUnique({ where: { id: mission.id } });
-    expect(enBase?.statut).toBe("Annulée");
+    expect(enBase?.statut).toBe("ANNULEE");
   });
 
   test("6. Annulée -> Terminée : impossible, 409 (état terminal)", async ({ request }) => {
     await connecter(request, "admin-demo@example.com");
-    const mission = await creerMission("Annulée");
+    const mission = await creerMission(StatutMission.ANNULEE);
 
     const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "terminer" } });
     expect(reponse.status()).toBe(409);
     const enBase = await prisma.mission.findUnique({ where: { id: mission.id } });
-    expect(enBase?.statut).toBe("Annulée");
+    expect(enBase?.statut).toBe("ANNULEE");
   });
 
   test("7. Ingénieur ne peut pas terminer une mission (même la sienne) -> 403, aucune mutation", async ({ request }) => {
     await connecter(request, "ingenieur-demo@example.com");
-    const mission = await creerMission("En cours"); // appartient bien au profil ingenieur-demo
+    const mission = await creerMission(StatutMission.EN_COURS); // appartient bien au profil ingenieur-demo
 
     const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "terminer" } });
     expect(reponse.status()).toBe(403);
     const enBase = await prisma.mission.findUnique({ where: { id: mission.id } });
-    expect(enBase?.statut).toBe("En cours");
+    expect(enBase?.statut).toBe("EN_COURS");
   });
 
   test("8. Ingénieur ne peut pas annuler une mission (même la sienne) -> 403, aucune mutation", async ({ request }) => {
     await connecter(request, "ingenieur-demo@example.com");
-    const mission = await creerMission("En cours");
+    const mission = await creerMission(StatutMission.EN_COURS);
 
     const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "annuler" } });
     expect(reponse.status()).toBe(403);
     const enBase = await prisma.mission.findUnique({ where: { id: mission.id } });
-    expect(enBase?.statut).toBe("En cours");
+    expect(enBase?.statut).toBe("EN_COURS");
   });
 
   test("9. Client ne peut pas terminer une mission (même la sienne) -> 403, aucune mutation", async ({ request }) => {
     await connecter(request, "client-demo@example.com");
-    const mission = await creerMission("En cours"); // appartient bien au client-demo
+    const mission = await creerMission(StatutMission.EN_COURS); // appartient bien au client-demo
 
     const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "terminer" } });
     expect(reponse.status()).toBe(403);
     const enBase = await prisma.mission.findUnique({ where: { id: mission.id } });
-    expect(enBase?.statut).toBe("En cours");
+    expect(enBase?.statut).toBe("EN_COURS");
   });
 
   test("10. Client ne peut pas annuler une mission (même la sienne) -> 403, aucune mutation", async ({ request }) => {
     await connecter(request, "client-demo@example.com");
-    const mission = await creerMission("En cours");
+    const mission = await creerMission(StatutMission.EN_COURS);
 
     const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "annuler" } });
     expect(reponse.status()).toBe(403);
     const enBase = await prisma.mission.findUnique({ where: { id: mission.id } });
-    expect(enBase?.statut).toBe("En cours");
+    expect(enBase?.statut).toBe("EN_COURS");
   });
 
   test("11. Mission inexistante -> 404", async ({ request }) => {
@@ -151,23 +152,23 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
 
   test("12. Action invalide/absente -> 400, aucune mutation", async ({ request }) => {
     await connecter(request, "admin-demo@example.com");
-    const mission = await creerMission("En cours");
+    const mission = await creerMission(StatutMission.EN_COURS);
 
     const invalide = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "n'importe quoi" } });
     expect(invalide.status()).toBe(400);
     const absente = await request.patch(`/api/missions/${mission.id}/transition`, { data: {} });
     expect(absente.status()).toBe(400);
     // Statut brut : jamais accepté directement, seule une action whitelistée l'est.
-    const statutDirect = await request.patch(`/api/missions/${mission.id}/transition`, { data: { statut: "Terminée" } });
+    const statutDirect = await request.patch(`/api/missions/${mission.id}/transition`, { data: { statut: "TERMINEE" } });
     expect(statutDirect.status()).toBe(400);
 
     const enBase = await prisma.mission.findUnique({ where: { id: mission.id } });
-    expect(enBase?.statut).toBe("En cours");
+    expect(enBase?.statut).toBe("EN_COURS");
   });
 
   test("13. Aucune mutation en cas de transition refusée (récapitulatif toutes causes de refus confondues)", async ({ request }) => {
     await connecter(request, "admin-demo@example.com");
-    const mission = await creerMission("Terminée");
+    const mission = await creerMission(StatutMission.TERMINEE);
     const avant = await prisma.mission.findUnique({ where: { id: mission.id } });
 
     await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "terminer" } }); // 409, déjà terminal
@@ -180,7 +181,7 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
 
   test("14. Transition Terminée journalisée (journaliser())", async ({ request }) => {
     await connecter(request, "admin-demo@example.com");
-    const mission = await creerMission("En cours");
+    const mission = await creerMission(StatutMission.EN_COURS);
     const avant = Date.now();
 
     const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "terminer" } });
@@ -196,7 +197,7 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
 
   test("15. Transition Annulée journalisée (journaliser())", async ({ request }) => {
     await connecter(request, "admin-demo@example.com");
-    const mission = await creerMission("En cours");
+    const mission = await creerMission(StatutMission.EN_COURS);
 
     const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "annuler" } });
     expect(reponse.ok()).toBeTruthy();
@@ -210,7 +211,7 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
 
   test("16. L'audit contient au minimum l'acteur, la mission et la transition (avant -> après)", async ({ request }) => {
     await connecter(request, "admin-demo@example.com");
-    const mission = await creerMission("En cours");
+    const mission = await creerMission(StatutMission.EN_COURS);
 
     await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "terminer" } });
 
@@ -222,13 +223,13 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
     expect(entree!.acteurRole).toBe("ADMIN");
     expect(entree!.cible).toBe(`mission:${mission.id}`);
     expect(entree!.detail).toContain(mission.id);
-    expect(entree!.detail).toContain("En cours");
-    expect(entree!.detail).toContain("Terminée");
+    expect(entree!.detail).toContain("EN_COURS");
+    expect(entree!.detail).toContain("TERMINEE");
   });
 
   test("17. Mission Terminée débloque POST /api/evaluations (précondition existante, non modifiée)", async ({ request }) => {
     await connecter(request, "admin-demo@example.com");
-    const mission = await creerMission("En cours");
+    const mission = await creerMission(StatutMission.EN_COURS);
     const transition = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "terminer" } });
     expect(transition.ok()).toBeTruthy();
 
@@ -254,10 +255,30 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
     const profilId = await profilIngenieurDemo();
     const avant = await prisma.profilCompetence.count({ where: { profilId } });
 
-    const mission = await creerMission("En cours");
+    const mission = await creerMission(StatutMission.EN_COURS);
     await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "terminer" } });
 
     const apres = await prisma.profilCompetence.count({ where: { profilId } });
     expect(apres).toBe(avant); // aucune ProfilCompetence créée par la seule clôture de mission
+  });
+
+  // LOT 16.2 — CONTROL PLANE HARDENING : Mission.statut est désormais un
+  // enum Postgres ("StatutMission"), plus un TEXT libre — une valeur
+  // arbitraire ne peut plus être persistée du tout, à quelque niveau que ce
+  // soit (pas seulement refusée par la route, comme le prouvait déjà le
+  // test 12 pour le body HTTP, mais rejetée par la contrainte de type en
+  // base elle-même).
+  test("19. Une valeur arbitraire ('Foo') ne peut plus être persistée comme Mission.statut (contrainte enum en base)", async () => {
+    const client = await clientDemo();
+    const profilId = await profilIngenieurDemo();
+    const suffixe = Date.now() + Math.random();
+
+    await expect(
+      prisma.$executeRaw`INSERT INTO "Mission" (id, "clientId", "profilId", repere, "nbJours", "tjmVente", statut, "createdAt", "updatedAt")
+        VALUES (${`test-b46-foo-${suffixe}`}, ${client.id}, ${profilId}, ${`Test B46 invalide ${suffixe}`}, 10, 500, 'Foo'::text::"StatutMission", now(), now())`
+    ).rejects.toThrow();
+
+    const introuvable = await prisma.mission.findFirst({ where: { repere: `Test B46 invalide ${suffixe}` } });
+    expect(introuvable).toBeNull();
   });
 });

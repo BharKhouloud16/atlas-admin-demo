@@ -17,7 +17,7 @@ function mission(overrides: Partial<MissionPourMarge> = {}): MissionPourMarge {
     tjmVente: 900,
     nbJours: 10,
     margeCible: 0.3,
-    statut: "En cours",
+    statut: "EN_COURS",
     profilType: "SALARIE",
     profilMontantSaisi: 60000,
     ...overrides,

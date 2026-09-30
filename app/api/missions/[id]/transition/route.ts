@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { StatutMission } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { journaliser } from "@/lib/audit";
@@ -36,9 +37,9 @@ import { journaliser } from "@/lib/audit";
 // ProfilCompetence, ni aucun calcul de lib/talent/* — le futur workflow
 // MissionSkillProposal -> SkillEvidence (Phase 2B-1+) en est entièrement
 // indépendant.
-const TRANSITIONS_AUTORISEES: Record<string, string> = {
-  terminer: "Terminée",
-  annuler: "Annulée",
+const TRANSITIONS_AUTORISEES: Record<string, StatutMission> = {
+  terminer: StatutMission.TERMINEE,
+  annuler: StatutMission.ANNULEE,
 };
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
@@ -63,7 +64,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   // Annulée sont des états terminaux, sans transition sortante — un état
   // déjà terminal est donc refusé ici avant toute écriture (aucune mutation
   // partielle possible).
-  if (mission.statut !== "En cours") {
+  if (mission.statut !== StatutMission.EN_COURS) {
     return NextResponse.json(
       { error: `Transition impossible depuis le statut actuel (${mission.statut}).` },
       { status: 409 }
