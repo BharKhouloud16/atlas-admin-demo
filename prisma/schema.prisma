@@ -1079,10 +1079,6 @@ model Profil {
 
   realisations Json?
 
-  videoUrl        String?
-  videoNomFichier String?
-  videoImporteLe  DateTime?
-
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
   missions         Mission[]
@@ -1307,6 +1303,19 @@ model DemandeTalent {
   analyseProvider        String?
   analyseConfiance       Float?
   analyseeLe             DateTime?
+
+  // LOT 15.5 — Client Requirement Builder (29/09/2026). Besoin structuré
+  // validé par le Client lui-même (expression libre analysée par IA PUIS
+  // corrigée, OU critères guidés saisis directement) — distinct des champs
+  // ci-dessus (competencesExtraites, etc.), qui restent la source de vérité
+  // du Matching Engine V2/Admin, jamais modifiés par ce lot. Forme :
+  // RequirementStructure (voir lib/talent/requirement-analyzer.ts) —
+  // uniquement la représentation structurée finale, jamais la réponse brute
+  // de l'agent IA (celle-ci n'est jamais persistée). Nul jusqu'à ce que le
+  // Client confirme son besoin (voir PATCH .../besoin) ; le self-service
+  // matching (POST .../besoin/matcher) refuse de s'exécuter tant que ce
+  // champ est vide.
+  criteresStructures Json?
 
   criteresModifiesParEmail String?
   criteresModifiesLe       DateTime?

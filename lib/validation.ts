@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TOUTES_COMPETENCES } from "@/lib/competences";
 
 // Schémas de validation d'entrée (zod) pour les routes d'authentification —
 // remplace les vérifications manuelles au coup par coup par des schémas
@@ -107,6 +108,84 @@ export const criteresTalentSchema = z.object({
 // champs qu'une création directe (demandeTalentSchema) et qu'une révision
 // de critères (criteresTalentSchema), jamais un troisième vocabulaire.
 export const demandeDepuisBesoinSchema = demandeTalentSchema.merge(criteresTalentSchema);
+
+// LOT 15.5 — Client Requirement Builder. "analyserBesoinSchema" : entrée du
+// mode Expression libre (POST .../besoin/analyser) — mêmes bornes que
+// demandeTalentSchema.description, jamais un texte non borné envoyé à l'IA.
+export const analyserBesoinSchema = z.object({
+  description: z.string().trim().min(10, "Merci de décrire votre besoin (10 caractères minimum).").max(4000),
+});
+
+const critereRequirementSchema = z.object({
+  valeur: z.string().trim().min(1).max(80),
+  priorite: z.enum(["REQUIRED", "PREFERRED", "OPTIONAL"]),
+});
+
+// "requirementStructureSchema" : forme validée avant persistance dans
+// DemandeTalent.criteresStructures (PATCH .../besoin) — que le Client l'ait
+// obtenue via l'IA (puis corrigée) ou construite en mode Critères guidés,
+// c'est exactement la même forme qui est vérifiée et stockée ici (Partie C
+// du mandat : un seul concept métier, quel que soit le mode d'entrée).
+//
+// LOT 15.5.2 — HARDENING : point de validation UNIQUE et centralisé pour
+// l'invariant "toute compétence persistée appartient à TOUTES_COMPETENCES".
+// Nécessaire ici précisément parce que c'est le seul des trois chemins de
+// construction d'un RequirementStructure (analyserLocalement,
+// parserReponseAnthropic, construireRequirementDepuisCriteresGuides — voir
+// lib/talent/requirement-analyzer.ts) qui n'applique PAS déjà ce filtre : les
+// trois autres construisent leur résultat à partir de TOUTES_COMPETENCES et
+// ne peuvent donc structurellement pas produire de valeur hors liste. Seul
+// le PATCH direct { requirement: ... } accepte une structure entièrement
+// fournie par l'appelant — c'est donc la seule frontière qui doit revalider.
+// Rejet (400, jamais une valeur silencieusement écartée) : plus honnête pour
+// un appelant qui soumet un besoin qu'il vient de relire/confirmer.
+//
+// "certifications" reste volontairement NON filtrée : ATLAS ne définit
+// aujourd'hui aucune taxonomie fermée de certifications (voir
+// lib/talent/requirement-analyzer.ts::normaliserCriteres, appelé avec
+// competencesFermees=false pour les certifications) — seules les bornes de
+// longueur déjà en place s'appliquent, jamais une liste inventée ici.
+export const requirementStructureSchema = z
+  .object({
+    role: z.string().trim().max(100).nullable(),
+    experienceMinAnnees: z.number().int().min(0).max(60).nullable(),
+    skills: z.array(critereRequirementSchema).max(30),
+    certifications: z.array(critereRequirementSchema).max(20),
+    disponibilite: z.string().trim().max(100).nullable(),
+    localisation: z.string().trim().max(200).nullable(),
+    domaine: z.string().trim().max(200).nullable(),
+    contraintes: z.array(z.string().trim().min(1).max(200)).max(20),
+    champsInconnus: z.array(z.string()).max(20),
+    provider: z.enum(["anthropic", "local", "guided"]),
+    confiance: z.number().min(0).max(1),
+  })
+  .superRefine((data, ctx) => {
+    const competencesFermees = new Set(TOUTES_COMPETENCES);
+    data.skills.forEach((s, i) => {
+      if (!competencesFermees.has(s.valeur)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["skills", i, "valeur"],
+          message: `Compétence inconnue : "${s.valeur}" n'appartient pas à la liste des compétences ATLAS.`,
+        });
+      }
+    });
+  });
+
+// Entrée du mode Critères guidés (Partie B, Mode 2) — construite côté
+// serveur en RequirementStructure via
+// lib/talent/requirement-analyzer.ts::construireRequirementDepuisCriteresGuides,
+// jamais un second schéma de sortie divergent.
+export const criteresGuidesSchema = z.object({
+  role: z.string().trim().max(100).nullable().optional(),
+  experienceMinAnnees: z.number().int().min(0).max(60).nullable().optional(),
+  skillsRequired: z.array(z.string().trim().min(1).max(80)).max(30).optional(),
+  skillsPreferred: z.array(z.string().trim().min(1).max(80)).max(30).optional(),
+  disponibilite: z.string().trim().max(100).nullable().optional(),
+  localisation: z.string().trim().max(200).nullable().optional(),
+  domaine: z.string().trim().max(200).nullable().optional(),
+  contraintes: z.array(z.string().trim().min(1).max(200)).max(20).optional(),
+});
 
 // ATLAS SKILL GRAPH V1 — correction explicite d'une ProfilCompetence par un
 // Admin (voir PATCH /api/profils/[id]/competences/[competenceId]). C'est la

@@ -21,7 +21,6 @@ type ProfilVitrine = {
   prenom: string | null;
   realisations: Realisation[] | null;
   badge: BadgeConfiance;
-  aVideo: boolean;
 };
 
 type SourceDemande = { id: string; titre: string | null };
@@ -84,7 +83,7 @@ export default function MissionsClientPage() {
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {missions.map((m) => {
             const ouverte = ouvertes.has(m.id);
-            const aVitrine = (m.profil.realisations?.length ?? 0) > 0 || Boolean(m.profil.badge) || m.profil.aVideo;
+            const aVitrine = (m.profil.realisations?.length ?? 0) > 0 || Boolean(m.profil.badge);
             return (
               <Card key={m.id}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
@@ -133,24 +132,14 @@ export default function MissionsClientPage() {
 }
 
 // Aperçu "vitrine" du profil de l'ingénieur, côté client : portfolio de
-// réalisations et vidéo de présentation, en lecture seule — jamais de score
-// de matching ni de TJM (réservés à l'Admin, voir /api/client/missions).
+// réalisations, en lecture seule — jamais de score de matching ni de TJM
+// (réservés à l'Admin, voir /api/client/missions).
 // Reprise à l'identique de l'ancien app/client/page.tsx.
 function ProfilVitrineDetail({ profil }: { profil: ProfilVitrine }) {
   const realisations = profil.realisations ?? [];
 
   return (
     <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #eee", display: "flex", flexDirection: "column", gap: 12 }}>
-      {profil.aVideo && (
-        <div>
-          <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 6px" }}>Vidéo de présentation</p>
-          <video
-            src={`/api/ingenieur/video/fichier?profilId=${profil.id}`}
-            controls
-            style={{ maxWidth: 320, borderRadius: 8, border: "1px solid #eee" }}
-          />
-        </div>
-      )}
       <div>
         <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 6px" }}>Réalisations</p>
         {realisations.length === 0 ? (

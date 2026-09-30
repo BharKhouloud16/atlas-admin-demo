@@ -5,8 +5,8 @@ import { secretCourant } from "@/lib/session-secret";
 // (CV, vidéo de présentation) — ex. l'Admin veut envoyer le CV d'un
 // ingénieur par email à un prospect qui n'a pas de compte sur la
 // plateforme. Sans ce mécanisme, le seul accès possible passait par une
-// session authentifiée (voir app/api/ingenieur/cv/fichier et
-// .../video/fichier) : impossible à partager avec un tiers.
+// session authentifiée (voir app/api/ingenieur/cv/fichier) : impossible à
+// partager avec un tiers.
 //
 // Principe : un jeton = expiration (timestamp ms) + signature HMAC-SHA256
 // de "ressource:expiration", encodés en base64url. Vérifié à temps constant
