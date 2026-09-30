@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
-import type { ClientNeedStatut } from "@prisma/client";
+import type { ClientNeedStatut, NeedLifecycleStatut } from "@prisma/client";
 
 // COMPANY ATLAS — LOT 2 : Client Need Intelligence Foundation (15/09/2026).
 //
@@ -50,8 +50,28 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: "Besoin introuvable." }, { status: 404 });
   }
 
+  // LOT A — ATLAS FUNCTIONAL SPECIFICATION vFINAL (30/09/2026) — STOP
+  // documenté (gate "LOT A — IMPLEMENTATION", règle absolue §1) : une
+  // modification de `titre` sur un besoin déjà VALIDATED devrait, selon A5,
+  // créer une nouvelle version de ClientNeed plutôt qu'une écriture en
+  // place. Le Design Freeze A0 (§7/§9) verrouille la mécanique de
+  // chaînage des VERSIONS de ClientNeed (version/needParentId/
+  // needSuivantId, déjà ajoutés au schéma dans ce lot) mais NE SPÉCIFIE PAS
+  // le comportement des ClientNeedFait existants lors du basculement
+  // (copiés vers la nouvelle version, ou résolus par remontée de la chaîne
+  // needParentId) — une décision d'architecture réelle (duplication de
+  // données vs. lecture chaînée), pas une règle métier déjà tranchée.
+  // Conformément à la règle absolue #1 de ce lot ("stoppe l'implémentation
+  // de la partie concernée ; documente précisément le conflit ; ne prends
+  // pas de décision métier implicite"), le déclenchement RÉEL du
+  // versioning (fork de ClientNeed) N'EST PAS implémenté dans cette route
+  // — seul le mapping lifecycleStatut trivial (VALIDE->VALIDATED,
+  // ARCHIVE->ARCHIVED) l'est. Une modification de `titre` sur un besoin
+  // VALIDATED reste donc, dans ce lot, une écriture en place comme avant —
+  // non-conforme à l'intention finale d'A5, volontairement non résolu
+  // plutôt que deviné. Voir rapport final, section "Points STOP".
   const body = await req.json().catch(() => null);
-  const data: { titre?: string | null; statut?: ClientNeedStatut } = {};
+  const data: { titre?: string | null; statut?: ClientNeedStatut; lifecycleStatut?: NeedLifecycleStatut } = {};
 
   if (body?.titre !== undefined) {
     if (body.titre !== null && (typeof body.titre !== "string" || body.titre.trim().length === 0)) {
@@ -68,6 +88,16 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       );
     }
     data.statut = body.statut as ClientNeedStatut;
+    // Mapping trivial verrouillé par le gate A0 §2. Le cas SOUMIS (le
+    // client peut re-soumettre un besoin VALIDE, comportement préexistant
+    // inchangé par ce lot) est un point d'ambiguïté distinct, également
+    // documenté : déterminer UNDERSTANDING vs STRUCTURING exigerait de
+    // relire les faits et `coherenceDetail` ici (logique aujourd'hui
+    // uniquement présente dans [id]/faits/route.ts) — non implémenté,
+    // `lifecycleStatut` reste donc inchangé dans ce cas précis plutôt que
+    // deviné.
+    if (data.statut === "VALIDE") data.lifecycleStatut = "VALIDATED";
+    if (data.statut === "ARCHIVE") data.lifecycleStatut = "ARCHIVED";
   }
 
   if (Object.keys(data).length === 0) {

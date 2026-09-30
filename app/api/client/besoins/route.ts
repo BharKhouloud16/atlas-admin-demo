@@ -88,6 +88,14 @@ export async function POST(req: NextRequest) {
         texteOriginal,
         titre,
         statut: "SOUMIS",
+        // LOT A : vocabulaire canonique, toujours UNDERSTANDING à la
+        // création — même discipline que `statut: "SOUMIS"` ci-dessus
+        // (jamais calculé à la création, quelle que soit la complétude de
+        // l'extraction). Le passage à STRUCTURING n'intervient qu'au
+        // premier recalcul serveur (voir [id]/faits/route.ts), jamais ici
+        // — décision prise par prudence (A0 gate) pour ne pas réintroduire
+        // l'ambiguïté SOUMIS historique dès la création.
+        lifecycleStatut: "UNDERSTANDING",
         coherenceStatut: coherence.statut,
         coherenceDetail: coherence.detail,
         analyseProvider: extraction.provider,

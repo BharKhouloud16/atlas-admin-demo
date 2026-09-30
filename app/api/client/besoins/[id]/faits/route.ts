@@ -4,7 +4,7 @@ import { getSession } from "@/lib/auth";
 import { dernierFaitParCle } from "@/lib/client-need/faits";
 import { CLES_CLARIFIABLES, prioriserClarifications } from "@/lib/client-need/clarification";
 import { evaluerCoherenceBesoin } from "@/lib/client-need/coherence";
-import type { ClientNeedFaitCle, ClientNeedStatut } from "@prisma/client";
+import type { ClientNeedFaitCle, ClientNeedStatut, NeedLifecycleStatut } from "@prisma/client";
 
 // COMPANY ATLAS — LOT 3 : Client Need Validation & Clarification (15/09/2026).
 //
@@ -93,8 +93,15 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   // VALIDE/ARCHIVE/BROUILLON (le client garde le contrôle explicite de ces
   // statuts via PATCH /api/client/besoins/[id]).
   let statut: ClientNeedStatut = besoin.statut;
+  // LOT A : lifecycleStatut suit la même branche, dérivé des MÊMES valeurs
+  // déjà calculées ci-dessus (coherence, clarificationsRestantes) — aucune
+  // nouvelle règle : SOUMIS (>= 0 clarification restante) -> STRUCTURING,
+  // A_CLARIFIER -> UNDERSTANDING, exactement le recalcul verrouillé par le
+  // gate A0 §2, appliqué ici en continu plutôt qu'au seul backfill.
+  let lifecycleStatut: NeedLifecycleStatut | undefined;
   if (besoin.statut === "SOUMIS" || besoin.statut === "A_CLARIFIER") {
     statut = clarificationsRestantes.length > 0 ? "A_CLARIFIER" : "SOUMIS";
+    lifecycleStatut = clarificationsRestantes.length > 0 ? "UNDERSTANDING" : "STRUCTURING";
   }
 
   const besoinMisAJour = await prisma.clientNeed.update({
@@ -103,6 +110,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       coherenceStatut: coherence.statut,
       coherenceDetail: coherence.detail,
       statut,
+      ...(lifecycleStatut ? { lifecycleStatut } : {}),
     },
     include: { faits: true },
   });

@@ -1,6 +1,8 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { ligneVersVue } from "./generation";
+import { suggererCriteresDemande } from "@/lib/client-need/talent-bridge";
+import { calculerSignatureSource } from "./signature";
 import type { DonneesSolutionOption, SolutionOptionVue } from "./persistence-types";
 
 // COMPANY ATLAS — V2.1-E : C3 Solution Intelligence — décision humaine.
@@ -31,7 +33,10 @@ export async function deciderSolution(params: {
   optionId: string;
   decideParEmail: string;
 }): Promise<ResultatDecision> {
-  const need = await prisma.clientNeed.findFirst({ where: { id: params.needId, clientId: params.clientId } });
+  const need = await prisma.clientNeed.findFirst({
+    where: { id: params.needId, clientId: params.clientId },
+    include: { faits: true },
+  });
   if (!need) return { ok: false, code: "BESOIN_INTROUVABLE" };
 
   const recommandation = await prisma.solutionOption.findFirst({
@@ -45,6 +50,20 @@ export async function deciderSolution(params: {
     orderBy: { createdAt: "desc" },
   });
   if (derniereRecommandation?.id !== recommandation.id) {
+    return { ok: false, code: "RECOMMANDATION_OBSOLETE" };
+  }
+
+  // LOT A — A5, gate A0 §10 : vérification explicite de `versionLien` avant
+  // toute décision, en complément du contrôle "recommandation la plus
+  // récente" ci-dessus (qui ne détecte qu'une régénération déjà survenue —
+  // pas un Need modifié depuis la génération sans régénération encore
+  // déclenchée). Même fonction pure que generation.ts, aucune nouvelle
+  // règle : si la signature recalculée sur les faits ACTUELS du Need ne
+  // correspond plus à celle enregistrée sur la recommandation, la décision
+  // est refusée — jamais une décision silencieusement prise sur une base
+  // obsolète.
+  const signatureActuelle = calculerSignatureSource(suggererCriteresDemande(need.faits));
+  if (recommandation.versionLien !== signatureActuelle) {
     return { ok: false, code: "RECOMMANDATION_OBSOLETE" };
   }
 
@@ -63,6 +82,11 @@ export async function deciderSolution(params: {
       sourceOptionId: recommandation.id,
       decideParEmail: params.decideParEmail,
       decideLe: new Date(),
+      // LOT A — A5 : hérite du versionLien de la recommandation décidée
+      // (déjà vérifié identique à signatureActuelle ci-dessus) — une
+      // DECISION porte la version du Need au moment de la décision, jamais
+      // NULL, jamais recalculée après coup.
+      versionLien: recommandation.versionLien,
     },
   });
 

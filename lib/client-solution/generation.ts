@@ -30,7 +30,18 @@ const NOMBRE_OPTIONS_CLIENT_MAX = 5;
 
 export type ResultatGeneration =
   | { eligible: false; raison: string; options: []; recommandation: null; decisions: [] }
-  | { eligible: true; options: SolutionOptionVue[]; recommandation: SolutionOptionVue | null; decisions: SolutionOptionVue[] };
+  | {
+      eligible: true;
+      options: SolutionOptionVue[];
+      recommandation: SolutionOptionVue | null;
+      decisions: SolutionOptionVue[];
+      // LOT A — A5 : signature de la version ACTUELLE du Need (même calcul
+      // que versionLien sur chaque ligne ci-dessus) — expose au client de
+      // quoi comparer pour détecter une option/recommandation obsolète
+      // (gate A0 §10). Absent du bug précédemment identifié : cette valeur
+      // n'était jusqu'ici jamais remontée au-delà de generation.ts.
+      signatureActuelle: string;
+    };
 
 function donneesVersJson(donnees: DonneesSolutionOption): Prisma.InputJsonValue {
   return donnees as unknown as Prisma.InputJsonValue;
@@ -47,6 +58,10 @@ export function ligneVersVue(ligne: {
   decideParEmail: string | null;
   decideLe: Date | null;
   createdAt: Date;
+  // LOT A — optionnel : les appelants historiques (avant ce lot) ne
+  // fournissent pas encore ce champ dans leur select ; fallback "INCONNU"
+  // uniquement pour ne jamais casser un appelant non mis à jour.
+  versionLien?: string | null;
 }): SolutionOptionVue {
   const donnees = ligne.donnees as unknown as DonneesSolutionOption;
   return {
@@ -63,6 +78,7 @@ export function ligneVersVue(ligne: {
     decideParEmail: ligne.decideParEmail,
     decideLe: ligne.decideLe ? ligne.decideLe.toISOString() : null,
     createdAt: ligne.createdAt.toISOString(),
+    versionLien: ligne.versionLien ?? "INCONNU",
   };
 }
 
@@ -224,13 +240,24 @@ export async function genererOuRecupererSolutions(needId: string, clientId: stri
           if (derniereRecommandation && signatureActuelle === signature) {
             // Rien n'a changé depuis la dernière génération — on renvoie
             // l'état existant, jamais une nouvelle ligne (idempotence).
-            const lignes = await tx.solutionOption.findMany({ where: { needId }, orderBy: { createdAt: "asc" } });
+            //
+            // LOT A — correctif du bug identifié par l'audit précédent :
+            // cette requête filtrait uniquement par `needId`, ce qui
+            // pouvait mélanger des lignes OPTION de vagues successives
+            // différentes si le Need avait déjà changé plusieurs fois.
+            // Filtrée désormais aussi par `versionLien: signature`, pour ne
+            // renvoyer que les lignes de la vague ACTUELLE.
+            const lignes = await tx.solutionOption.findMany({
+              where: { needId, versionLien: signature },
+              orderBy: { createdAt: "asc" },
+            });
             const vues = lignes.map(ligneVersVue);
             return {
               eligible: true,
               options: vues.filter((v) => v.niveau === "OPTION"),
               recommandation: vues.find((v) => v.id === derniereRecommandation.id) ?? null,
               decisions,
+              signatureActuelle: signature,
             } as const;
           }
 
@@ -250,7 +277,7 @@ export async function genererOuRecupererSolutions(needId: string, clientId: stri
 
           if (resultatComparaison.optionsOrdonnees.length === 0) {
             // Aucun candidat exploitable — jamais une option inventée.
-            return { eligible: true, options: [], recommandation: null, decisions } as const;
+            return { eligible: true, options: [], recommandation: null, decisions, signatureActuelle: signature } as const;
           }
 
           const lignesCreees: { id: string; rang: number }[] = [];
@@ -272,6 +299,7 @@ export async function genererOuRecupererSolutions(needId: string, clientId: stri
                 titre: option.competencesCorrespondantes.length > 0 ? option.competencesCorrespondantes.join(", ") : "Option de solution",
                 justification: option.rationale.join(" "),
                 donnees: donneesVersJson(donnees),
+                versionLien: signature,
               },
             });
             lignesCreees.push({ id: ligne.id, rang: option.rang });
@@ -301,6 +329,7 @@ export async function genererOuRecupererSolutions(needId: string, clientId: stri
                 justification: resultatComparaison.recommandation.justification,
                 donnees: donneesVersJson(donnees),
                 sourceOptionId: optionSource?.id ?? null,
+                versionLien: signature,
               },
             });
           }
@@ -316,6 +345,7 @@ export async function genererOuRecupererSolutions(needId: string, clientId: stri
             options: vues.filter((v) => v.niveau === "OPTION"),
             recommandation: ligneRecommandation ? vues.find((v) => v.id === ligneRecommandation!.id) ?? null : null,
             decisions,
+            signatureActuelle: signature,
           } as const;
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }

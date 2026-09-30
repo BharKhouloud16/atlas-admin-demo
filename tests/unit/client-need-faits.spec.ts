@@ -46,4 +46,37 @@ test.describe("COMPANY ATLAS LOT 3 — dernierFaitParCle", () => {
     expect(resultat.get("ROLE")?.valeur).toBe("QA");
     expect(resultat.get("LOCALISATION")?.valeur).toBe("France");
   });
+
+  // LOT A — ATLAS FUNCTIONAL SPECIFICATION vFINAL (30/09/2026), A1 :
+  // statutActivite (ACTIVE/OBSOLETE) — seuls les faits ACTIVE participent à
+  // la résolution "dernière valeur".
+  test("LOT A — un fait OBSOLETE n'est jamais la valeur courante, même s'il est le plus récent", () => {
+    const resultat = dernierFaitParCle([
+      { cle: "ROLE", valeur: "QA", statut: "VERIFIE", statutActivite: "ACTIVE", createdAt: "2026-01-01T00:00:00Z" },
+      { cle: "ROLE", valeur: "QA (ancien template)", statut: "VERIFIE", statutActivite: "OBSOLETE", createdAt: "2026-01-05T00:00:00Z" },
+    ]);
+    expect(resultat.get("ROLE")?.valeur).toBe("QA");
+  });
+
+  test("LOT A — un fait ACTIVE plus récent qu'un OBSOLETE reste la valeur courante", () => {
+    const resultat = dernierFaitParCle([
+      { cle: "ROLE", valeur: "Ancien (obsolète)", statut: "VERIFIE", statutActivite: "OBSOLETE", createdAt: "2026-01-01T00:00:00Z" },
+      { cle: "ROLE", valeur: "Nouveau", statut: "VERIFIE", statutActivite: "ACTIVE", createdAt: "2026-01-05T00:00:00Z" },
+    ]);
+    expect(resultat.get("ROLE")?.valeur).toBe("Nouveau");
+  });
+
+  test("LOT A — si toutes les lignes d'une clé sont OBSOLETE, la clé n'apparaît plus (jamais fabriquée)", () => {
+    const resultat = dernierFaitParCle([
+      { cle: "ROLE", valeur: "QA", statut: "VERIFIE", statutActivite: "OBSOLETE", createdAt: "2026-01-01T00:00:00Z" },
+    ]);
+    expect(resultat.has("ROLE")).toBe(false);
+  });
+
+  test("LOT A — statutActivite absent (domaine Profil, ClientProfileFact) : comportement inchangé, traité comme actif", () => {
+    const resultat = dernierFaitParCle([
+      { cle: "CONTEXTE_ACTIVITE", valeur: "SaaS B2B", statut: "DECLARE", createdAt: "2026-01-01T00:00:00Z" },
+    ]);
+    expect(resultat.get("CONTEXTE_ACTIVITE")?.valeur).toBe("SaaS B2B");
+  });
 });

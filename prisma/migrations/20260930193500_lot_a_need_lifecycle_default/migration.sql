@@ -1,0 +1,16 @@
+-- LOT A — correctif immédiat (même session d'implémentation, avant tout
+-- commit) : la migration précédente (20260930193000) rend
+-- "ClientNeed"."lifecycleStatut" NOT NULL mais ne lui donne aucune valeur
+-- par défaut côté base. Le schéma Prisma le déclarait par erreur comme
+-- nullable (`NeedLifecycleStatut?`), ce qui aurait laissé Prisma omettre le
+-- champ sur tout `create()` ne le renseignant pas explicitement — cassant
+-- par exemple toute création de ClientNeed dans les très nombreux fichiers
+-- de test existants hors périmètre de ce lot (jamais modifiés par ce lot).
+--
+-- Fixé ici par un DEFAULT explicite côté base, cohérent avec la seule
+-- route qui écrit réellement un ClientNeed neuf aujourd'hui
+-- (app/api/client/besoins/route.ts, qui pose déjà lifecycleStatut:
+-- "UNDERSTANDING" explicitement à la création — ce défaut ne change donc
+-- rien pour cette route, il sécurise uniquement les créations directes
+-- (tests, fixtures) qui ne renseignent pas le champ.
+ALTER TABLE "ClientNeed" ALTER COLUMN "lifecycleStatut" SET DEFAULT 'UNDERSTANDING';

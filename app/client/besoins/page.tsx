@@ -23,11 +23,18 @@ import { SolutionsBesoin } from "@/components/client/SolutionsBesoin";
 
 type Fait = { id: string; cle: string; valeur: string; statut: "VERIFIE" | "DECLARE" | "INFERE" | "INCONNU"; source: string | null; createdAt: string };
 type ReglesCoherence = { regle: string; statut: string; explication: string }[];
+// LOT A — ATLAS FUNCTIONAL SPECIFICATION vFINAL (30/09/2026) : vocabulaire
+// canonique, en DUAL-READ avec `statut` ci-dessous (gate A0 §9) — `statut`
+// n'est pas retiré dans ce lot, les deux champs coexistent sur la même
+// réponse API (voir app/api/client/besoins/route.ts).
+type LifecycleStatut = "DRAFT" | "UNDERSTANDING" | "STRUCTURING" | "VALIDATED" | "ARCHIVED";
+
 type Besoin = {
   id: string;
   titre: string | null;
   texteOriginal: string;
   statut: "BROUILLON" | "SOUMIS" | "A_CLARIFIER" | "VALIDE" | "ARCHIVE";
+  lifecycleStatut: LifecycleStatut;
   coherenceStatut: "COHERENT" | "INCONSISTENT" | "NEEDS_CLARIFICATION" | "UNKNOWN";
   coherenceDetail: ReglesCoherence | null;
   createdAt: string;
@@ -73,6 +80,16 @@ const LABEL_STATUT_BESOIN: Record<string, string> = {
   A_CLARIFIER: "À clarifier",
   VALIDE: "Validé",
   ARCHIVE: "Archivé",
+};
+
+// LOT A — vocabulaire canonique (gate A0 §2), affiché en complément du
+// libellé existant ci-dessus, jamais à sa place dans ce lot.
+const LABEL_LIFECYCLE: Record<LifecycleStatut, string> = {
+  DRAFT: "Brouillon",
+  UNDERSTANDING: "Compréhension en cours",
+  STRUCTURING: "Structuration",
+  VALIDATED: "Validé",
+  ARCHIVED: "Archivé",
 };
 
 const VARIANT_COHERENCE: Record<string, BadgeVariant> = {
@@ -247,6 +264,7 @@ function CarteBesoin({
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
           <Badge variant="info">{LABEL_STATUT_BESOIN[besoin.statut]}</Badge>
+          <Badge variant="neutral">{LABEL_LIFECYCLE[besoin.lifecycleStatut]}</Badge>
           <Badge variant={VARIANT_COHERENCE[besoin.coherenceStatut]}>{LABEL_COHERENCE[besoin.coherenceStatut]}</Badge>
           {besoin.missionEnCours ? (
             <Badge variant="success">Mission en cours</Badge>

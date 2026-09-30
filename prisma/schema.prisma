@@ -1424,6 +1424,25 @@ enum ClientNeedStatut {
   ARCHIVE
 }
 
+// LOT A — ATLAS FUNCTIONAL SPECIFICATION vFINAL (30/09/2026) : vocabulaire
+// canonique du Need Lifecycle, verrouillé par le gate A0 (LOT A0 DESIGN
+// FREEZE). Coexiste avec `ClientNeedStatut` ci-dessus en DUAL-READ le temps
+// de migrer les écrans dépendants (app/client/besoins/page.tsx,
+// app/admin/talent/besoins/page.tsx) — `statut` n'est PAS retiré dans ce lot.
+// Mapping verrouillé (A0 §2) : BROUILLON->DRAFT, A_CLARIFIER->UNDERSTANDING,
+// VALIDE->VALIDATED, ARCHIVE->ARCHIVED ; SOUMIS se scinde selon un recalcul
+// déterministe de evaluerCoherenceBesoin()/prioriserClarifications() déjà
+// existantes (13 ->STRUCTURING historiques, 330 ->UNDERSTANDING) — jamais un
+// mapping direct. DRAFT n'est jamais écrit par aucune route (BROUILLON est
+// un chemin mort, confirmé par le gate A0 : 0 ligne).
+enum NeedLifecycleStatut {
+  DRAFT
+  UNDERSTANDING
+  STRUCTURING
+  VALIDATED
+  ARCHIVED
+}
+
 enum ClientNeedCoherenceStatut {
   COHERENT
   INCONSISTENT
@@ -1441,6 +1460,31 @@ model ClientNeed {
   texteOriginal      String
   titre              String?
   statut             ClientNeedStatut          @default(BROUILLON)
+  // LOT A : vocabulaire canonique — NOT NULL en base (backfill exhaustif,
+  // voir migration.sql), défaut UNDERSTANDING côté base pour toute création
+  // directe ne le renseignant pas explicitement (fixé par la migration de
+  // suivi 20260930193500 — la seule route applicative qui crée un
+  // ClientNeed, app/api/client/besoins/route.ts, le renseigne déjà
+  // explicitement et n'est pas affectée par ce défaut).
+  lifecycleStatut    NeedLifecycleStatut       @default(UNDERSTANDING)
+  // LOT A — gate A0 §5 : marqueur de traçabilité historique UNIQUEMENT.
+  // Ne constitue PAS un état de lifecycle. Posé au backfill sur les Need
+  // dont le statut historique n'est pas BROUILLON/DRAFT mais qui ne
+  // possèdent aucun ClientNeedFait (334 lignes identifiées par le gate A0) —
+  // jamais réinterprété, jamais utilisé pour forcer un retour à DRAFT.
+  legacyPreInvariant Boolean                   @default(false)
+  // LOT A — A5 Need versioning. `version`=1 pour toute ligne créée avant ce
+  // lot ou directement (pas encore de modification post-VALIDATED déclenchée
+  // dans ce lot — voir rapport final, point STOP). `needParentId` pointe
+  // vers la version précédente de la même lignée ; `needSuivantId` (posé sur
+  // l'ancienne version) pointe vers la version qui la remplace. Version
+  // courante d'une lignée = celle dont needSuivantId est NULL. Jamais de
+  // réécriture d'une version existante.
+  version            Int                       @default(1)
+  needParentId       String?
+  needParent         ClientNeed?               @relation("ClientNeedVersionChain", fields: [needParentId], references: [id])
+  needVersionsFilles ClientNeed[]              @relation("ClientNeedVersionChain")
+  needSuivantId      String?
   coherenceStatut    ClientNeedCoherenceStatut @default(UNKNOWN)
   // Liste de {regle, statut, explication} — voir lib/client-need/coherence.ts.
   coherenceDetail    Json?
@@ -1460,6 +1504,7 @@ model ClientNeed {
   updatedAt          DateTime                  @updatedAt
 
   @@index([clientId])
+  @@index([needParentId])
 }
 
 // Vocabulaire FERMÉ des attributs représentables — un nouvel attribut
@@ -1513,19 +1558,35 @@ enum ClientNeedFaitCle {
 // (COMPETENCE, CONTRAINTE, CRITERE_REUSSITE, PRIORITE, RISQUE, PREFERENCE)
 // sont répétables par nature — l'appliquer au niveau base figerait
 // prématurément le modèle.
+//
+// LOT A — ATLAS FUNCTIONAL SPECIFICATION vFINAL (30/09/2026) : `statutActivite`
+// distingue l'ACTIVITÉ du fait (ACTIVE/OBSOLETE) de sa PROVENANCE (`statut`,
+// inchangé ci-dessus) — deux axes indépendants. ACTIVE par défaut, y compris
+// au backfill (3669/3669 faits historiques, gate A0 : aucune donnée ne
+// permet de déduire objectivement un OBSOLETE rétroactif). La transition
+// OBSOLETE n'est posée que par un mécanisme futur (changement de
+// Profile/Capacity, hors périmètre de ce lot — voir A4) ; jamais
+// OBSOLETE -> ACTIVE (une réactivation crée un nouveau fait ACTIVE, jamais
+// une réécriture — même discipline append-only que le reste du modèle).
 model ClientNeedFait {
-  id           String                 @id @default(cuid())
-  need         ClientNeed             @relation(fields: [needId], references: [id], onDelete: Cascade)
-  needId       String
-  composanteId String?
-  cle          ClientNeedFaitCle
-  valeur       String
-  statut       StatutPreuveCompetence @default(INCONNU)
-  source       String?
-  createdAt    DateTime               @default(now())
-  updatedAt    DateTime               @updatedAt
+  id             String                 @id @default(cuid())
+  need           ClientNeed             @relation(fields: [needId], references: [id], onDelete: Cascade)
+  needId         String
+  composanteId   String?
+  cle            ClientNeedFaitCle
+  valeur         String
+  statut         StatutPreuveCompetence @default(INCONNU)
+  statutActivite NeedFactStatus         @default(ACTIVE)
+  source         String?
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
 
   @@index([needId])
+}
+
+enum NeedFactStatus {
+  ACTIVE
+  OBSOLETE
 }
 
 // COMPANY ATLAS — V2.1-A : C3 Solution Intelligence, socle data (16/09/2026).
@@ -1583,10 +1644,19 @@ model SolutionOption {
   // décision n'est implémentée dans cette étape (voir V2.1-D).
   decideParEmail  String?
   decideLe        DateTime?
+  // LOT A — A5, gate A0 §7/§9 : identifiant de la version du Need à
+  // l'origine de cette ligne. Rempli depuis `signatureSource` (déjà calculé
+  // par calculerSignatureSource, lib/client-solution/signature.ts) quand
+  // disponible ; sinon la chaîne littérale "INCONNU" — jamais la date, la
+  // version courante, le dernier Need ou toute autre heuristique de
+  // substitution (interdiction explicite du gate A0, notamment pour les 24
+  // lignes DECISION historiques sans signature exploitable).
+  versionLien     String?
   createdAt       DateTime                @default(now())
 
   @@index([needId])
   @@index([clientId])
+  @@index([versionLien])
 }
 
 enum NiveauCertitudeSolution {
