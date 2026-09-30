@@ -31,6 +31,11 @@ type Mission = {
 type ClientOption = { id: string; nom: string };
 type ProfilOption = { id: string; nom: string; prenom?: string | null };
 
+// LOT 16.3 — MISSION LIST SCALABILITY. Même valeur par défaut que
+// PAGE_SIZE_DEFAUT côté serveur (app/api/missions/route.ts) — envoyée
+// explicitement pour ne jamais dépendre implicitement du défaut serveur.
+const TAILLE_PAGE = 20;
+
 const TEMPLATES = [
   { key: "contrat_prestation", label: "Contrat de prestation (client)" },
   { key: "nda", label: "Accord de confidentialité" },
@@ -88,17 +93,35 @@ export default function MissionsPage() {
   // couche UI autour du lifecycle existant.
   const [revueOuverte, setRevueOuverte] = useState<string | null>(null);
 
-  function rechargerMissions() {
-    return fetch("/api/missions")
+  // LOT 16.3 — MISSION LIST SCALABILITY : `page`/`total`/`totalPages`
+  // proviennent toujours du serveur (jamais recalculés côté client) — voir
+  // app/api/missions/route.ts. `page` par défaut à 1, mis à jour uniquement
+  // depuis la réponse serveur après chaque rechargement.
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+
+  function rechargerMissions(pageDemandee: number = page): Promise<unknown> {
+    return fetch(`/api/missions?page=${pageDemandee}&pageSize=${TAILLE_PAGE}`)
       .then((r) => r.json())
       .then((data) => {
-        setMissions(data);
+        setMissions(data.items);
+        setPage(data.page);
+        setTotal(data.total);
+        setTotalPages(data.totalPages);
+        // Page devenue invalide (ex. le nombre total de missions a diminué
+        // depuis la dernière page connue) : recharge automatiquement la
+        // dernière page réellement disponible plutôt que d'afficher un
+        // tableau vide sur une page qui n'existe plus.
+        if (data.items.length === 0 && data.page > 1 && data.page > data.totalPages) {
+          return rechargerMissions(data.totalPages);
+        }
         return data;
       });
   }
 
   useEffect(() => {
-    rechargerMissions();
+    rechargerMissions(1);
 
     // Détection du rôle : déduire "ADMIN" de la présence de tjmVente dans
     // /api/missions échoue à tort quand la liste est vide (aucune mission
@@ -148,7 +171,10 @@ export default function MissionsPage() {
     setNbJours("");
     setTjmVente("");
     setAfficherFormulaire(false);
-    await rechargerMissions();
+    // La nouvelle mission apparaît en tête de tri (createdAt desc) : revenir
+    // à la page 1 pour la rendre immédiatement visible, plutôt que rester
+    // sur une page où elle ne figure jamais.
+    await rechargerMissions(1);
   }
 
   async function transitionnerMission(missionId: string, action: "terminer" | "annuler") {
@@ -310,7 +336,7 @@ export default function MissionsPage() {
                       </Link>
                     </>
                   )}
-                  {isAdmin && m.statut === "En cours" && (
+                  {isAdmin && m.statut === "EN_COURS" && (
                     <div style={{ marginTop: 4, display: "flex", gap: 8 }}>
                       {/* MISSION CLOSURE INTELLIGENCE : "Terminer" ouvre désormais la
                           Revue de clôture au lieu d'appeler la transition directement
@@ -333,7 +359,7 @@ export default function MissionsPage() {
                       </button>
                     </div>
                   )}
-                  {isAdmin && (m.statut === "Terminée" || m.statut === "Annulée") && (
+                  {isAdmin && (m.statut === "TERMINEE" || m.statut === "ANNULEE") && (
                     <div style={{ marginTop: 4 }}>
                       <button
                         onClick={() => setRevueOuverte((v) => (v === m.id ? null : m.id))}
@@ -393,6 +419,28 @@ export default function MissionsPage() {
           <p style={{ fontSize: 13, color: "#888", marginTop: 12 }}>Aucune mission pour l'instant.</p>
         )}
       </div>
+
+      {total > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12, fontSize: 13 }}>
+          <button
+            onClick={() => rechargerMissions(page - 1)}
+            disabled={page <= 1}
+            style={{ padding: "4px 10px", border: `1px solid ${bordure}`, background: "#fff", cursor: page <= 1 ? "default" : "pointer", opacity: page <= 1 ? 0.5 : 1 }}
+          >
+            Précédent
+          </button>
+          <span style={{ color: grisTexte }}>
+            Page {page} / {totalPages} — {total} mission{total > 1 ? "s" : ""} au total
+          </span>
+          <button
+            onClick={() => rechargerMissions(page + 1)}
+            disabled={page >= totalPages}
+            style={{ padding: "4px 10px", border: `1px solid ${bordure}`, background: "#fff", cursor: page >= totalPages ? "default" : "pointer", opacity: page >= totalPages ? 0.5 : 1 }}
+          >
+            Suivant
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { test, expect, APIRequestContext } from "@playwright/test";
+import { prisma } from "@/lib/prisma";
 
 // ATLAS TALENT — Observabilité & Security Intelligence interne (B17,
 // 08/09/2026). Couvre le chapitre "tests" de la directive B17 pour les
@@ -45,13 +46,16 @@ async function idPremierClient(request: APIRequestContext): Promise<string> {
   return clients[0].id;
 }
 
-async function idMissionSeed(request: APIRequestContext): Promise<string> {
-  const reponse = await request.get("/api/missions");
-  expect(reponse.ok()).toBeTruthy();
-  const missions = await reponse.json();
-  const mission = missions.find((m: { repere: string }) => m.repere === "Audit Q4 2026");
+async function idMissionSeed(): Promise<string> {
+  // LOT 16.3 — GET /api/missions est désormais paginé (page=1&pageSize=20
+  // par défaut) : la mission de seed "Audit Q4 2026" n'est plus garantie
+  // d'apparaître sur la première page vu le volume de missions accumulées
+  // en base de test. Cette fonction n'a besoin que d'un identifiant de
+  // fixture valide, jamais d'exercer le comportement de la liste paginée —
+  // lookup direct en base, sans round-trip HTTP.
+  const mission = await prisma.mission.findFirst({ where: { repere: "Audit Q4 2026" } });
   expect(mission, "la mission de démo 'Audit Q4 2026' devrait exister (voir prisma/seed.ts)").toBeTruthy();
-  return mission.id;
+  return mission!.id;
 }
 
 // Cherche, côté Admin, un événement récent correspondant — la fenêtre
@@ -224,7 +228,7 @@ test.describe("B17 — instrumentation des lectures sensibles (marge-intelligenc
   test("une lecture Admin réussie de marge-intelligence journalise objet.consultation (SUCCES)", async ({ request }) => {
     const avant = Date.now();
     await connecter(request, "admin-demo@example.com");
-    const missionId = await idMissionSeed(request);
+    const missionId = await idMissionSeed();
     const lecture = await request.get(`/api/missions/${missionId}/marge-intelligence`);
     expect(lecture.ok(), await lecture.text()).toBeTruthy();
 
@@ -242,7 +246,7 @@ test.describe("B17 — instrumentation des lectures sensibles (marge-intelligenc
   test("un refus (Client) sur marge-intelligence journalise rbac.acces_refuse avec le ressourceId de la mission", async ({ request }) => {
     const avant = Date.now();
     await connecter(request, "admin-demo@example.com");
-    const missionId = await idMissionSeed(request);
+    const missionId = await idMissionSeed();
 
     await connecter(request, "client-demo@example.com");
     const refus = await request.get(`/api/missions/${missionId}/marge-intelligence`);

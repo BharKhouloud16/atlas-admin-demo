@@ -1,4 +1,5 @@
 import { test, expect, APIRequestContext } from "@playwright/test";
+import { prisma } from "@/lib/prisma";
 
 // ATLAS FINANCE — Margin Intelligence V1 (Batch 10) — chemin API. SÉCURITÉ
 // CRITIQUE : les données financières internes (coûts, marges) ne doivent
@@ -13,19 +14,22 @@ async function connecter(request: APIRequestContext, email: string, password = "
   expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
 }
 
-async function idMissionSeed(request: APIRequestContext): Promise<string> {
-  const reponse = await request.get("/api/missions");
-  expect(reponse.ok()).toBeTruthy();
-  const missions = await reponse.json();
-  const mission = missions.find((m: { repere: string }) => m.repere === "Audit Q4 2026");
+async function idMissionSeed(): Promise<string> {
+  // LOT 16.3 — GET /api/missions est désormais paginé (page=1&pageSize=20
+  // par défaut) : la mission de seed "Audit Q4 2026" n'est plus garantie
+  // d'apparaître sur la première page vu le volume de missions accumulées
+  // en base de test. Cette fonction n'a besoin que d'un identifiant de
+  // fixture valide, jamais d'exercer le comportement de la liste paginée —
+  // lookup direct en base, sans round-trip HTTP.
+  const mission = await prisma.mission.findFirst({ where: { repere: "Audit Q4 2026" } });
   expect(mission, "la mission de démo 'Audit Q4 2026' devrait exister (voir prisma/seed.ts)").toBeTruthy();
-  return mission.id;
+  return mission!.id;
 }
 
 test.describe("ATLAS FINANCE — Margin Intelligence V1 — API", () => {
   test("37. Admin : réponse 200, structure cohérente (prévisionnel connu, réel INCONNU sans CRA validé)", async ({ request }) => {
     await connecter(request, "admin-demo@example.com");
-    const missionId = await idMissionSeed(request);
+    const missionId = await idMissionSeed();
     const reponse = await request.get(`/api/missions/${missionId}/marge-intelligence`);
     expect(reponse.ok(), await reponse.text()).toBeTruthy();
     const { marginIntelligence } = await reponse.json();
@@ -38,7 +42,7 @@ test.describe("ATLAS FINANCE — Margin Intelligence V1 — API", () => {
 
   test("38. SÉCURITÉ CRITIQUE : CLIENT n'a jamais accès à /api/missions/[id]/marge-intelligence, même sur sa propre mission", async ({ request }) => {
     await connecter(request, "admin-demo@example.com");
-    const missionId = await idMissionSeed(request);
+    const missionId = await idMissionSeed();
 
     await connecter(request, "client-demo@example.com");
     const refus = await request.get(`/api/missions/${missionId}/marge-intelligence`);
@@ -50,7 +54,7 @@ test.describe("ATLAS FINANCE — Margin Intelligence V1 — API", () => {
 
   test("39. SÉCURITÉ CRITIQUE : INGENIEUR n'a jamais accès à /api/missions/[id]/marge-intelligence, même affecté à la mission", async ({ request }) => {
     await connecter(request, "admin-demo@example.com");
-    const missionId = await idMissionSeed(request);
+    const missionId = await idMissionSeed();
 
     await connecter(request, "ingenieur-demo@example.com");
     const refus = await request.get(`/api/missions/${missionId}/marge-intelligence`);
@@ -74,7 +78,7 @@ test.describe("ATLAS FINANCE — Margin Intelligence V1 — API", () => {
 
   test("42. déterminisme : deux appels consécutifs (Admin) renvoient le même résultat", async ({ request }) => {
     await connecter(request, "admin-demo@example.com");
-    const missionId = await idMissionSeed(request);
+    const missionId = await idMissionSeed();
     const r1 = await request.get(`/api/missions/${missionId}/marge-intelligence`);
     const r2 = await request.get(`/api/missions/${missionId}/marge-intelligence`);
     const j1 = await r1.json();

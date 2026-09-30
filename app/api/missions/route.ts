@@ -6,6 +6,38 @@ import { adresseIp } from "@/lib/rate-limit";
 import { enregistrerEvenementSecurite, nouveauCorrelationId } from "@/lib/security/events";
 import { estModeTravailValide, suggererContexteMission } from "@/lib/mission/context-bridge";
 
+// LOT 16.3 — MISSION LIST SCALABILITY (30/09/2026). Pagination serveur
+// page/pageSize — un modèle curseur n'est pas justifié ici (pas de flux
+// temps réel, pas d'insertion concurrente à haute fréquence sur cette
+// liste). Bornes volontairement sûres : page/pageSize toujours normalisés
+// (jamais un 400 sur un paramètre invalide, jamais un volume arbitraire
+// demandable) — voir normaliserPagination() ci-dessous.
+//
+// Tri : `createdAt desc` existait déjà mais n'était pas structurellement
+// unique (deux missions au même timestamp restaient dans un ordre non
+// garanti d'une requête à l'autre) — `id asc` ajouté comme départageur
+// stable, seul changement de tri de ce lot.
+//
+// Sécurité : le WHERE (isolation INGENIEUR sur son propre profilId, CLIENT
+// bloqué en amont) est strictement identique à l'existant et s'applique
+// AVANT toute pagination, à la fois pour le `count` et pour le `findMany`
+// — page/pageSize ne peuvent donc jamais élargir l'ensemble de missions
+// accessible, seulement en découper l'affichage. `total` est calculé avec
+// exactement le même WHERE : jamais une fuite du nombre réel de missions
+// hors du périmètre du rôle courant.
+const PAGE_SIZE_DEFAUT = 20;
+const PAGE_SIZE_MAX = 100;
+
+function normaliserPagination(searchParams: URLSearchParams): { page: number; pageSize: number } {
+  const pageBrut = Number(searchParams.get("page"));
+  const page = Number.isInteger(pageBrut) && pageBrut >= 1 ? pageBrut : 1;
+
+  const pageSizeBrut = Number(searchParams.get("pageSize"));
+  const pageSize = Number.isInteger(pageSizeBrut) && pageSizeBrut >= 1 ? Math.min(pageSizeBrut, PAGE_SIZE_MAX) : PAGE_SIZE_DEFAUT;
+
+  return { page, pageSize };
+}
+
 // FIX B17 (08/09/2026) — GET/POST prennent désormais `req: NextRequest`
 // (au lieu de `()` / déjà présent pour POST) pour pouvoir journaliser
 // l'IP sur un refus RBAC. Les contrôles de rôle ci-dessous existaient déjà
@@ -33,15 +65,25 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Utilisez /api/client/missions" }, { status: 403 });
   }
 
-  const missions = await prisma.mission.findMany({
-    // INGENIEUR : uniquement les missions liées à son propre profil
-    where: session.role === "INGENIEUR" && session.profilId ? { profilId: session.profilId } : {},
-    // LOT 6 : sourceDemande en lecture minimale (id + titre uniquement) —
-    // jamais les critères internes de la demande, qui restent consultables
-    // exclusivement via /admin/talent/[id] (déjà réservé Admin).
-    include: { client: true, profil: true, sourceDemande: { select: { id: true, titre: true } } },
-    orderBy: { createdAt: "desc" },
-  });
+  const { page, pageSize } = normaliserPagination(req.nextUrl.searchParams);
+  // INGENIEUR : uniquement les missions liées à son propre profil — même
+  // WHERE utilisé pour le compte total ET pour la page demandée, jamais
+  // deux critères divergents.
+  const where = session.role === "INGENIEUR" && session.profilId ? { profilId: session.profilId } : {};
+
+  const [total, missions] = await Promise.all([
+    prisma.mission.count({ where }),
+    prisma.mission.findMany({
+      where,
+      // LOT 6 : sourceDemande en lecture minimale (id + titre uniquement) —
+      // jamais les critères internes de la demande, qui restent consultables
+      // exclusivement via /admin/talent/[id] (déjà réservé Admin).
+      include: { client: true, profil: true, sourceDemande: { select: { id: true, titre: true } } },
+      orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+  ]);
 
   const hyp = await prisma.hypotheses.upsert({ where: { id: "singleton" }, update: {}, create: {} });
 
@@ -72,7 +114,13 @@ export async function GET(req: NextRequest) {
     return { ...m, tjmCout, tjmCoutOverhead, ca, coutTotal, margeEuros, margePct };
   });
 
-  return NextResponse.json(enrichies);
+  return NextResponse.json({
+    items: enrichies,
+    total,
+    page,
+    pageSize,
+    totalPages: Math.max(1, Math.ceil(total / pageSize)),
+  });
 }
 
 // Devises acceptées pour deviseVente — mêmes codes que TAUX_REPLI dans

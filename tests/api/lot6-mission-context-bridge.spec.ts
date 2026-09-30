@@ -195,7 +195,7 @@ test.describe("COMPANY ATLAS LOT 6 — Mission Context Bridge (API)", () => {
       const { id: missionId } = await creation.json();
 
       const liste = await request.get("/api/missions");
-      const missions = await liste.json();
+      const { items: missions } = await liste.json();
       const trouvee = missions.find((m: { id: string }) => m.id === missionId);
       expect(trouvee.sourceDemande).toEqual({ id: demande.id, titre: "Titre demande LOT6" });
     });
@@ -212,7 +212,7 @@ test.describe("COMPANY ATLAS LOT 6 — Mission Context Bridge (API)", () => {
 
       await connecter(request, "ingenieur-demo@example.com");
       const liste = await request.get("/api/missions");
-      const missions = await liste.json();
+      const { items: missions } = await liste.json();
       const mission = missions[0];
       expect(mission.dateDebut).toBeTruthy();
       expect(mission.modeTravail).toBe("Remote");
