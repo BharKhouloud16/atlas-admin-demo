@@ -211,8 +211,15 @@ test.describe("COMPANY ATLAS LOT 3 — Client Need Validation & Clarification (A
       const valide = await request.fetch(`/api/client/besoins/${besoin.id}`, { method: "PATCH", data: { statut: "VALIDE" } });
       expect(valide.status()).toBe(200);
 
-      await repondre(request, besoin.id, "SENIORITE", "CORRIGER", "Junior");
-      const reponse = await repondre(request, besoin.id, "ANNEES_EXPERIENCE_MIN", "CORRIGER", "10");
+      // A5.2 — Need Versioning Core : VALIDATED + current + CORRIGER déclenche
+      // un fork (V1 -> V2), V1 devenant historique. La seconde correction
+      // doit donc viser la nouvelle version courante retournée par la
+      // première réponse, jamais l'id d'origine (devenu historique).
+      const premiereCorrection = await repondre(request, besoin.id, "SENIORITE", "CORRIGER", "Junior");
+      expect(premiereCorrection.status(), await premiereCorrection.text()).toBe(201);
+      const { besoin: v2 } = await premiereCorrection.json();
+
+      const reponse = await repondre(request, v2.id, "ANNEES_EXPERIENCE_MIN", "CORRIGER", "10");
       expect(reponse.status(), await reponse.text()).toBe(201);
       const { besoin: misAJour } = await reponse.json();
 

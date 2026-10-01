@@ -67,6 +67,18 @@ export async function deciderSolution(params: {
     return { ok: false, code: "RECOMMANDATION_OBSOLETE" };
   }
 
+  // A5.2 — Need Versioning Core (gate A5.1 §23) : une recommandation dont
+  // le Need source n'est plus la version courante de sa lignée
+  // (needSuivantId !== null) est refusée, même si elle reste la plus
+  // récente AU SEIN de ce needId et même si sa signature reste cohérente
+  // avec les faits de cette version précise — un fork a eu lieu depuis,
+  // décider ici serait décider sur une version devenue historique. Même
+  // code métier que les deux contrôles ci-dessus, aucune nouvelle
+  // sémantique introduite.
+  if (need.needSuivantId !== null) {
+    return { ok: false, code: "RECOMMANDATION_OBSOLETE" };
+  }
+
   const donneesSource = recommandation.donnees as unknown as DonneesSolutionOption;
   const donnees: DonneesSolutionOption = { ...donneesSource };
 

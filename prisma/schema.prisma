@@ -1481,7 +1481,11 @@ model ClientNeed {
   // courante d'une lignée = celle dont needSuivantId est NULL. Jamais de
   // réécriture d'une version existante.
   version            Int                       @default(1)
-  needParentId       String?
+  // A5.2 — contrainte anti-bifurcation (gate A5.1 §18/§20) : un parent ne
+  // peut avoir qu'un seul enfant. NULL reste autorisé et non contraint par
+  // Postgres (plusieurs Need racines indépendants restent possibles) ;
+  // seule une deuxième ligne non-NULL portant la MÊME valeur est rejetée.
+  needParentId       String?                   @unique
   needParent         ClientNeed?               @relation("ClientNeedVersionChain", fields: [needParentId], references: [id])
   needVersionsFilles ClientNeed[]              @relation("ClientNeedVersionChain")
   needSuivantId      String?
@@ -1504,7 +1508,9 @@ model ClientNeed {
   updatedAt          DateTime                  @updatedAt
 
   @@index([clientId])
-  @@index([needParentId])
+  // A5.2 : l'ancien @@index([needParentId]) non-unique (Lot A) devient
+  // redondant — le `@unique` posé ci-dessus sur le champ lui-même couvre
+  // déjà toutes les mêmes recherches, en plus de la contrainte.
 }
 
 // Vocabulaire FERMÉ des attributs représentables — un nouvel attribut

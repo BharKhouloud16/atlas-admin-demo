@@ -39,3 +39,37 @@ export function dernierFaitParCle<T extends FaitPourValeurActuelle>(faits: T[]):
   }
   return dernier;
 }
+
+// A5.2 — ATLAS FUNCTIONAL SPECIFICATION vFINAL (30/09/2026), Need Versioning
+// Core (gate A5.1 §17) : clés RÉPÉTABLES de ClientNeedFaitCle — plusieurs
+// lignes ACTIVE simultanées sont légitimes pour ces clés (ex. 3
+// COMPETENCE recherchées à la fois), jamais une évolution d'une même
+// information comme pour les clés singleton. Même liste que
+// lib/client-need/clarification.ts (CLES_CLARIFIABLES en est le
+// complément exact) et lib/client-need/talent-bridge.ts (traitement
+// spécial déjà existant pour COMPETENCE, `suggererCriteresDemande`).
+export const CLES_REPETABLES: readonly string[] = [
+  "COMPETENCE",
+  "CONTRAINTE",
+  "CRITERE_REUSSITE",
+  "PRIORITE",
+  "RISQUE",
+  "PREFERENCE",
+];
+
+// A5.2 : résout l'ensemble des faits à copier lors d'un fork de version
+// (gate A5.1 §17/§18 — copie physique des faits ACTIVE, jamais une
+// résolution récursive entre versions). Différent de `dernierFaitParCle`
+// seul : celui-ci collapse chaque clé à sa dernière valeur (correct pour
+// les clés singleton), ce qui perdrait silencieusement toutes les
+// instances sauf une pour une clé répétable. Ici, les clés singleton sont
+// résolues comme d'habitude (une seule valeur courante par clé), et les
+// clés répétables sont copiées INTÉGRALEMENT (toutes les lignes ACTIVE,
+// aucune collapsée) — jamais une suppression ciblée simulée par omission
+// (hors périmètre A5.2, voir gate A5.1 §17bis, DECISION OUVERTE).
+export function resoudreFaitsActifsPourCopie<T extends FaitPourValeurActuelle>(faits: T[]): T[] {
+  const actifs = faits.filter((f) => f.statutActivite === undefined || f.statutActivite === "ACTIVE");
+  const singletons = actifs.filter((f) => !CLES_REPETABLES.includes(f.cle));
+  const repetables = actifs.filter((f) => CLES_REPETABLES.includes(f.cle));
+  return [...dernierFaitParCle(singletons).values(), ...repetables];
+}

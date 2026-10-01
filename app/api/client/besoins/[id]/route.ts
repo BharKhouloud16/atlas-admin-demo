@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
+import { estVersionCourante, executerForkAvecRetry, forkerVersion, VersionNonCouranteError } from "@/lib/client-need/versioning";
 import type { ClientNeedStatut, NeedLifecycleStatut } from "@prisma/client";
 
 // COMPANY ATLAS — LOT 2 : Client Need Intelligence Foundation (15/09/2026).
@@ -45,31 +46,20 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: "Accès non autorisé" }, { status: 403 });
   }
 
-  const besoin = await prisma.clientNeed.findUnique({ where: { id: params.id } });
+  const besoin = await prisma.clientNeed.findUnique({ where: { id: params.id }, include: { faits: true } });
   if (!besoin || besoin.clientId !== session.clientId) {
     return NextResponse.json({ error: "Besoin introuvable." }, { status: 404 });
   }
 
-  // LOT A — ATLAS FUNCTIONAL SPECIFICATION vFINAL (30/09/2026) — STOP
-  // documenté (gate "LOT A — IMPLEMENTATION", règle absolue §1) : une
-  // modification de `titre` sur un besoin déjà VALIDATED devrait, selon A5,
-  // créer une nouvelle version de ClientNeed plutôt qu'une écriture en
-  // place. Le Design Freeze A0 (§7/§9) verrouille la mécanique de
-  // chaînage des VERSIONS de ClientNeed (version/needParentId/
-  // needSuivantId, déjà ajoutés au schéma dans ce lot) mais NE SPÉCIFIE PAS
-  // le comportement des ClientNeedFait existants lors du basculement
-  // (copiés vers la nouvelle version, ou résolus par remontée de la chaîne
-  // needParentId) — une décision d'architecture réelle (duplication de
-  // données vs. lecture chaînée), pas une règle métier déjà tranchée.
-  // Conformément à la règle absolue #1 de ce lot ("stoppe l'implémentation
-  // de la partie concernée ; documente précisément le conflit ; ne prends
-  // pas de décision métier implicite"), le déclenchement RÉEL du
-  // versioning (fork de ClientNeed) N'EST PAS implémenté dans cette route
-  // — seul le mapping lifecycleStatut trivial (VALIDE->VALIDATED,
-  // ARCHIVE->ARCHIVED) l'est. Une modification de `titre` sur un besoin
-  // VALIDATED reste donc, dans ce lot, une écriture en place comme avant —
-  // non-conforme à l'intention finale d'A5, volontairement non résolu
-  // plutôt que deviné. Voir rapport final, section "Points STOP".
+  // A5.2 — ATLAS FUNCTIONAL SPECIFICATION vFINAL (30/09/2026) : Need
+  // Versioning Core (gate A5.1 §19/§25). Une version historique
+  // (needSuivantId !== null) refuse TOUTE écriture, même si son
+  // lifecycleStatut est encore VALIDATED — le critère d'historicité est
+  // needSuivantId, jamais lifecycleStatut seul.
+  if (!estVersionCourante(besoin)) {
+    return NextResponse.json({ error: "Cette version n'est plus la version courante — elle a été remplacée par une version plus récente." }, { status: 409 });
+  }
+
   const body = await req.json().catch(() => null);
   const data: { titre?: string | null; statut?: ClientNeedStatut; lifecycleStatut?: NeedLifecycleStatut } = {};
 
@@ -102,6 +92,36 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   if (Object.keys(data).length === 0) {
     return NextResponse.json({ error: "Aucune modification fournie." }, { status: 400 });
+  }
+
+  // A5.2 — gate A5.1 §19/§25 : le déclenchement du fork est scopé au
+  // contenu (`titre`), jamais à une transition de lifecycle pure
+  // (ARCHIVE, ou VALIDE re-soumis) — archiver une version courante ne
+  // modifie aucun fait ni aucune information substantielle du besoin,
+  // c'est une fin de cycle de vie, pas une "modification" au sens de A0/
+  // A5 ("modification post-validation" = contenu). Seul un `titre` fourni
+  // sur un besoin courant déjà VALIDATED déclenche réellement un fork.
+  const declencheFork = besoin.lifecycleStatut === "VALIDATED" && data.titre !== undefined;
+
+  if (declencheFork) {
+    try {
+      const suivant = await executerForkAvecRetry((tx) =>
+        forkerVersion(tx, besoin, {
+          titre: data.titre,
+          statut: data.statut,
+          lifecycleStatut: data.lifecycleStatut,
+        })
+      );
+      return NextResponse.json({ ancienneVersion: { id: besoin.id, version: besoin.version }, besoin: suivant });
+    } catch (erreur) {
+      if (erreur instanceof VersionNonCouranteError) {
+        return NextResponse.json(
+          { error: "Cette version n'est plus la version courante — elle a été remplacée par une version plus récente." },
+          { status: 409 }
+        );
+      }
+      throw erreur;
+    }
   }
 
   const misAJour = await prisma.clientNeed.update({
