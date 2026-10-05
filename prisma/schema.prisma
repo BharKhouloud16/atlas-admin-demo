@@ -2712,6 +2712,12 @@ model MissionAssignment {
   createdAt      DateTime @default(now())
   createdByEmail String
 
+  // A24 — WorkItemAssignment Foundation (05/10/2026). Inverse Prisma
+  // strictement nécessaire pour la relation WorkItemAssignment.
+  // missionAssignment ci-dessous — aucune règle A20 (lifecycle, dates,
+  // provenance, backfill) n'est modifiée par cet ajout (contrat A24 §36).
+  workItemAssignments WorkItemAssignment[]
+
   @@index([missionId])
   @@index([talentId])
 }
@@ -2876,6 +2882,11 @@ model WorkItem {
   updatedAt      DateTime @updatedAt
   createdByEmail String
 
+  // A24 — WorkItemAssignment Foundation (05/10/2026). Inverse Prisma
+  // strictement nécessaire — aucune règle A23 (lifecycle, création,
+  // transition, statut) n'est modifiée par cet ajout (contrat A24 §37).
+  assignments WorkItemAssignment[]
+
   @@index([missionId])
   @@index([missionId, statut])
 }
@@ -2889,6 +2900,93 @@ enum WorkItemStatut {
   A_FAIRE
   EN_COURS
   BLOQUE
+  TERMINE
+  ANNULE
+}
+
+// COMPANY ATLAS — A24 : WorkItemAssignment Foundation (05/10/2026).
+//
+// Répond à "qui exécute concrètement ce WorkItem ?" — JAMAIS par un lien
+// direct WorkItem -> Talent (contrat A24 §2) : WorkItem ne reçoit ni
+// talentId, ni profilId, ni engineerId. Le chemin reste obligatoirement
+// WorkItem -> WorkItemAssignment -> MissionAssignment -> Talent (contrat
+// A24 §1/§10) : le client de l'API fournit missionAssignmentId, jamais un
+// talentId — le serveur résout le Talent en lisant MissionAssignment,
+// jamais l'inverse.
+//
+// COHÉRENCE DE MISSION (contrat A24 §9) : une ligne n'est valide que si
+// WorkItem.missionId === MissionAssignment.missionId — vérifié par le
+// service (lib/work-item/assignment.ts), jamais en base (Prisma ne peut
+// pas exprimer cette cohérence croisée nativement, même limitation que
+// Mission.solutionDecisionId vs needVersionId, A18, et MissionCapabilityLink
+// vs needVersionId, A21).
+//
+// RÔLE/STATUT dédiés, jamais réutilisés depuis MissionAssignment (contrat
+// A24 §7/§8) : les deux machines représentent des faits différents (le
+// rôle d'un Talent sur LA MISSION entière n'est pas forcément son rôle sur
+// CE WorkItem précis).
+model WorkItemAssignment {
+  id String @id @default(cuid())
+
+  // Immuable après création (contrat A24 §27) : aucun service de ce lot
+  // n'accepte jamais workItemId en paramètre de modification — un
+  // "déplacement" vers un autre WorkItem n'existe pas, seulement ANNULE/
+  // TERMINE + nouvelle WorkItemAssignment.
+  workItem   WorkItem @relation(fields: [workItemId], references: [id], onDelete: Cascade)
+  workItemId String
+
+  // onDelete: Restrict (jamais Cascade) : une MissionAssignment ne peut
+  // jamais être supprimée tant qu'elle porte une WorkItemAssignment,
+  // historique ou active — même doctrine que MissionAssignment.talentId
+  // (A20) et MissionCapabilityLink.capabilityRequirementId (A21). Immuable
+  // après création (contrat A24 §26/§27) : un changement de Talent sur ce
+  // WorkItem n'est JAMAIS une réécriture de ce champ, toujours ANNULE/
+  // TERMINE + nouvelle ligne.
+  missionAssignment   MissionAssignment @relation(fields: [missionAssignmentId], references: [id], onDelete: Restrict)
+  missionAssignmentId String
+
+  // Rôle sur CE WorkItem précis — indépendant du rôle MissionAssignment
+  // (contrat A24 §7/§22). Immuable après création : aucune route de ce
+  // lot ne le réécrit (non justifié par le mandat — voir lib/work-item/
+  // assignment.ts, "aucun champ métier librement éditable après création").
+  role WorkItemAssignmentRole
+
+  // PLANIFIE par défaut à la création — jamais choisi par le client
+  // (contrat A24 §29).
+  statut WorkItemAssignmentStatut @default(PLANIFIE)
+
+  // Ni l'une ni l'autre n'est jamais déduite (contrat A24 §23/§24) : pas
+  // de createdAt, pas de MissionAssignment.dateDebut, pas de transition
+  // WorkItem. NULL par défaut — jamais une fausse date. dateDebut
+  // optionnelle à la création ; dateFin optionnelle UNIQUEMENT fournie par
+  // l'appelant au moment de "terminer"/"annuler" (jamais "now()"
+  // implicite) ; dateFin >= dateDebut vérifiée par le service lorsque les
+  // deux existent.
+  dateDebut DateTime?
+  dateFin   DateTime?
+
+  // Immuables après création (même discipline que MissionAssignment/
+  // MissionCapabilityLink/WorkItem).
+  createdAt      DateTime @default(now())
+  createdByEmail String
+
+  @@index([workItemId])
+  @@index([missionAssignmentId])
+}
+
+enum WorkItemAssignmentRole {
+  EXECUTEUR
+  CONTRIBUTEUR
+  REVIEWER
+}
+
+// Graphe de transition verrouillé (contrat A24 §28) — voir
+// lib/work-item/assignment.ts::TRANSITIONS_AUTORISEES. Machine totalement
+// indépendante des lifecycles Mission (A22)/WorkItem (A23)/MissionAssignment
+// (A20) : aucune synchronisation automatique dans un sens ni dans l'autre.
+enum WorkItemAssignmentStatut {
+  PLANIFIE
+  ACTIF
   TERMINE
   ANNULE
 }

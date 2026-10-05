@@ -136,7 +136,11 @@ export type CreationWorkItemParams = {
 // PLANIFIEE, avant même qu'un Talent soit affecté — PRETE et BLOQUEE sont
 // de la même façon des états "ouverts", seul le gel définitif TERMINEE/
 // ANNULEE interdit la création).
-const STATUTS_MISSION_FERMES = new Set(["TERMINEE", "ANNULEE"]);
+// A24 — exporté pour réutilisation par lib/work-item/assignment.ts : la
+// même règle "TERMINEE/ANNULEE gèlent tout nouveau travail" s'applique à
+// la création d'une WorkItemAssignment (contrat A24 §12/§13), jamais une
+// seconde définition divergente du même fait.
+export const STATUTS_MISSION_FERMES = new Set(["TERMINEE", "ANNULEE"]);
 
 async function creerWorkItem(tx: Prisma.TransactionClient, params: CreationWorkItemParams) {
   const mission = await tx.mission.findUnique({ where: { id: params.missionId }, select: { id: true, statut: true } });
