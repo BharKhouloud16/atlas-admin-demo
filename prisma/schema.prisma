@@ -1284,6 +1284,14 @@ model Mission {
   // Mission (A22) : aucune cascade dans un sens ni dans l'autre.
   workItems WorkItem[]
 
+  // COMPANY ATLAS — A25 : Deliverable Foundation (05/10/2026).
+  //
+  // Ce que la Mission a produit/remis — jamais créé automatiquement (ni à
+  // la création de la Mission, ni à une transition de son lifecycle A22,
+  // ni à la création/transition d'un WorkItem A23) : voir Deliverable
+  // ci-dessous pour le contrat complet.
+  deliverables Deliverable[]
+
   @@index([sourceDemandeId])
   @@index([needVersionId])
 }
@@ -2887,6 +2895,11 @@ model WorkItem {
   // transition, statut) n'est modifiée par cet ajout (contrat A24 §37).
   assignments WorkItemAssignment[]
 
+  // A25 — Deliverable Foundation (05/10/2026). Inverse Prisma strictement
+  // nécessaire pour DeliverableWorkItemLink ci-dessous — aucune règle A23
+  // (lifecycle, création, transition, statut) n'est modifiée par cet ajout.
+  deliverableLinks DeliverableWorkItemLink[]
+
   @@index([missionId])
   @@index([missionId, statut])
 }
@@ -2989,4 +3002,163 @@ enum WorkItemAssignmentStatut {
   ACTIF
   TERMINE
   ANNULE
+}
+
+// COMPANY ATLAS — A25 : Deliverable Foundation (05/10/2026).
+//
+// Ce que la Mission a PRODUIT/REMIS/PRÉPARÉ — jamais une preuve
+// (Evidence), jamais une validation qualité (Quality), jamais un
+// résultat client (Outcome). Un Deliverable FINALIZED n'implique JAMAIS
+// Outcome=OBTENU (contrat A25 §28/§32) — même doctrine que Mission.
+// TERMINEE n'impliquant jamais Outcome=OBTENU (A6.1/A22).
+//
+// DÉCISION DE MODÉLISATION EXPLICITE (contrat A25 §17/§39, documentée ici
+// comme demandé) : `Deliverable` est un objet logique QUASI-VIDE —
+// uniquement missionId/acceptanceCriteria/métadonnées de création. TOUT
+// le contenu versionné (titre, nature, contenu structuré) ET le STATUT de
+// lifecycle vivent EXCLUSIVEMENT sur DeliverableVersion ci-dessous. Un
+// Deliverable n'a PAS de statut propre — jamais un second statut
+// redondant : "le statut du Deliverable" se lit toujours comme celui de
+// sa version courante (non-supersédée). Justification : le cycle DRAFT->
+// REVIEW->APPROVED->FINALIZED décrit l'état d'un CONTENU précis (contrat
+// A25 §18/§20 : "cette VERSION est officiellement gelée"), jamais un état
+// administratif de l'objet logique — exactement le même raisonnement qui
+// a mené A15 à poser supersedesId/le statut matériel sur OutcomeAssessment
+// (une ligne par évaluation), jamais sur Mission.
+//
+// acceptanceCriteria reste sur Deliverable (pas sur Version) : c'est le
+// CONTRAT d'acceptation de l'objet logique dans son ensemble (contrat
+// A25 §27), pas un contenu qui change à chaque révision — distinct de
+// Need.criteres/Outcome.criterion, aucun lien automatique.
+model Deliverable {
+  id String @id @default(cuid())
+
+  mission   Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  missionId String
+
+  // Descriptif de ce que "accepter" ce livrable signifie — jamais
+  // confondu avec un critère de succès du Need (A1) ni un critère
+  // Outcome (A6.1), aucun lien automatique (contrat A25 §27).
+  acceptanceCriteria String?
+
+  // Immuables après création — aucune route ne les réécrit jamais (même
+  // discipline que WorkItem/MissionAssignment/MissionCapabilityLink).
+  createdAt      DateTime @default(now())
+  createdByEmail String
+
+  versions      DeliverableVersion[]
+  workItemLinks DeliverableWorkItemLink[]
+
+  @@index([missionId])
+}
+
+// Nature du CONTENU (pas un type commercial/catalogue — contrat A25 §6/§7,
+// DeliverableType explicitement interdit). DOCUMENT = fichier/texte narratif
+// à venir (A25 ne crée aucune relation Document — voir décision ci-dessous
+// sur DeliverableDocumentLink) ; STRUCTURE = données structurées (seule
+// nature acceptant contenuStructure) ; OPERATION = action opérationnelle
+// effectuée (ex. configuration déployée, aucun artefact fichier) ;
+// DECLARATIF = déclaration/affirmation structurée sans preuve jointe.
+enum DeliverableNatureContenu {
+  DOCUMENT
+  STRUCTURE
+  OPERATION
+  DECLARATIF
+}
+
+// Cycle verrouillé (contrat A25 §16) — voir
+// lib/deliverable/version.ts::TRANSITIONS_AUTORISEES pour la matrice
+// explicite. DRAFT->REVIEW->APPROVED->FINALIZED ; REVIEW->REJECTED.
+// FINALIZED et REJECTED sont TOUS LES DEUX terminaux : aucune réouverture
+// REJECTED->DRAFT (contrat A25 §21 : "une correction crée une nouvelle
+// version", jamais une réécriture/réouverture — même doctrine que
+// TERMINE/ANNULE sur WorkItem/WorkItemAssignment, A23/A24).
+enum DeliverableStatut {
+  DRAFT
+  REVIEW
+  APPROVED
+  FINALIZED
+  REJECTED
+}
+
+// Une version précise du CONTENU du Deliverable — append-only, jamais
+// réécrite (contrat A25 §13) : succession portée par la NOUVELLE ligne
+// (supersedesId, même doctrine que OutcomeAssessment/A15, jamais
+// supersededById sur l'ancienne), @unique sur supersedesId empêchant
+// structurellement tout branchement (contrat A25 §15/§41 : V1->V2->V3,
+// jamais V1->{V2,V3}). Le numéro `version` est attribué par le service
+// (lib/deliverable/version.ts), jamais fourni par le client (contrat
+// A25 §14).
+model DeliverableVersion {
+  id String @id @default(cuid())
+
+  deliverable   Deliverable @relation(fields: [deliverableId], references: [id], onDelete: Cascade)
+  deliverableId String
+
+  // Serveur-assigné, strictement croissant à partir de 1 par Deliverable
+  // — jamais choisi par le client.
+  version Int
+
+  titre         String
+  natureContenu DeliverableNatureContenu
+
+  // Autorisé UNIQUEMENT si natureContenu = STRUCTURE (contrat A25 §8/§37)
+  // — vérifié par le service, jamais en base (Prisma ne peut pas exprimer
+  // cette cohérence croisée nativement, même limitation que
+  // MissionCapabilityLink vs needVersionId, A21).
+  contenuStructure Json?
+
+  statut DeliverableStatut @default(DRAFT)
+
+  // A15 — même doctrine de supersession corrigée : le pointeur vit sur la
+  // NOUVELLE ligne, l'ancienne n'est jamais mutée après coup. @unique
+  // empêche toute branche.
+  supersedesId String?             @unique
+  supersedes   DeliverableVersion? @relation("DeliverableVersionSuccession", fields: [supersedesId], references: [id], onDelete: Restrict)
+  supersededBy DeliverableVersion? @relation("DeliverableVersionSuccession")
+
+  // Immuables après création — jamais réécrits (contrat A25 §40 :
+  // version/supersedesId/createdAt/createdByEmail explicitement listés).
+  // Une fois FINALIZED, titre/natureContenu/contenuStructure deviennent
+  // également immuables (contrat A25 §18) — contrôlé par le service,
+  // jamais par une contrainte DB (le statut conditionne l'immutabilité,
+  // Prisma ne peut pas l'exprimer nativement).
+  createdAt      DateTime @default(now())
+  createdByEmail String
+
+  @@unique([deliverableId, version])
+  @@index([deliverableId])
+}
+
+// Lien EXPLICITE entre un Deliverable et les WorkItem ayant contribué à sa
+// production — N:M, jamais créé automatiquement (contrat A25 §22/§23).
+// Volontairement au niveau Deliverable, JAMAIS DeliverableVersion (contrat
+// A25 §25/§26) : les WorkItems contributeurs restent les mêmes à travers
+// les révisions de contenu, jamais dupliqués à chaque nouvelle version.
+// COHÉRENCE DE MISSION (contrat A25 §24) : Deliverable.missionId ==
+// WorkItem.missionId, vérifiée par le service (lib/deliverable/
+// work-item-link.ts), jamais en base (même limitation que
+// WorkItemAssignment vs Mission, A24). onDelete: Restrict sur workItem
+// (jamais Cascade) : même doctrine que MissionAssignment.talentId (A20) —
+// un WorkItem ne peut jamais être supprimé tant qu'il porte un lien.
+// Suppression de CE lien = hard delete (contrat A25 §44, verbe DELETE) :
+// jamais un soft-SUPERSEDED comme MissionCapabilityLink (A21), parce que
+// ce lien ne porte lui-même aucun fait métier à historiser — seul un pur
+// pointeur de traçabilité, retiré sans perte d'information (ni le
+// Deliverable ni le WorkItem ne sont jamais supprimés par ce retrait).
+model DeliverableWorkItemLink {
+  id String @id @default(cuid())
+
+  deliverable   Deliverable @relation(fields: [deliverableId], references: [id], onDelete: Cascade)
+  deliverableId String
+
+  workItem   WorkItem @relation(fields: [workItemId], references: [id], onDelete: Restrict)
+  workItemId String
+
+  createdAt      DateTime @default(now())
+  createdByEmail String
+
+  @@unique([deliverableId, workItemId])
+  @@index([deliverableId])
+  @@index([workItemId])
 }
