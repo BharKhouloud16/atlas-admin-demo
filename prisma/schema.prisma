@@ -1303,6 +1303,17 @@ model Mission {
   // la Mission reste le seul point d'articulation commun, contrat A29 §33).
   financialResults FinancialResult[]
 
+  // COMPANY ATLAS — A30 : Learning Foundation (05/10/2026).
+  //
+  // Connaissance DÉRIVÉE d'une expérience Mission — jamais une
+  // modification de l'expérience elle-même. Voir Learning ci-dessous
+  // pour le contrat complet. Même discipline d'indépendance que
+  // FinancialResult ci-dessus : aucune FK directe depuis Mission vers
+  // OutcomeAssessment/FinancialResult/DeliveryQualityGate n'est ajoutée
+  // ici, Mission reste le seul point d'articulation commun (contrat A30
+  // §15/§16).
+  learnings Learning[]
+
   @@index([sourceDemandeId])
   @@index([needVersionId])
 }
@@ -3675,4 +3686,250 @@ model FinancialResult {
   createdByEmail String
 
   @@index([missionId])
+}
+
+// ============================================================================
+// COMPANY ATLAS — A30 : LEARNING FOUNDATION (05/10/2026).
+//
+// Objectif (contrat A30, Learning Contract validé) : transformer
+// l'expérience passée d'une Mission en connaissance traçable et
+// réutilisable, sans jamais réécrire l'historique ni automatiser de
+// décision future. Dernier maillon de la chaîne Need -> Solution ->
+// Mission -> Talent/Capability -> Delivery -> Evidence -> Quality ->
+// Outcome -> FinancialResult -> Learning -> Future Context.
+//
+// LEARNING != SOURCE (contrat A30 §3.1) : référence sa source par simple
+// pointeur texte, jamais une relation Prisma forçant un champ inverse sur
+// le modèle source (même discipline que OutcomeAssessment.decisionOptionId/
+// SolutionOption.sourceOptionId, A6.1/V2.1-A, auditée en A30-AUDIT §6) —
+// Deliverable/DeliverableVersion/WorkItem/DeliveryEvidence/
+// DeliveryQualityGate/OutcomeAssessment/FinancialResult restent
+// strictement INCHANGÉS par ce lot (contrat A30 §3.3, aucune modification
+// d'un moteur précédent).
+//
+// LEARNING != DECISION (contrat A30 §3.3) : aucune route/service de ce
+// lot ne modifie jamais Need/NeedFact/SolutionOption/CapabilityRequirement/
+// Talent/Mission — un Learning reste une entrée CONTEXTUELLE potentielle
+// pour une décision humaine future, jamais une décision elle-même.
+//
+// LEARNING != AI MEMORY (contrat A30 §3.4) : aucun embedding, aucun
+// pgvector, aucun RAG, aucune recherche vectorielle, aucun knowledge
+// graph, aucun pipeline LLM — substrat métier uniquement (table
+// relationnelle classique, contenu texte libre).
+model Learning {
+  id String @id @default(cuid())
+
+  // Source PRIMAIRE obligatoire (contrat A30 §7) — onDelete: Restrict
+  // (jamais Cascade) : un Learning est un fait historique, il ne doit
+  // jamais disparaître silencieusement si sa Mission source était
+  // supprimée (même doctrine que FinancialResult/OutcomeAssessment).
+  mission   Mission @relation(fields: [missionId], references: [id], onDelete: Restrict)
+  missionId String
+
+  // Source PRÉCISE optionnelle (contrat A30 §7/§8) — au plus UNE des sept
+  // colonnes ci-dessous est renseignée (invariant contrôlé par le
+  // service, jamais en base), jamais une table polymorphe générique
+  // "LearningSource" (interdiction explicite contrat A30 §8, anti-patron
+  // déjà présent dans ce schéma avec AuditEvent.objectId — audité et
+  // délibérément non reproduit ici). Simples colonnes texte, jamais une
+  // relation Prisma complète — même discipline que §3.1 ci-dessus : aucun
+  // champ inverse n'est ajouté sur WorkItem/Deliverable/DeliverableVersion/
+  // DeliveryEvidence/DeliveryQualityGate/OutcomeAssessment/FinancialResult.
+  // Chacune est vérifiée par le service comme appartenant à la MÊME
+  // Mission que `missionId` ci-dessus (contrat A30 §7, règle absolue) —
+  // "introuvable" et "appartient à une autre Mission" produisent la même
+  // erreur (même doctrine IDOR que A26/A27/A29).
+  sourceWorkItemId             String?
+  sourceDeliverableId          String?
+  sourceDeliverableVersionId   String?
+  sourceDeliveryEvidenceId     String?
+  sourceDeliveryQualityGateId  String?
+  sourceOutcomeAssessmentId    String?
+  sourceFinancialResultId      String?
+
+  // Typologie verrouillée par le Learning Contract (contrat A30 §5) —
+  // volontairement les six valeurs explicitement listées par le mandat
+  // d'implémentation (dérogeant à la réduction à 3 proposée par l'audit
+  // A30-AUDIT §10 : le contrat validé par le CTO retient la typologie
+  // complète). Aucun type ne change automatiquement un comportement
+  // système (contrat A30 §5, dernière ligne) — champ purement descriptif,
+  // jamais lu par aucune condition applicative hors validation d'entrée.
+  type LearningType
+
+  // Contenu minimal (contrat A30 §11) : `title` + `statement` doivent se
+  // comprendre indépendamment de la source (jamais une simple référence
+  // du type "voir Evidence X"). Écrit-une-fois : aucune route de ce lot
+  // n'autorise la modification de ces deux champs après création (contrat
+  // A30 §13, "ne jamais réécrire l'apprentissage historique" — une
+  // correction de contenu crée une NOUVELLE ligne via supersession,
+  // jamais une mutation en place).
+  title     String
+  statement String
+
+  // Provenance (contrat A30 §3.2/§6) — distincte de `confidence`
+  // ci-dessous (contrat A30 §12 : "INFERRED + HIGH reste une inférence").
+  // INFERRED ne devient jamais automatiquement VERIFIED/DECLARED (contrat
+  // A30 §3.2/§6, "aucune promotion automatique") — seule une nouvelle
+  // ligne explicite (création humaine) peut porter une provenance
+  // différente pour la même observation.
+  provenance LearningProvenance
+
+  // Confiance (contrat A30 §12) — jamais un score algorithmique, jamais
+  // calculée : toujours déclarée explicitement par le créateur au moment
+  // de la création, au même titre que provenance.
+  confidence LearningConfidence
+
+  // Portée d'applicabilité (contrat A30 §9) — MISSION par défaut,
+  // jamais élargie automatiquement par le système (contrat A30 §9,
+  // "la portée ne doit jamais être automatiquement élargie" — un
+  // Learning créé pour une Mission reste limité à cette Mission tant
+  // qu'un processus explicite ne l'élargit pas). Immuable après création
+  // dans ce lot (aucun "moteur de réutilisation contrôlé" construit ici,
+  // contrat A30 §17) : seul un ADMIN peut déclarer directement une
+  // portée plus large qu'une Mission AU MOMENT de la création (jamais un
+  // Ingénieur, contrôlé par le service — contrat A30 §18, "il ne doit
+  // jamais pouvoir transformer seul une inférence en connaissance ATLAS
+  // globale").
+  scope LearningScope @default(MISSION)
+
+  // Statut de VALIDATION (contrat A30 §18 "valider"/§22
+  // "learning.validated") — distinct de `applicabilite` ci-dessous.
+  // PROPOSE à la création quel que soit le rôle du créateur, jamais
+  // choisi par l'appelant. Transition PROPOSE -> VALIDE réservée ADMIN
+  // (contrat A30 §18), jamais l'inverse (même discipline append-only que
+  // ClientNeedFait.statutActivite : une "dévalidation" créerait une
+  // nouvelle ligne, jamais une réécriture). Ne modifie JAMAIS
+  // `provenance` : valider un Learning INFERRED ne le transforme jamais
+  // en VERIFIED (contrat A30 §3.2/§6, règle absolue).
+  statut          LearningStatut @default(PROPOSE)
+  validatedAt     DateTime?
+  validatedByEmail String?
+
+  // Statut d'APPLICABILITÉ (contrat A30 §10) — distinct de `statut`
+  // ci-dessus : sépare la vérité historique (toujours vraie, jamais
+  // supprimée) de la validité actuelle (peut devenir obsolète dans le
+  // temps, même sans correction de contenu ni successeur). ACTIVE par
+  // défaut, jamais OBSOLETE -> ACTIVE (réactivation = nouvelle ligne,
+  // même discipline que NeedFactStatus/ClientNeedFait). Transition
+  // traçable (`obsoleteAt`/`obsoleteByEmail`, même patron que
+  // EmergencyStop.liftedAt/liftedBy) — réservée ADMIN (contrat A30 §18).
+  applicabilite    LearningApplicabilite @default(ACTIVE)
+  obsoleteAt       DateTime?
+  obsoleteByEmail  String?
+
+  // Succession EXPLICITE, jamais auto-détectée (contrat A30 §14, "le
+  // caller doit explicitement déclarer la succession") — @unique empêche
+  // toute branche concurrente (même doctrine que DeliveryEvidence/
+  // OutcomeAssessment/FinancialResult, interdiction de branching). Cross-
+  // Mission et cross-client structurellement impossibles : le service
+  // vérifie que l'ancien Learning référencé appartient exactement à la
+  // même Mission (donc au même client, Mission.clientId étant fixe)
+  // avant toute création (contrat A30 §14). La création d'une ligne
+  // successeur NE modifie JAMAIS l'ancienne ligne (ni son `statut`, ni
+  // son `applicabilite`) — aucune automatisation, aucune mutation
+  // silencieuse (contrat A30 §13).
+  supersedesId String?    @unique
+  supersedes   Learning?  @relation("LearningSuccession", fields: [supersedesId], references: [id], onDelete: Restrict)
+  supersededBy Learning?  @relation("LearningSuccession")
+
+  createdAt      DateTime @default(now())
+  createdByEmail String
+  createdByRole  String
+
+  @@index([missionId])
+  @@index([sourceWorkItemId])
+  @@index([sourceDeliverableId])
+  @@index([sourceDeliverableVersionId])
+  @@index([sourceDeliveryEvidenceId])
+  @@index([sourceDeliveryQualityGateId])
+  @@index([sourceOutcomeAssessmentId])
+  @@index([sourceFinancialResultId])
+  @@index([statut])
+  @@index([scope])
+}
+
+// Typologie verrouillée (contrat A30 §5) — six valeurs explicitement
+// nommées par le Learning Contract. LESSON : constat factuel dérivé
+// d'une expérience précise. PATTERN : récurrence observée à travers
+// plusieurs expériences. BEST_PRACTICE : pratique jugée à reproduire.
+// ANTI_PATTERN : approche jugée à éviter (distincte de BEST_PRACTICE,
+// jamais un simple "négatif" de celle-ci — un évaluateur doit pouvoir
+// distinguer "à faire" de "à éviter" au premier coup d'oeil). RECOMMENDATION :
+// préconisation actionnable pour une future Mission similaire. INSIGHT :
+// observation qualitative ne rentrant dans aucune des catégories
+// précédentes. Aucune valeur ne déclenche de comportement système
+// automatique (contrat A30 §5).
+enum LearningType {
+  LESSON
+  PATTERN
+  BEST_PRACTICE
+  ANTI_PATTERN
+  RECOMMENDATION
+  INSIGHT
+}
+
+// Provenance verrouillée (contrat A30 §3.2/§6) — quatre valeurs
+// explicitement nommées. OBSERVED : constat direct par le créateur,
+// sans déclaration tierce. DECLARED : rapporté par un tiers (ex. un
+// Ingénieur rapportant un fait vécu sur sa Mission). VERIFIED :
+// vérification humaine active contre une source réelle. INFERRED :
+// proposition d'une IA — jamais suffisant seul pour un Learning VALIDE
+// sans revue humaine explicite (contrat A30 §3.2, "aucune promotion
+// automatique"), même doctrine que OutcomeMethodeVerification.INFERE_IA
+// (A6.1) et DeliveryEvidenceMethod côté Evidence (A26) — vocabulaire
+// volontairement NON partagé entre domaines (contrat A6 §A6.3/§A6.10,
+// "5e instance du même vocabulaire à dessein jamais partagée").
+enum LearningProvenance {
+  OBSERVED
+  DECLARED
+  VERIFIED
+  INFERRED
+}
+
+// Confiance verrouillée (contrat A30 §12) — jamais confondue avec
+// `LearningProvenance` ci-dessus (ex. "INFERRED + HIGH" reste une
+// inférence, "VERIFIED + MEDIUM" reste vérifiée mais limitée en
+// confiance). Jamais un score algorithmique (contrat A30 §12, "pas de
+// scoring automatique") — toujours une déclaration humaine explicite au
+// moment de la création.
+enum LearningConfidence {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+// Portée verrouillée (contrat A30 §9) — cinq valeurs explicitement
+// nommées. MISSION : expérience spécifique à cette Mission précise.
+// CLIENT : réutilisable uniquement dans le contexte du même client.
+// DOMAIN : connaissance réutilisable dans un domaine métier. CAPABILITY :
+// connaissance liée à une capacité précise. ATLAS : connaissance
+// généralisée à l'ensemble d'ATLAS. Jamais élargie automatiquement par
+// le système (contrat A30 §9) — voir commentaire du champ `scope`
+// ci-dessus pour la restriction de rôle à la création.
+enum LearningScope {
+  MISSION
+  CLIENT
+  DOMAIN
+  CAPABILITY
+  ATLAS
+}
+
+// Statut de VALIDATION (contrat A30 §18/§22) — PROPOSE à la création,
+// VALIDE uniquement après une action ADMIN explicite ("valider"). Jamais
+// l'inverse (append-only, même doctrine que NeedFactStatus). Distinct de
+// LearningApplicabilite ci-dessous — deux axes indépendants (contrat A30
+// §10 vs §18).
+enum LearningStatut {
+  PROPOSE
+  VALIDE
+}
+
+// Statut d'APPLICABILITÉ (contrat A30 §10) — sépare la vérité historique
+// (toujours vraie) de la validité actuelle (peut devenir obsolète).
+// ACTIVE par défaut, jamais OBSOLETE -> ACTIVE (même discipline
+// append-only que NeedFactStatus/ClientNeedFait.statutActivite — une
+// réactivation crée un nouveau Learning, jamais une réécriture).
+enum LearningApplicabilite {
+  ACTIVE
+  OBSOLETE
 }
