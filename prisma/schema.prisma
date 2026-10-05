@@ -1292,6 +1292,17 @@ model Mission {
   // ci-dessous pour le contrat complet.
   deliverables Deliverable[]
 
+  // COMPANY ATLAS — A29 : Financial Result Foundation (05/10/2026).
+  //
+  // Performance économique RÉELLE de la Mission — jamais créée
+  // automatiquement (ni à la création de la Mission, ni à une transition
+  // de son lifecycle A22) : voir FinancialResult ci-dessous pour le
+  // contrat complet. Indépendant par construction de tjmVente/nbJours/
+  // margeCible (la CIBLE commerciale, ci-dessus) et de OutcomeAssessment/
+  // DeliveryQualityGate (jamais une FK directe vers l'un ou l'autre —
+  // la Mission reste le seul point d'articulation commun, contrat A29 §33).
+  financialResults FinancialResult[]
+
   @@index([sourceDemandeId])
   @@index([needVersionId])
 }
@@ -3484,4 +3495,184 @@ model QualityEvidenceLink {
   @@unique([qualityGateId, deliveryEvidenceId])
   @@index([qualityGateId])
   @@index([deliveryEvidenceId])
+}
+
+// COMPANY ATLAS — A29 : Financial Result Foundation (05/10/2026).
+//
+// Répond à "quel résultat financier réel cette Mission a-t-elle produit ?"
+// — JAMAIS "quel était l'objectif commercial ?" (Mission.tjmVente/nbJours/
+// margeCible, contrat A29 §2/§5/§18, intégralement conservés tels quels :
+// CIBLE commerciale, jamais renommée/transformée en "réel"). N'implique
+// JAMAIS OutcomeAssessment ni DeliveryQualityGate (contrat A29 §6/§7/§33) :
+// `Outcome PASS/ACHIEVED + Financial Result LOSS` et
+// `Quality FAIL + Financial Result PROFIT` doivent tous deux rester
+// possibles — Mission reste le seul point d'articulation commun, jamais
+// une FK directe vers l'un ou l'autre.
+//
+// AUDIT DES SOURCES FINANCIÈRES RÉELLES (contrat A29 §3/§8, mené avant
+// toute décision de modèle) : grep "margeCible/tjmVente/nbJours/cout/
+// revenu/financial/finance/margin" sur app/lib/prisma/tests a révélé :
+//   A — Prévision : Mission.tjmVente/nbJours/margeCible (déjà existants,
+//       jamais touchés ici).
+//   B — Réalisé existant : Facture/Paiement (V2.2-B, Decimal(12,2), déjà
+//       une facturation RÉELLE — montantHT/TTC facturé, Paiement.montant
+//       réellement encaissé si statut=CONFIRME) ; FeuilleDeTemps.statut=
+//       "ValideeClient" (seul statut définitif, déjà utilisé par
+//       lib/finance/margin-intelligence.ts comme unique source de "jours
+//       réels"). AUCUNE donnée de COÛT TALENT réellement payé n'existe
+//       (Profil.montantSaisi est un TJM NÉGOCIÉ/catalogue, jamais une
+//       dépense réellement engagée — contrat A29 §16, confirmé par cet
+//       audit : calculerTjmCout() produit un TAUX modélisé via des
+//       Hypotheses globales, jamais un montant payé).
+//   C — Déclaratif : un ADMIN peut déclarer un montant qu'il affirme réel
+//       (même doctrine que DeliveryEvidence.contenu/A27 criteresEvalues :
+//       une assertion humaine, jamais une invention du service).
+//   D — Calculé : Profit = Revenue - Cost, Margin% = Profit/Revenue
+//       (uniquement si les deux entrées sont connues — jamais déduit d'un
+//       seul côté).
+//   E — Inconnu : par défaut, pour toute Mission sans donnée fiable
+//       déclarée — jamais un 0 implicite (contrat A29 §10 : "0 et UNKNOWN
+//       sont deux états différents").
+//
+// DÉCISION DE MODÉLISATION EXPLICITE (contrat A29 §16/§26, documentée
+// ici) : compte tenu de l'absence totale de coût Talent réellement payé
+// dans ce schéma, ce lot n'implémente AUCUN calcul automatique de coût
+// (jamais allocationPct × un TJM quelconque, contrat A29 §16) — Revenue
+// ET Cost sont tous deux des montants DÉCLARÉS par un ADMIN
+// (provenance obligatoire, jamais une valeur stockée sans savoir d'où
+// elle vient), exactement l'exemple du contrat A29 §26. Une Mission sans
+// déclaration ADMIN reste structurellement NOT_DETERMINABLE, jamais
+// recalculée depuis Mission.tjmVente/nbJours/margeCible (contrat A29
+// §47 : la cible commerciale ne devient jamais un réalisé par magie).
+// Réutiliser Facture/Paiement comme calcul automatique de Revenue a été
+// délibérément écarté pour ce lot V1 (périmètre minimal, contrat A29 §37/
+// §38 "pas de système comptable") — reste une extension documentée
+// possible pour un lot futur, jamais construite ici sans nécessité
+// démontrée.
+//
+// CIBLE (contrat A29 §33) : FK directe vers Mission UNIQUEMENT — jamais
+// vers OutcomeAssessment/DeliveryQualityGate, pour préserver
+// l'indépendance totale entre les trois moteurs.
+//
+// LIFECYCLE / SUCCESSION (contrat A29 §20/§35/§36, décision explicite) :
+// DRAFT -> FINALIZED (même machine minimale que DeliveryQualityGate, A27)
+// ; `supersedesId` TOUJOURS explicite, jamais auto-détecté (contrat A29
+// §35 : "ne pas créer de contrainte unique avant d'avoir déterminé le
+// besoin" — contrairement à OutcomeAssessment, A6.1, qui impose UN SEUL
+// courant par Mission). Plusieurs FinancialResult peuvent légitimement
+// coexister pour la même Mission (ex. un DRAFT en préparation et un
+// FINALIZED déjà figé) — même doctrine que DeliveryEvidence (A26) :
+// aucune notion de "ligne courante unique" à auto-détecter, une
+// correction après FINALIZED est une NOUVELLE ligne, qui peut
+// explicitement superséder l'ancienne si l'appelant le précise.
+//
+// MONEY (contrat A29 §11) : Decimal(12,2), même convention que Facture/
+// Paiement (V2.2-B) — jamais Float (contrairement à Mission.tjmVente/
+// margeCible, déjà Float, jamais changés ici). `marginPct` en Decimal
+// (7,4), fraction (0.30 = 30%) — même convention que Mission.margeCible
+// (Float, mais déjà une fraction, jamais un pourcentage littéral), arrondi
+// déterministe via Prisma.Decimal.ROUND_HALF_UP (jamais un flottant
+// binaire imprévisible).
+//
+// DEVISE (contrat A29 §12) : `currency` requis, jamais un défaut "EUR"
+// codé en dur dans le SCHÉMA (contrairement à Mission.deviseVente, qui,
+// lui, porte un défaut applicatif historique) — le SERVICE renseigne
+// `currency` depuis Mission.deviseVente si l'appelant ne le fournit pas
+// explicitement, jamais une supposition implicite au niveau du modèle.
+enum FinancialResultStatut {
+  DRAFT
+  FINALIZED
+}
+
+// Vocabulaire DÉDIÉ à Financial Result (contrat A29 §9/§27), jamais
+// réutilisé depuis DeliveryEvidenceConfidence (A26)/OutcomeConfiance
+// (A6.1) — même discipline que chaque domaine précédent (A26 §11/§20).
+// DECLARE : un ADMIN affirme ce montant sans vérification croisée
+// supplémentaire documentée. VERIFIE : l'ADMIN atteste explicitement
+// avoir vérifié ce montant contre une source réelle (ex. Facture/
+// Paiement déjà existants) — toujours une assertion humaine, jamais un
+// calcul automatique qui le rendrait "vérifié" par construction (contrat
+// A29 §27 : "ne pas appeler verified une donnée simplement saisie" —
+// VERIFIE exige donc en plus `justification` non vide expliquant la
+// vérification, contrôlé par le service).
+enum FinancialResultProvenance {
+  DECLARE
+  VERIFIE
+}
+
+// Vocabulaire verrouillé (contrat A29 §13), jamais réutilisé depuis
+// OutcomeStatut/DeliveryQualityResult (A6.1/A27) — bounded context
+// distinct. NOT_DETERMINABLE couvre à la fois "Revenue ou Cost inconnu"
+// ET "Revenue connu mais égal à zéro" pour le pourcentage de marge
+// (contrat A29 §24, division par zéro jamais calculée) — jamais un déni
+// de ce dernier cas comme une simple absence de champ.
+enum FinancialResultGlobal {
+  PROFIT
+  BREAK_EVEN
+  LOSS
+  NOT_DETERMINABLE
+}
+
+model FinancialResult {
+  id String @id @default(cuid())
+
+  // onDelete: Restrict (jamais Cascade) : un FinancialResult est un fait
+  // historique, il ne doit jamais disparaître silencieusement si la
+  // Mission était supprimée (même doctrine que toutes les cibles A26/A27).
+  mission   Mission @relation(fields: [missionId], references: [id], onDelete: Restrict)
+  missionId String
+
+  // Devise de CE résultat — requise, jamais déduite implicitement d'un
+  // défaut codé en dur ici (le service la renseigne depuis
+  // Mission.deviseVente si absente à l'appel, contrat A29 §12).
+  currency String
+
+  // Revenue/Cost — tous deux optionnels (null = UNKNOWN, jamais 0 par
+  // défaut, contrat A29 §10). Si renseigné : provenance ET justification
+  // non vide sont OBLIGATOIRES (contrôlé par le service, jamais en base) —
+  // jamais un montant stocké sans savoir d'où il vient (contrat A29 §9).
+  revenueAmount        Decimal?                   @db.Decimal(12, 2)
+  revenueProvenance    FinancialResultProvenance?
+  revenueJustification String?
+
+  costAmount        Decimal?                   @db.Decimal(12, 2)
+  costProvenance    FinancialResultProvenance?
+  costJustification String?
+
+  // Dérivés — TOUJOURS calculés par le service (lib/financial-result/
+  // financial-result.ts::calculerResultat), jamais fournis par l'appelant
+  // (contrat A29 §10/§23/§24) : Profit = Revenue - Cost et Margin% =
+  // Profit/Revenue UNIQUEMENT si les deux entrées sont connues ET
+  // Revenue != 0 pour Margin% ; sinon NOT_DETERMINABLE explicite, jamais
+  // NaN/Infinity/0 par défaut.
+  profitAmount   Decimal?               @db.Decimal(12, 2)
+  marginPct      Decimal?               @db.Decimal(7, 4)
+  resultatGlobal FinancialResultGlobal
+
+  // DRAFT à la création, jamais choisi par l'appelant (contrat A29 §20).
+  statut FinancialResultStatut @default(DRAFT)
+
+  // "Date" métier minimale du contrat A29 §9/§21 — distincte de
+  // `createdAt` (infra) par discipline, même si identique en pratique à
+  // la création (même convention que DeliveryQualityGate.evaluatedAt,
+  // A27). periodStart/periodEnd explicitement HORS PÉRIMÈTRE A29 (contrat
+  // A29 §22 : "résultat sur le périmètre complet de la Mission", jamais
+  // périodique dans ce lot) — extension future documentée, jamais
+  // construite ici sans besoin démontré.
+  calculatedAt      DateTime @default(now())
+  calculatedByEmail String
+  calculatedByRole  String
+
+  // Succession EXPLICITE, jamais auto-détectée (contrat A29 §35/§36, voir
+  // commentaire de modèle ci-dessus) — @unique empêche toute branche
+  // (E1->E2->E3, jamais E1->{E2,E3}, même doctrine que DeliveryEvidence/
+  // A26).
+  supersedesId String?           @unique
+  supersedes   FinancialResult? @relation("FinancialResultSuccession", fields: [supersedesId], references: [id], onDelete: Restrict)
+  supersededBy FinancialResult? @relation("FinancialResultSuccession")
+
+  createdAt      DateTime @default(now())
+  createdByEmail String
+
+  @@index([missionId])
 }
