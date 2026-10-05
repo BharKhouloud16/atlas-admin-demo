@@ -1274,6 +1274,16 @@ model Mission {
   // CapabilityRequirement) : voir MissionCapabilityLink ci-dessous.
   capabilityLinks MissionCapabilityLink[]
 
+  // COMPANY ATLAS — A23 : WorkItem Foundation (05/10/2026).
+  //
+  // Unité de travail concrète à l'intérieur de la Mission — jamais créée
+  // automatiquement (ni à la création de la Mission, ni à une transition
+  // de son lifecycle A22, ni à la création d'un MissionAssignment/
+  // MissionCapabilityLink) : voir WorkItem ci-dessous pour le contrat
+  // complet. Machine de transition totalement indépendante du lifecycle
+  // Mission (A22) : aucune cascade dans un sens ni dans l'autre.
+  workItems WorkItem[]
+
   @@index([sourceDemandeId])
   @@index([needVersionId])
 }
@@ -2815,4 +2825,70 @@ model MissionCapabilityLink {
 enum MissionCapabilityLinkStatut {
   ACTIVE
   SUPERSEDED
+}
+
+// COMPANY ATLAS — A23 : WorkItem Foundation (05/10/2026).
+//
+// Unité CONCRÈTE de travail à l'intérieur d'une Mission — Mission 1 - N
+// WorkItem, jamais l'inverse (contrat A23 §2). Volontairement SANS
+// talentId/profilId/engineerId : un WorkItem ne connaît jamais directement
+// un Talent (contrat A23 §7) — la relation future passera par
+// WorkItemAssignment -> MissionAssignment -> Talent, un lot distinct
+// (A24+), jamais anticipé ici. Un WorkItem peut donc exister indéfiniment
+// sans aucun Assignment (contrat A23 §8) — jamais une contrainte "Talent
+// obligatoire".
+//
+// AUCUNE RELATION vers Deliverable/DeliveryEvidence/DeliveryQualityGate/
+// OutcomeAssessment/Learning/FinancialResult dans ce lot (contrat A23 §38)
+// — ces domaines appartiennent à des lots futurs distincts.
+//
+// SANS dateDebut/dateFin métier (contrat A23 §23) : aucune nécessité
+// démontrée dans ce lot ; `createdAt`/`updatedAt` restent des faits de
+// PROVENANCE DE LA DONNÉE (quand la ligne a été écrite/modifiée), jamais
+// des faits d'exécution — même doctrine que Mission.createdAt/updatedAt
+// (A20 Date Semantics Correction) : `updatedAt` ne doit JAMAIS être lu
+// comme une date de transition de statut.
+//
+// SANS colonne dédiée pour la raison de blocage/résolution/annulation
+// (contrat A23 §19/§20/§21) — même choix que Mission.statut (A22) :
+// raison/raisonResolution/motif sont validés par le service
+// (lib/work-item/lifecycle.ts) et journalisés (JournalActivite.detail),
+// jamais persistés comme colonne structurée — "pas de nouvelle colonne
+// pour un fait déjà capturé par l'audit".
+model WorkItem {
+  id String @id @default(cuid())
+
+  // Immuable après création (contrat A23 §9/§24) : aucun service de ce
+  // lot n'accepte jamais missionId en paramètre de modification — un
+  // "déplacement" de WorkItem n'existe pas, seulement ANNULE + nouveau
+  // WorkItem sur l'autre Mission.
+  mission   Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  missionId String
+
+  titre       String
+  description String?
+
+  statut WorkItemStatut @default(A_FAIRE)
+
+  // Immuables après création (même discipline que MissionAssignment/
+  // MissionCapabilityLink/OutcomeAssessment/CapabilityRequirement).
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  createdByEmail String
+
+  @@index([missionId])
+  @@index([missionId, statut])
+}
+
+// Graphe de transition verrouillé (contrat A23 §5) — voir
+// lib/work-item/lifecycle.ts::TRANSITIONS_AUTORISEES pour la matrice
+// explicite. Machine totalement indépendante du lifecycle Mission (A22) :
+// aucune synchronisation automatique dans un sens ni dans l'autre (contrat
+// A23 §12/§13/§34).
+enum WorkItemStatut {
+  A_FAIRE
+  EN_COURS
+  BLOQUE
+  TERMINE
+  ANNULE
 }
