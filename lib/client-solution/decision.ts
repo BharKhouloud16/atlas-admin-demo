@@ -19,6 +19,22 @@ import type { DonneesSolutionOption, SolutionOptionVue } from "./persistence-typ
 // besoin (la génération étant idempotente par signature de source, une
 // RECOMMANDATION plus ancienne signifie que le besoin a changé depuis :
 // décider dessus serait décider sur une base obsolète).
+//
+// A8 — SolutionDecision (05/10/2026) : `SolutionDecision` est le nom
+// DOMAINE du concept métier produit par ce fichier — le choix humain
+// explicite d'une SolutionOption sur une version précise d'une Need.
+// AUCUN rapport avec `Decision`/`DecisionOption` (Control Plane,
+// gouvernance d'actions/agents, lib/control-plane/*) : domaines distincts,
+// jamais fusionnés, jamais touchés par ce fichier. Décision d'architecture
+// A8 (Option A) : conserver SolutionOption(niveau=DECISION) comme substrat
+// technique plutôt que migrer vers un modèle dédié — l'historique
+// append-only existant (lignes DECISION, certaines avec versionLien=
+// "INCONNU" non réinterprétable) ne justifie aucune réécriture pour une
+// collision qui n'existe qu'au niveau du nom, jamais au niveau du code.
+// Tout code nouveau (notamment lib/capability/*) doit utiliser ce
+// vocabulaire `SolutionDecision`, jamais rien importé de
+// lib/control-plane/*.
+export type SolutionDecision = SolutionOptionVue;
 
 export type ResultatDecision =
   | { ok: true; decision: SolutionOptionVue }

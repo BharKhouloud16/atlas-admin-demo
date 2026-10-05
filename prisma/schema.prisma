@@ -1522,6 +1522,14 @@ model ClientNeed {
   // la logique de fork/versioning (lib/client-need/versioning.ts, non
   // modifiée par ce lot).
   outcomeAssessments OutcomeAssessment[]
+  // A8 — Capability Engine V1 : un CapabilityRequirement pointe vers la
+  // version EXACTE du Need qui l'a produit (needVersionId), même principe
+  // que OutcomeAssessment.needVersionId ci-dessus — jamais la version
+  // courante recalculée. Relation Prisma réelle (jamais une chaîne de
+  // traçabilité pure) pour garantir qu'un CapabilityRequirement ne puisse
+  // jamais pointer vers un ClientNeed inexistant ; n'affecte en rien la
+  // logique de fork/versioning existante.
+  capabilityRequirements CapabilityRequirement[]
   createdAt          DateTime                  @default(now())
   updatedAt          DateTime                  @updatedAt
 
@@ -2445,4 +2453,83 @@ model OutcomeEvidence {
   createdAt   DateTime @default(now())
 
   @@index([criterionId])
+}
+
+// COMPANY ATLAS — A8 : SolutionDecision + Capability Engine V1 (05/10/2026).
+//
+// SÉPARATION DÉFINITIVE : ce modèle n'a AUCUN rapport avec `Decision`/
+// `DecisionOption` (Control Plane, gouvernance d'actions/agents,
+// lib/control-plane/*) — domaines distincts, jamais fusionnés. Le concept
+// métier "SolutionDecision" (choix humain explicite d'une SolutionOption
+// sur une version précise d'un besoin) reste porté techniquement par
+// SolutionOption(niveau=DECISION), déjà mature et append-only (V2.1-E) —
+// décision d'architecture A8 : migrer vers un modèle dédié exigerait de
+// réécrire l'historique DECISION existant pour un gain nul, aucune
+// collision de code ne l'exige (voir lib/client-solution/decision.ts pour
+// le vocabulaire domaine `SolutionDecision`). `CapabilityRequirement`
+// référence une SolutionDecision par pointeur texte simple
+// (solutionDecisionId), jamais une relation Prisma — même discipline que
+// SolutionOption.sourceOptionId/demandeTalentId : une relation forcerait
+// un champ inverse sur SolutionOption, modification hors périmètre A8.
+//
+// Transforme les exigences structurées d'une Need VERSIONNÉE (faits
+// COMPETENCE actifs uniquement — jamais CRITERE_REUSSITE, qui exigerait de
+// synthétiser une capacité à partir d'une phrase de critère de succès,
+// interdit par le principe "ne jamais inventer") en capacités requises.
+// Indépendant du Talent/Matching par construction : aucun champ ne
+// référence Profil/ProfilCompetence/SkillEvidence, aucun score.
+model CapabilityRequirement {
+  id       String     @id @default(cuid())
+  need     ClientNeed @relation(fields: [needVersionId], references: [id], onDelete: Cascade)
+  needVersionId String
+
+  // Pointeur texte simple vers la ligne SolutionOption(niveau=DECISION)
+  // ayant motivé cette dérivation, si une telle décision existe déjà pour
+  // cette version du Need — jamais une précondition bloquante : la
+  // dérivation fonctionne depuis le Need seul (voir lib/capability/service.ts).
+  solutionDecisionId String?
+
+  // Référence de traçabilité pure vers le ClientNeedFait(cle=COMPETENCE)
+  // exact à l'origine de cette ligne — jamais une relation Prisma complète
+  // (même discipline que OutcomeCriterionResult.sourceFaitId ci-dessus).
+  // Toujours renseigné (contrairement à Outcome) : CapabilityRequirement
+  // n'existe QUE dérivé d'un fait structuré précis, jamais autrement.
+  sourceFaitId String
+
+  // Texte brut du fait COMPETENCE source, jamais une reformulation/
+  // élaboration — V1 est délibérément 1:1 avec le fait déclaré (la
+  // distinction Skill≠Capability enrichie reste pour un futur lot
+  // IA-assisté passant par ce même pipeline de provenance, jamais fabriquée
+  // ici).
+  requiredCapability String
+  // Justification déterministe (template, référence le fait source) —
+  // jamais une inférence supplémentaire.
+  rationale          String
+
+  // Copie figée du statut de provenance du fait source au moment de la
+  // dérivation — réutilise StatutPreuveCompetence tel quel (même principe
+  // que ClientNeedFait.statut lui-même), jamais recalculée après coup.
+  provenance StatutPreuveCompetence
+
+  // ACTIVE tant que le fait source reste une facette ACTIVE de sa version ;
+  // SUPERSEDED si une re-dérivation constate que le fait source n'est plus
+  // ACTIVE (défensif — aucun chemin d'écriture actuel ne repasse un
+  // ClientNeedFait.statutActivite à OBSOLETE, mais le filtrage doit rester
+  // correct si cela devient vrai un jour). Mis à jour en place
+  // uniquement par le moteur lui-même, jamais par un appelant externe.
+  status CapabilityRequirementStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now())
+
+  // Idempotence : une même (version de Need, fait source) ne produit
+  // jamais deux lignes — clé naturelle, jamais un hash à maintenir
+  // séparément (voir §12 du mandat A8).
+  @@unique([needVersionId, sourceFaitId])
+  @@index([needVersionId])
+  @@index([solutionDecisionId])
+}
+
+enum CapabilityRequirementStatus {
+  ACTIVE
+  SUPERSEDED
 }
