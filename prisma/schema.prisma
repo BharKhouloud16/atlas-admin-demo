@@ -1207,7 +1207,38 @@ model Mission {
   // administrative, jamais une preuve de résultat (voir OutcomeAssessment).
   outcomeAssessments OutcomeAssessment[]
 
+  // COMPANY ATLAS — A18 : Mission Need Pinning + Solution Decision (05/10/2026).
+  //
+  // Pin EXPLICITE vers la version EXACTE du ClientNeed à l'origine de cette
+  // Mission — jamais le Need "courant" recalculé dynamiquement (même
+  // discipline que OutcomeAssessment.needVersionId/CapabilityRequirement.
+  // needVersionId, A6.1/A8). Nullable : la quasi-totalité des Mission
+  // existantes (créées avant ce lot, ou manuelles/renouvellements sans
+  // Need) n'ont et n'auront jamais ce pin — voir lib/outcome/service.ts
+  // pour le fallback legacy (sourceDemande -> sourceNeed) utilisé quand ce
+  // champ est NULL. onDelete: SetNull (jamais Cascade) : la suppression
+  // d'un ClientNeed ne doit jamais entraîner la suppression d'une Mission
+  // déjà réalisée/facturée — seul le pin devient NULL, Mission.statut
+  // n'est jamais affecté par ce lot. Immutable une fois posé : contrôlé au
+  // niveau service (app/api/missions), jamais réécrit vers une autre
+  // version (contrat A13).
+  needVersion   ClientNeed? @relation(fields: [needVersionId], references: [id], onDelete: SetNull)
+  needVersionId String?
+
+  // Pointeur texte simple vers la ligne SolutionOption(niveau=DECISION)
+  // ayant motivé cette Mission — jamais une relation Prisma complète (même
+  // discipline que CapabilityRequirement.solutionDecisionId, A8 : une
+  // relation forcerait un champ inverse sur SolutionOption, modification
+  // hors périmètre A18). Doit appartenir au même Need que needVersionId
+  // lorsque les deux sont renseignés — invariant vérifié au niveau service
+  // à la création, jamais en base (Prisma ne peut pas exprimer cette
+  // cohérence croisée nativement). Immutable une fois posé : un changement
+  // de décision crée une nouvelle Mission, jamais une réécriture de
+  // celle-ci.
+  solutionDecisionId String?
+
   @@index([sourceDemandeId])
+  @@index([needVersionId])
 }
 
 model FeuilleDeTemps {
@@ -1530,6 +1561,14 @@ model ClientNeed {
   // jamais pointer vers un ClientNeed inexistant ; n'affecte en rien la
   // logique de fork/versioning existante.
   capabilityRequirements CapabilityRequirement[]
+  // A18 — Mission Need Pinning : une Mission peut pointer vers la version
+  // EXACTE de ce Need (Mission.needVersionId) — jamais le Need courant.
+  // Relation Prisma réelle (même discipline que outcomeAssessments/
+  // capabilityRequirements ci-dessus), requise par Prisma en contrepartie
+  // de Mission.needVersion ; n'affecte en rien le chemin legacy existant
+  // (Mission.sourceDemandeId -> DemandeTalent.sourceNeedId -> ClientNeed),
+  // qui reste le fallback utilisé par Outcome quand ce pin est absent.
+  missions           Mission[]
   createdAt          DateTime                  @default(now())
   updatedAt          DateTime                  @updatedAt
 

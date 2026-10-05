@@ -41,7 +41,10 @@ export class MissionIntrouvableError extends Error {
 }
 
 type MissionAvecChaine = Prisma.MissionGetPayload<{
-  include: { sourceDemande: { include: { sourceNeed: { include: { faits: true } } } } };
+  include: {
+    needVersion: { include: { faits: true } };
+    sourceDemande: { include: { sourceNeed: { include: { faits: true } } } };
+  };
 }>;
 
 // Accepte aussi bien le client Prisma plein (lecture seule, hors
@@ -53,18 +56,28 @@ type ClientDb = Prisma.TransactionClient | typeof prisma;
 async function resoudreContexteMission(db: ClientDb, missionId: string): Promise<MissionAvecChaine | null> {
   return db.mission.findUnique({
     where: { id: missionId },
-    include: { sourceDemande: { include: { sourceNeed: { include: { faits: true } } } } },
+    include: {
+      needVersion: { include: { faits: true } },
+      sourceDemande: { include: { sourceNeed: { include: { faits: true } } } },
+    },
   });
 }
 
-// Résolution needVersionId/decisionOptionId/expectedOutcome — best-effort,
-// jamais une supposition : absent dès que la chaîne de traçabilité
-// (Mission.sourceDemandeId -> DemandeTalent.sourceNeedId) ne résout pas,
-// ce qui est le cas de la majorité des Mission existantes (voir A6 §A6.7).
+// A18 — Mission Need Pinning (05/10/2026) : PRIORITÉ ABSOLUE au pin explicite
+// Mission.needVersionId lorsqu'il est présent — jamais une substitution par
+// sourceDemande.sourceNeedId, même si celui-ci pointe vers une autre version
+// (une telle incohérence ne peut normalement plus naître à la création
+// depuis A18, voir lib/mission/need-pinning.ts::validerPinsMission, mais le
+// pin reste prioritaire par construction ici, jamais recalculé ni
+// réconcilié silencieusement). Le chemin legacy (sourceDemande ->
+// sourceNeed) ne redevient la source qu'en l'ABSENCE totale de pin — c'est
+// l'unique rôle qui lui reste désormais (contrat A13). Absent des deux
+// côtés : comportement NOT_DETERMINABLE inchangé, c'est le cas de la
+// majorité des Mission existantes (voir A6 §A6.7).
 async function resoudreNeedPinne(
   mission: MissionAvecChaine
 ): Promise<{ needVersionId: string | null; expectedOutcome: string | null; criteresDisponibles: { id: string; valeur: string }[] }> {
-  const need = mission.sourceDemande?.sourceNeed ?? null;
+  const need = mission.needVersion ?? mission.sourceDemande?.sourceNeed ?? null;
   if (!need) return { needVersionId: null, expectedOutcome: null, criteresDisponibles: [] };
 
   const actifs = resoudreFaitsActifsPourCopie(

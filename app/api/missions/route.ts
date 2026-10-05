@@ -5,6 +5,14 @@ import { getSession } from "@/lib/auth";
 import { adresseIp } from "@/lib/rate-limit";
 import { enregistrerEvenementSecurite, nouveauCorrelationId } from "@/lib/security/events";
 import { estModeTravailValide, suggererContexteMission } from "@/lib/mission/context-bridge";
+import {
+  validerPinsMission,
+  NeedIntrouvableError,
+  SolutionDecisionIntrouvableError,
+  SolutionDecisionNiveauInvalideError,
+  SolutionDecisionNonFinaliseeError,
+  PinsIncoherentsError,
+} from "@/lib/mission/need-pinning";
 
 // LOT 16.3 — MISSION LIST SCALABILITY (30/09/2026). Pagination serveur
 // page/pageSize — un modèle curseur n'est pas justifié ici (pas de flux
@@ -214,6 +222,40 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // A18 — Mission Need Pinning + Solution Decision (05/10/2026). Optionnels,
+  // immuables une fois posés (aucune route ne mute ces champs après
+  // création — voir app/api/missions/[id]/transition/route.ts, seule autre
+  // écriture sur Mission, qui ne touche que `statut`). Toute incohérence
+  // (Need/Décision introuvable, mauvais tenant, décision pas de niveau
+  // DECISION, décision non finalisée, décision rattachée à un autre Need
+  // que needVersionId) est un refus explicite — jamais une correction
+  // silencieuse vers le Need courant (contrat A13).
+  let pins;
+  try {
+    pins = await validerPinsMission(prisma, {
+      clientId,
+      needVersionId: typeof body.needVersionId === "string" ? body.needVersionId : null,
+      solutionDecisionId: typeof body.solutionDecisionId === "string" ? body.solutionDecisionId : null,
+    });
+  } catch (erreur) {
+    if (erreur instanceof NeedIntrouvableError) {
+      return NextResponse.json({ error: "Need introuvable" }, { status: 404 });
+    }
+    if (erreur instanceof SolutionDecisionIntrouvableError) {
+      return NextResponse.json({ error: "SolutionDecision introuvable" }, { status: 404 });
+    }
+    if (erreur instanceof SolutionDecisionNiveauInvalideError) {
+      return NextResponse.json({ error: "La SolutionOption référencée n'est pas de niveau DECISION" }, { status: 400 });
+    }
+    if (erreur instanceof SolutionDecisionNonFinaliseeError) {
+      return NextResponse.json({ error: "La SolutionDecision référencée n'est pas finalisée (decideParEmail/decideLe manquants)" }, { status: 400 });
+    }
+    if (erreur instanceof PinsIncoherentsError) {
+      return NextResponse.json({ error: "solutionDecisionId ne correspond pas au Need référencé par needVersionId" }, { status: 400 });
+    }
+    throw erreur;
+  }
+
   const mission = await prisma.mission.create({
     data: {
       clientId,
@@ -227,6 +269,8 @@ export async function POST(req: NextRequest) {
       dateDebut,
       dateFin,
       modeTravail,
+      needVersionId: pins.needVersionId,
+      solutionDecisionId: pins.solutionDecisionId,
     },
   });
   return NextResponse.json(mission, { status: 201 });
