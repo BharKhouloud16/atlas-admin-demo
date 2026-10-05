@@ -58,7 +58,9 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
     await connecter(request, "admin-demo@example.com");
     const mission = await creerMission(StatutMission.EN_COURS);
 
-    const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "annuler" } });
+    // A22 — un motif est désormais obligatoire pour toute annulation
+    // (contrat A22 §12) — seule adaptation requise de ce test existant.
+    const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "annuler", motif: "Test B46" } });
     expect(reponse.status(), await reponse.text()).toBe(200);
     const apres = await reponse.json();
     expect(apres.statut).toBe("ANNULEE");
@@ -187,11 +189,14 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
     const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "terminer" } });
     expect(reponse.ok()).toBeTruthy();
 
+    // A22 — action de journal unifiée "mission.lifecycle.transition" pour
+    // les 6 actions du moteur (contrat A22 §23) — remplace les anciens
+    // noms par-action "mission.terminee"/"mission.annulee".
     const entree = await prisma.journalActivite.findFirst({
-      where: { action: "mission.terminee", cible: `mission:${mission.id}` },
+      where: { action: "mission.lifecycle.transition", cible: `mission:${mission.id}` },
       orderBy: { createdAt: "desc" },
     });
-    expect(entree, "une ligne JournalActivite mission.terminee devrait exister").toBeTruthy();
+    expect(entree, "une ligne JournalActivite mission.lifecycle.transition devrait exister").toBeTruthy();
     expect(entree!.createdAt.getTime()).toBeGreaterThanOrEqual(avant - 1000);
   });
 
@@ -199,14 +204,16 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
     await connecter(request, "admin-demo@example.com");
     const mission = await creerMission(StatutMission.EN_COURS);
 
-    const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "annuler" } });
+    // A22 — motif désormais obligatoire pour toute annulation.
+    const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "annuler", motif: "Test B46" } });
     expect(reponse.ok()).toBeTruthy();
 
     const entree = await prisma.journalActivite.findFirst({
-      where: { action: "mission.annulee", cible: `mission:${mission.id}` },
+      where: { action: "mission.lifecycle.transition", cible: `mission:${mission.id}` },
       orderBy: { createdAt: "desc" },
     });
-    expect(entree, "une ligne JournalActivite mission.annulee devrait exister").toBeTruthy();
+    expect(entree, "une ligne JournalActivite mission.lifecycle.transition devrait exister").toBeTruthy();
+    expect(entree!.detail).toContain("ANNULEE");
   });
 
   test("16. L'audit contient au minimum l'acteur, la mission et la transition (avant -> après)", async ({ request }) => {
@@ -216,7 +223,7 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
     await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "terminer" } });
 
     const entree = await prisma.journalActivite.findFirst({
-      where: { action: "mission.terminee", cible: `mission:${mission.id}` },
+      where: { action: "mission.lifecycle.transition", cible: `mission:${mission.id}` },
       orderBy: { createdAt: "desc" },
     });
     expect(entree!.acteurEmail).toBe("admin-demo@example.com");

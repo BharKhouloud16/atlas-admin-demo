@@ -370,7 +370,18 @@ test.describe("A20 — Backfill historique", () => {
     const mission = await creerMission(client.id, profil.id, { statut: "EN_COURS" });
 
     const resultat = await executerBackfillAssignments();
-    expect(resultat.anomalies).toHaveLength(0);
+    // A22 — PLANIFIEE/PRETE/BLOQUEE sont désormais des statuts Mission
+    // légitimes, hors du mapping de ce backfill (volontairement : aucune
+    // Mission historique/legacy n'a jamais pu porter ces statuts avant A22,
+    // donc aucune sémantique de backfill n'existe pour eux — "jamais une
+    // devinette" reste respecté). Des Missions d'autres suites de tests
+    // (A22) peuvent légitimement en porter sans Assignment dans cette base
+    // de dev persistante : l'assertion ne porte donc plus sur la liste
+    // globale d'anomalies (dont la vacuité n'a jamais été un invariant du
+    // service, seulement un fait accidentel tant qu'aucun autre statut
+    // n'existait), mais uniquement sur l'absence d'anomalie pour LA Mission
+    // de ce test.
+    expect(resultat.anomalies.find((a) => a.missionId === mission.id)).toBeUndefined();
 
     const assignment = await prisma.missionAssignment.findFirst({ where: { missionId: mission.id } });
     expect(assignment?.statut).toBe("ACTIF");
@@ -459,7 +470,10 @@ test.describe("A20 — Backfill historique", () => {
     const resultatSecondRun = await executerBackfillAssignments();
     const apresSecondeExecution = await prisma.missionAssignment.count({ where: { missionId: mission.id } });
     expect(apresSecondeExecution).toBe(1);
-    expect(resultatSecondRun.anomalies).toHaveLength(0);
+    // A22 — même justification que le test 30/33/34 ci-dessus : portée sur
+    // CETTE Mission, jamais sur la liste globale (désormais légitimement
+    // non vide à cause de Missions PLANIFIEE/PRETE/BLOQUEE d'autres suites).
+    expect(resultatSecondRun.anomalies.find((a) => a.missionId === mission.id)).toBeUndefined();
   });
 
   test("36. Mission déjà associée à une Assignment (créée via l'API) -> ignorée par le backfill, jamais dupliquée", async () => {

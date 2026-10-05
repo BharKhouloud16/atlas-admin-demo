@@ -1,46 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
-import { StatutMission } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
-import { journaliser } from "@/lib/audit";
+import { executerTransitionMission, type ActionLifecycle } from "@/lib/mission/lifecycle";
 
-// ATLAS — MISSION LIFECYCLE V1 (Phase 2B-0, 28/09/2026).
+// ATLAS — MISSION LIFECYCLE ENGINE (A22, 05/10/2026 — étend Phase 2B-0/
+// LOT 16.2, même endpoint, jamais une seconde route créée).
 //
 // Transition de statut contrôlée pour Mission — même convention que
 // app/api/factures/[id]/transition/route.ts : une whitelist stricte
 // d'actions, jamais une écriture arbitraire de `statut` depuis le body.
-// Mission.statut reste un String (voir lib/billing/etat-facture.ts pour le
-// précédent enum + transitionAutorisee() — délibérément pas repris ici :
-// l'audit Phase 2B-0 a conclu que ce n'est pas nécessaire pour débloquer le
-// lifecycle, seulement une route disciplinée l'est).
+// Toute la logique métier (matrice de transitions, préconditions
+// Assignment/raison, concurrence, journalisation) est centralisée dans
+// lib/mission/lifecycle.ts — cette route reste fine : RBAC, parsing du
+// body, traduction code métier -> HTTP, rien d'autre.
 //
-// Avant ce lot, AUCUNE route ne faisait jamais transiter Mission.statut
-// après sa création (`"En cours"` par défaut, jamais réécrit) — confirmé
-// par audit exhaustif (`grep prisma.mission.update` = 0 résultat hors
-// tests). Conséquence directe : Talent Trust.historiqueMissions,
-// Talent Intelligence.missionsTerminees et POST /api/evaluations (qui
-// exige mission.statut === "Terminée") étaient structurellement
-// inatteignables en usage réel. Cette route ne change RIEN à leur logique
-// (aucune ligne de lib/talent/* ni de app/api/evaluations/route.ts
-// modifiée) — elle rend seulement la donnée qu'ils lisent déjà réellement
-// productible.
+// Réservé Admin, jamais l'Ingénieur (même sur sa propre mission) ni le
+// Client — inchangé depuis Phase 2B-0.
 //
-// "Terminée" et "Annulée" sont volontairement TERMINAUX pour ce lot :
-// aucune transition sortante n'est autorisée depuis l'un ou l'autre (pas de
-// réouverture, pas de passage direct Terminée<->Annulée) — voir mandat
-// Phase 2B-0, section 1. Réservé Admin, jamais l'Ingénieur (même sur sa
-// propre mission) ni le Client — même principe que toutes les autres
-// transitions administratives de ce repository (CRA, Facture, Skill Graph).
-//
-// RÈGLE ABSOLUE (Phase 2B-0, section 13) : une Mission terminée n'est PAS
-// une preuve de compétence. Cette route ne touche jamais SkillEvidence,
-// ProfilCompetence, ni aucun calcul de lib/talent/* — le futur workflow
-// MissionSkillProposal -> SkillEvidence (Phase 2B-1+) en est entièrement
-// indépendant.
-const TRANSITIONS_AUTORISEES: Record<string, StatutMission> = {
-  terminer: StatutMission.TERMINEE,
-  annuler: StatutMission.ANNULEE,
-};
+// RÈGLE ABSOLUE (Phase 2B-0 §13, réaffirmée A22 §8) : une Mission
+// TERMINEE n'est PAS une preuve de résultat. Cette route ne touche jamais
+// SkillEvidence/ProfilCompetence/OutcomeAssessment/MissionAssignment.statut/
+// MissionCapabilityLink.statut — EN_COURS -> TERMINEE reste autorisée sans
+// aucune précondition WorkItem/Deliverable/Evidence/Quality/Outcome.
+const ACTIONS_VALIDES: ActionLifecycle[] = ["rendre_prete", "demarrer", "bloquer", "debloquer", "terminer", "annuler"];
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getSession();
@@ -50,40 +31,48 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const body = await req.json().catch(() => ({}));
   const action = body?.action;
-  const nouveauStatut = typeof action === "string" ? TRANSITIONS_AUTORISEES[action] : undefined;
-  if (!nouveauStatut) {
-    return NextResponse.json({ error: "Action invalide (terminer ou annuler attendu)." }, { status: 400 });
-  }
-
-  const mission = await prisma.mission.findUnique({ where: { id: params.id } });
-  if (!mission) {
-    return NextResponse.json({ error: "Mission introuvable." }, { status: 404 });
-  }
-
-  // Seule transition autorisée dans ce lot : depuis "En cours". Terminée et
-  // Annulée sont des états terminaux, sans transition sortante — un état
-  // déjà terminal est donc refusé ici avant toute écriture (aucune mutation
-  // partielle possible).
-  if (mission.statut !== StatutMission.EN_COURS) {
+  if (typeof action !== "string" || !ACTIONS_VALIDES.includes(action as ActionLifecycle)) {
     return NextResponse.json(
-      { error: `Transition impossible depuis le statut actuel (${mission.statut}).` },
-      { status: 409 }
+      { error: "Action invalide (rendre_prete, demarrer, bloquer, debloquer, terminer ou annuler attendu)." },
+      { status: 400 }
     );
   }
 
-  const avant = mission.statut;
-  const apres = await prisma.mission.update({
-    where: { id: params.id },
-    data: { statut: nouveauStatut },
-  });
-
-  await journaliser({
+  const resultat = await executerTransitionMission({
+    missionId: params.id,
+    action: action as ActionLifecycle,
+    raison: typeof body?.raison === "string" ? body.raison : undefined,
+    raisonResolution: typeof body?.raisonResolution === "string" ? body.raisonResolution : undefined,
+    motif: typeof body?.motif === "string" ? body.motif : undefined,
     acteurEmail: session.email,
     acteurRole: "ADMIN",
-    action: action === "terminer" ? "mission.terminee" : "mission.annulee",
-    cible: `mission:${params.id}`,
-    detail: `Mission ${params.id} (client ${mission.clientId}, profil ${mission.profilId}) : statut ${avant} -> ${apres.statut}`,
   });
 
-  return NextResponse.json(apres);
+  if (!resultat.ok) {
+    switch (resultat.code) {
+      case "MISSION_INTROUVABLE":
+        return NextResponse.json({ error: "Mission introuvable." }, { status: 404 });
+      case "TRANSITION_INVALIDE":
+        return NextResponse.json(
+          { error: `Transition impossible depuis le statut actuel (${resultat.depuis} -> ${resultat.vers}).` },
+          { status: 409 }
+        );
+      case "ASSIGNMENT_ACTIF_MANQUANT":
+        return NextResponse.json({ error: "Aucun MissionAssignment ACTIF — la Mission ne peut pas être marquée PRETE." }, { status: 409 });
+      case "RESPONSABLE_PRINCIPAL_MANQUANT":
+        return NextResponse.json({ error: "Aucun MissionAssignment ACTIF avec estResponsablePrincipal=true — la Mission ne peut pas démarrer." }, { status: 409 });
+      case "RAISON_BLOCAGE_MANQUANTE":
+        return NextResponse.json({ error: "raison requise pour bloquer une Mission." }, { status: 400 });
+      case "RAISON_BLOCAGE_INVALIDE":
+        return NextResponse.json({ error: "raison invalide (CLIENT_DEPENDENCY, TALENT_DEPENDENCY, TECHNICAL, ACCESS, EXTERNAL ou UNKNOWN attendu)." }, { status: 400 });
+      case "RAISON_RESOLUTION_MANQUANTE":
+        return NextResponse.json({ error: "raisonResolution requise pour débloquer une Mission." }, { status: 400 });
+      case "MOTIF_MANQUANT":
+        return NextResponse.json({ error: "motif requis pour cette transition." }, { status: 400 });
+      default:
+        return NextResponse.json({ error: "Transition refusée." }, { status: 409 });
+    }
+  }
+
+  return NextResponse.json(resultat.mission);
 }

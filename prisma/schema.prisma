@@ -1141,14 +1141,27 @@ model InfoCV {
 // Contract, de Facture (StatutFacture, déjà un enum séparé), de
 // Profil.disponibilite, ou de lib/disponibilite.ts::STATUTS_EN_MISSION
 // (vocabulaire totalement différent, jamais lu ni écrit sur ce champ).
-// Audit Lot 16.1 : exactement 3 valeurs réellement utilisées, exactement 2
-// transitions officielles (EN_COURS -> TERMINEE, EN_COURS -> ANNULEE, toutes
-// deux terminales), aucune écriture applicative hors
-// app/api/missions/[id]/transition/route.ts et app/api/missions/route.ts
-// (création) — voir prisma/migrations/.../migration.sql pour la conversion
-// des valeurs historiques.
+//
+// A22 — MISSION LIFECYCLE ENGINE (05/10/2026) : PLANIFIEE/PRETE/BLOQUEE
+// ajoutés — voir lib/mission/lifecycle.ts pour la matrice de transitions
+// complète (TRANSITIONS_AUTORISEES) et app/api/missions/[id]/transition/
+// route.ts (même endpoint que LOT 16.2/Phase 2B-0, étendu, jamais une
+// seconde route créée). EN_COURS/TERMINEE/ANNULEE restent EXACTEMENT ce
+// qu'ils étaient (même valeurs, même sémantique) — aucune réinterprétation
+// des ~5900 Missions historiques, toutes dans l'un de ces 3 états.
+// `@default(EN_COURS)` reste délibérément INCHANGÉ (voir rapport A22,
+// section "Audit du lifecycle existant") : la création d'une Mission via
+// POST /api/missions continue de produire exactement le même comportement
+// qu'avant ce lot — PLANIFIEE/PRETE sont des états pleinement implémentés
+// et atteignables (toute Mission peut y être placée explicitement, par
+// fixture de test ou par une future évolution de la route de création),
+// mais rien dans A22 ne change silencieusement ce que produit la création
+// réelle aujourd'hui.
 enum StatutMission {
+  PLANIFIEE
+  PRETE
   EN_COURS
+  BLOQUEE
   TERMINEE
   ANNULEE
 }
