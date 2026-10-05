@@ -2900,6 +2900,10 @@ model WorkItem {
   // (lifecycle, création, transition, statut) n'est modifiée par cet ajout.
   deliverableLinks DeliverableWorkItemLink[]
 
+  // A26 — DeliveryEvidence Foundation (05/10/2026). Inverse Prisma
+  // strictement nécessaire — aucune règle A23 n'est modifiée par cet ajout.
+  deliveryEvidences DeliveryEvidence[]
+
   @@index([missionId])
   @@index([missionId, statut])
 }
@@ -3126,6 +3130,10 @@ model DeliverableVersion {
   createdAt      DateTime @default(now())
   createdByEmail String
 
+  // A26 — DeliveryEvidence Foundation (05/10/2026). Inverse Prisma
+  // strictement nécessaire — aucune règle A25 n'est modifiée par cet ajout.
+  deliveryEvidences DeliveryEvidence[]
+
   @@unique([deliverableId, version])
   @@index([deliverableId])
 }
@@ -3161,4 +3169,101 @@ model DeliverableWorkItemLink {
   @@unique([deliverableId, workItemId])
   @@index([deliverableId])
   @@index([workItemId])
+}
+
+// COMPANY ATLAS — A26 : DeliveryEvidence Foundation (05/10/2026).
+//
+// Répond à "quel fait pouvons-nous documenter, sur quelle cible, avec
+// quelle méthode, et avec quel niveau de confiance ?" — JAMAIS "le client
+// a-t-il obtenu son résultat ?" (Outcome, hors périmètre A26, contrat
+// A26 §3/§21). N'implique jamais OutcomeAssessment ni un QualityGate futur
+// (contrat A26 §21/§22).
+//
+// CIBLE XOR (contrat A26 §6) : exactement WorkItem OU DeliverableVersion,
+// jamais les deux, jamais aucun — vérifié par le service
+// (lib/delivery-evidence/evidence.ts), jamais en base nativement via
+// Prisma (CHECK ajouté manuellement en migration, même limitation que les
+// index uniques partiels A21/A24 — voir migration.sql).
+//
+// IMMUTABILITÉ + SUCCESSION (contrat A26 §14/§15/§16) : même doctrine que
+// OutcomeAssessment (A15)/DeliverableVersion (A25) — le pointeur de
+// succession vit sur la NOUVELLE ligne (supersedesId), jamais l'ancienne
+// mutée. DIFFÉRENCE STRUCTURELLE IMPORTANTE documentée ici : contrairement
+// à OutcomeAssessment/DeliverableVersion (UN SEUL objet versionné par
+// Mission/Deliverable), une cible (WorkItem ou DeliverableVersion) peut
+// porter PLUSIEURS chaînes d'Evidence totalement indépendantes
+// simultanément (ex. "12 tests passés" ET "accès client indisponible" sur
+// le même WorkItem ne sont jamais des versions l'une de l'autre) — il
+// n'existe donc PAS de notion de "ligne courante unique par cible" à
+// auto-détecter. supersedesId est donc TOUJOURS explicitement fourni par
+// l'appelant (jamais déduit d'une recherche "supersededBy IS NULL pour
+// cette cible"), et désigne précisément QUELLE assertion antérieure est
+// corrigée — jamais une simple dernière-en-date.
+model DeliveryEvidence {
+  id String @id @default(cuid())
+
+  // XOR avec deliverableVersionId ci-dessous — exactement l'un des deux,
+  // jamais les deux, jamais aucun (contrat A26 §6/§7). onDelete: Restrict
+  // (jamais Cascade) : une Evidence est un fait historique, elle ne doit
+  // jamais disparaître silencieusement si sa cible était supprimée (même
+  // doctrine que MissionAssignment.talentId, A20).
+  workItem   WorkItem? @relation(fields: [workItemId], references: [id], onDelete: Restrict)
+  workItemId String?
+
+  deliverableVersion   DeliverableVersion? @relation(fields: [deliverableVersionId], references: [id], onDelete: Restrict)
+  deliverableVersionId String?
+
+  methode   DeliveryEvidenceMethod
+  // Couple (méthode, confiance) validé par le service selon la matrice
+  // verrouillée du contrat A26 §12 — jamais une combinaison arbitraire
+  // acceptée en base.
+  confiance DeliveryEvidenceConfidence
+
+  // Assertion factuelle contextualisée, texte libre — jamais un moteur
+  // NLP/paraphrase IA, jamais une normalisation sémantique (contrat A26
+  // §19/§47) : le service conserve l'assertion fournie telle quelle.
+  contenu String
+
+  // Succession append-only — même doctrine que OutcomeAssessment (A15) et
+  // DeliverableVersion (A25) : le pointeur vit sur la NOUVELLE ligne,
+  // jamais l'ancienne mutée. @unique empêche structurellement toute
+  // branche (contrat A26 §15/§44 : E1->E2->E3, jamais E1->{E2,E3}).
+  // Cohérence vérifiée par le service (jamais en base) : même cible, même
+  // Mission (contrat A26 §41/§42/§43).
+  supersedesId String?           @unique
+  supersedes   DeliveryEvidence? @relation("DeliveryEvidenceSuccession", fields: [supersedesId], references: [id], onDelete: Restrict)
+  supersededBy DeliveryEvidence? @relation("DeliveryEvidenceSuccession")
+
+  // Immuables après création — aucune route ne les réécrit jamais (même
+  // discipline que WorkItem/MissionAssignment/DeliverableVersion).
+  // Volontairement AUCUN verifiedBy/verifiedAt (contrat A26 §18) : la
+  // méthode + createdByEmail suffisent ("VALIDATION_ADMIN" + l'email de
+  // l'Admin créateur matérialise déjà la validation, plus l'audit
+  // journalisé — jamais un second mécanisme de validation redondant).
+  createdAt      DateTime @default(now())
+  createdByEmail String
+
+  @@index([workItemId])
+  @@index([deliverableVersionId])
+}
+
+// Méthodes verrouillées (contrat A26 §10) — jamais étendues dans ce lot.
+enum DeliveryEvidenceMethod {
+  DECLARATION_TALENT
+  VALIDATION_ADMIN
+  VALIDATION_CLIENT
+  MESURE_SYSTEME
+  TEST_AUTOMATISE
+  INFERENCE_IA
+}
+
+// Confiance QUALITATIVE (contrat A26 §11/§20) — jamais un score numérique
+// (pas de confidenceScore/probability). Vocabulaire fermé DÉDIÉ, jamais
+// réutilisé depuis OutcomeConfiance/StatutPreuveCompetence/ClientNeedFait.
+// statut (même discipline que OutcomeMethodeVerification, A6 §A6.3).
+enum DeliveryEvidenceConfidence {
+  VERIFIE
+  DECLARE
+  INFERE
+  INCONNU
 }
