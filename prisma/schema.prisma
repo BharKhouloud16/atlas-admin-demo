@@ -1253,6 +1253,14 @@ model Mission {
   // temps (changement de talent = nouvelle ligne, jamais une réécriture).
   assignments MissionAssignment[]
 
+  // COMPANY ATLAS — A21 : MissionCapabilityLink (05/10/2026).
+  //
+  // Lien EXPLICITE entre cette Mission et les capacités du besoin/solution
+  // effectivement retenues pour son exécution — jamais créé automatiquement
+  // (ni à la création de la Mission, ni à la dérivation d'une
+  // CapabilityRequirement) : voir MissionCapabilityLink ci-dessous.
+  capabilityLinks MissionCapabilityLink[]
+
   @@index([sourceDemandeId])
   @@index([needVersionId])
 }
@@ -2576,6 +2584,15 @@ model CapabilityRequirement {
 
   createdAt DateTime @default(now())
 
+  // A21 — MissionCapabilityLink : traçabilité inverse vers les Mission
+  // ayant explicitement mobilisé cette capacité — jamais automatique
+  // (aucune création n'est déclenchée depuis ce côté-ci). Une
+  // CapabilityRequirement devenant SUPERSEDED (voir status ci-dessus)
+  // n'affecte jamais rétroactivement les liens déjà créés : ceux-ci
+  // conservent leur propre statut, indépendant (voir
+  // MissionCapabilityLink.statut).
+  missionLinks MissionCapabilityLink[]
+
   // Idempotence : une même (version de Need, fait source) ne produit
   // jamais deux lignes — clé naturelle, jamais un hash à maintenir
   // séparément (voir §12 du mandat A8).
@@ -2702,4 +2719,87 @@ enum DateAffectationProvenance {
   CONNUE
   PROXY_CREATION_MISSION
   PROXY_DERNIERE_ECRITURE_MISSION
+}
+
+// COMPANY ATLAS — A21 : MissionCapabilityLink (05/10/2026).
+//
+// Jonction EXPLICITE entre une capacité issue du besoin/solution
+// (CapabilityRequirement, A8) et une Mission qui la mobilise réellement —
+// jamais un matching automatique, jamais une compétence Talent, jamais
+// une preuve d'exécution (hors périmètre A21 : Outcome/WorkItem/
+// Deliverable/Evidence restent des domaines séparés, aucune dépendance
+// introduite ici vers eux). Création toujours EXPLICITE : ni la création
+// d'une Mission, ni la dérivation d'une CapabilityRequirement (A8) ne
+// déclenche automatiquement un lien.
+//
+// PROVENANCE SANS DUPLICATION : `capabilityRequirementId` référence la
+// ligne source (jamais une copie de ses champs needVersionId/
+// solutionDecisionId/sourceFaitId/rationale, qui restent exclusivement
+// sur CapabilityRequirement). Nullable : un LIEN MANUEL (sans
+// CapabilityRequirement) est explicitement autorisé pour les Mission
+// legacy/manuelles sans Need/Decision (contrat A21 §6/§11) — ATLAS
+// n'interdit jamais la construction d'une Mission hors du pipeline
+// Need→Solution, et ne doit donc pas non plus interdire d'y documenter
+// une capacité mobilisée. onDelete: Restrict (jamais Cascade) : une
+// CapabilityRequirement référencée ne peut jamais être supprimée tant
+// qu'un lien l'utilise — même doctrine que MissionAssignment.talentId.
+//
+// SNAPSHOT (`capability`) : copié depuis CapabilityRequirement.
+// requiredCapability AU MOMENT DE LA CRÉATION, jamais relu dynamiquement
+// depuis la relation — une re-dérivation A8 ultérieure qui ferait passer
+// la CapabilityRequirement source en SUPERSEDED (lib/capability/service.ts)
+// NE MODIFIE JAMAIS ce lien, ni son texte, ni son statut : l'historique
+// d'une Mission reste figé au moment de l'attachement, exactement comme
+// OutcomeAssessment reste pinné à sa version du Need (A6.1). Aucune
+// cascade automatique SUPERSEDED->SUPERSEDED entre CapabilityRequirement
+// et MissionCapabilityLink — ce sont deux statuts indépendants, un choix
+// de supersession ici est TOUJOURS une action Admin explicite (retrait),
+// jamais une conséquence d'un événement survenu côté CapabilityRequirement.
+//
+// COHÉRENCE DE VERSION (contrat A21 §6) : un lien référençant une
+// CapabilityRequirement exige que Mission.needVersionId soit renseigné ET
+// égal exactement à CapabilityRequirement.needVersionId — vérifié par le
+// service (lib/mission/capability-link.ts), jamais en base (Prisma ne
+// peut pas exprimer cette cohérence croisée nativement, même limitation
+// que Mission.solutionDecisionId vs needVersionId, A18). Une Mission sans
+// needVersionId ne peut donc recevoir qu'un lien MANUEL — jamais une
+// CapabilityRequirement "flottante" sans pin Need vérifiable.
+model MissionCapabilityLink {
+  id String @id @default(cuid())
+
+  mission   Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  missionId String
+
+  capabilityRequirement   CapabilityRequirement? @relation(fields: [capabilityRequirementId], references: [id], onDelete: Restrict)
+  capabilityRequirementId String?
+
+  // Toujours renseigné : snapshot de CapabilityRequirement.requiredCapability
+  // si capabilityRequirementId est fourni, sinon texte libre saisi pour un
+  // lien manuel — jamais les deux à la fois (contrôlé par le service).
+  capability String
+
+  // Justification de la MOBILISATION dans cette Mission — distincte de
+  // CapabilityRequirement.rationale (justification de la DÉRIVATION depuis
+  // le Need), jamais recopiée depuis celle-ci.
+  rationale String?
+
+  // ACTIVE par défaut ; SUPERSEDED uniquement par une action Admin
+  // explicite de retrait (contrat A21 §10) — jamais une cascade depuis
+  // CapabilityRequirement.status. Terminal : un lien SUPERSEDED ne repasse
+  // jamais ACTIVE (réactivation = nouveau lien, même discipline que
+  // MissionAssignment).
+  statut MissionCapabilityLinkStatut @default(ACTIVE)
+
+  // Immuables après création — aucune route ne les réécrit jamais (même
+  // discipline que MissionAssignment/OutcomeAssessment/CapabilityRequirement).
+  createdAt      DateTime @default(now())
+  createdByEmail String
+
+  @@index([missionId])
+  @@index([capabilityRequirementId])
+}
+
+enum MissionCapabilityLinkStatut {
+  ACTIVE
+  SUPERSEDED
 }
