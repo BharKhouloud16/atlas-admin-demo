@@ -1103,6 +1103,12 @@ model Profil {
   competencesGraph      ProfilCompetence[]
   // PHASE 2B-1 — Mission Skill Proposal (28/09/2026) — voir MissionSkillProposal
   missionSkillProposals MissionSkillProposal[]
+  // A20 — MissionAssignment Foundation (05/10/2026) — voir MissionAssignment.
+  // Un même Profil peut avoir plusieurs MissionAssignment historiques sur la
+  // même Mission (changement de talent = nouvelle ligne) ou sur des Mission
+  // distinctes (staffing normal d'un talent sur plusieurs missions) —
+  // jamais une cardinalité 1:1 supposée.
+  missionAssignments     MissionAssignment[]
 }
 
 model VersionCv {
@@ -1236,6 +1242,16 @@ model Mission {
   // de décision crée une nouvelle Mission, jamais une réécriture de
   // celle-ci.
   solutionDecisionId String?
+
+  // COMPANY ATLAS — A20 : MissionAssignment Foundation (05/10/2026).
+  //
+  // Source STRUCTURÉE de vérité pour les affectations opérationnelles —
+  // coexiste avec le legacy `profilId` ci-dessus sans le remplacer : A20
+  // n'introduit aucune migration des consommateurs existants de `profilId`
+  // (voir MissionAssignment ci-dessous pour le contrat complet). Historique
+  // intégralement additif : plusieurs MissionAssignment par Mission dans le
+  // temps (changement de talent = nouvelle ligne, jamais une réécriture).
+  assignments MissionAssignment[]
 
   @@index([sourceDemandeId])
   @@index([needVersionId])
@@ -2571,4 +2587,119 @@ model CapabilityRequirement {
 enum CapabilityRequirementStatus {
   ACTIVE
   SUPERSEDED
+}
+
+// COMPANY ATLAS — A20 : MissionAssignment Foundation (05/10/2026).
+//
+// Source STRUCTURÉE de vérité pour l'affectation opérationnelle d'un
+// Talent (Profil) à une Mission — coexiste avec le legacy `Mission.profilId`
+// sans le remplacer : A20 ne retire pas `profilId`, ne le rend pas
+// nullable, et ne migre aucun consommateur existant vers ce nouveau modèle
+// (voir lib/mission/assignment-backfill.ts pour le backfill contrôlé des
+// Mission historiques). Ne crée AUCUNE dépendance vers WorkItem/Deliverable
+// (hors périmètre A20, voir contrat A13) : `role` ci-dessous est un rôle
+// D'AFFECTATION, indépendant de tout futur rôle WorkItem.
+//
+// Identité immuable : une ligne appartient à EXACTEMENT une Mission et un
+// Talent, fixés à la création (missionId/talentId jamais réécrits — un
+// changement de Talent termine/annule l'ancienne ligne puis en crée une
+// nouvelle, jamais un UPDATE du pointeur). Historique intégralement
+// additif, même discipline que ClientNeedFait/SolutionOption : un même
+// Talent peut avoir plusieurs MissionAssignment sur la même Mission dans le
+// temps (ex. ACTIF -> TERMINE -> nouvelle ligne ACTIF), jamais collapsées.
+//
+// Invariants transactionnels (lib/mission/assignment.ts, jamais seulement
+// applicatifs hors transaction — Serializable + retry P2034, même
+// discipline que lib/outcome/service.ts/lib/client-need/versioning.ts) :
+// (1) au plus un Assignment ACTIF avec estResponsablePrincipal=true par
+// Mission ; (2) au plus un Assignment ACTIF par (Mission, Talent) — un
+// Talent peut avoir un historique TERMINE/ANNULE sur cette Mission sans
+// limite, seul le cumul de deux lignes ACTIF simultanées est interdit.
+model MissionAssignment {
+  id String @id @default(cuid())
+
+  mission   Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  missionId String
+
+  // onDelete: Restrict (jamais Cascade) : un Talent ne peut jamais être
+  // supprimé tant qu'il porte une affectation, historique ou active — même
+  // doctrine que Mission.profilId (ON DELETE RESTRICT, voir migration
+  // d'origine), jamais une suppression silencieuse de l'historique.
+  talent   Profil @relation(fields: [talentId], references: [id], onDelete: Restrict)
+  talentId String
+
+  role   MissionAssignmentRole
+  statut MissionAssignmentStatut @default(ACTIF)
+
+  // Obligatoire quel que soit le statut (PLANIFIE/ACTIF comme TERMINE/ANNULE
+  // en conservent un) — jamais déduite silencieusement d'un autre champ.
+  dateDebut DateTime
+  // A20 — DATE SEMANTICS CORRECTION (05/10/2026). AUCUN champ de Mission
+  // (createdAt/updatedAt/dateDebut/dateFin) ne constitue une preuve de
+  // la date RÉELLE d'affectation opérationnelle d'un Talent — ce sont des
+  // faits de PROVENANCE DE LA DONNÉE (quand la ligne Mission a été écrite),
+  // jamais des faits MÉTIER (quand le Talent a réellement commencé/fini).
+  // Confondre les deux a été identifié comme une erreur dans la première
+  // version du backfill A20 et corrigé ici : CONNUE = la date a été
+  // explicitement fournie comme un fait réel (création/transition vivante
+  // via le service, lib/mission/assignment.ts) ; PROXY_CREATION_MISSION/
+  // PROXY_DERNIERE_ECRITURE_MISSION = reconstruite par le backfill
+  // historique (lib/mission/assignment-backfill.ts) à partir d'un fait de
+  // provenance, JAMAIS présentée comme une certitude métier. Tout
+  // consommateur futur de dateDebut/dateFin DOIT lire ce champ avant de
+  // traiter la date comme fiable.
+  dateDebutProvenance DateAffectationProvenance @default(CONNUE)
+  // NULL tant que PLANIFIE/ACTIF (affectation toujours en cours) ;
+  // obligatoire au moment de la transition vers TERMINE/ANNULE (contrôlé
+  // par le service, jamais par une contrainte DB — Prisma ne peut pas
+  // exprimer une NOT NULL conditionnelle au statut).
+  dateFin DateTime?
+  // NULL tant que dateFin est NULL (même cycle de vie) — même doctrine de
+  // provenance que dateDebutProvenance ci-dessus, jamais déduite.
+  dateFinProvenance DateAffectationProvenance?
+
+  // NULL = UNKNOWN explicite (jamais déduit) ; 0 = valeur connue et valide
+  // (allocation nulle mais renseignée) ; 1..100 = valeur connue. Aucune
+  // règle de somme à 100% entre Assignment d'une même Mission dans A20.
+  allocationPct Int?
+
+  // Au plus un Assignment ACTIF par Mission avec cette valeur à true —
+  // invariant transactionnel (voir ci-dessus), jamais seulement applicatif.
+  estResponsablePrincipal Boolean @default(false)
+
+  // Immuables après création (même discipline que OutcomeAssessment/
+  // CapabilityRequirement) : aucune route ne les réécrit jamais.
+  createdAt      DateTime @default(now())
+  createdByEmail String
+
+  @@index([missionId])
+  @@index([talentId])
+}
+
+enum MissionAssignmentRole {
+  RESPONSABLE_PRINCIPAL
+  CONTRIBUTEUR
+  REVIEWER
+}
+
+enum MissionAssignmentStatut {
+  PLANIFIE
+  ACTIF
+  TERMINE
+  ANNULE
+}
+
+// A20 — DATE SEMANTICS CORRECTION (05/10/2026). Distingue une date
+// d'affectation RÉELLEMENT connue (CONNUE — fournie explicitement par un
+// Admin via le service vivant, création ou transition) d'une date
+// RECONSTRUITE par le backfill historique à partir d'un fait de
+// provenance de la donnée Mission, jamais d'un fait d'affectation
+// vérifié. PROXY_CREATION_MISSION/PROXY_DERNIERE_ECRITURE_MISSION ne
+// doivent JAMAIS être traitées comme une certitude métier par un
+// consommateur futur (voir MissionAssignment.dateDebutProvenance/
+// dateFinProvenance).
+enum DateAffectationProvenance {
+  CONNUE
+  PROXY_CREATION_MISSION
+  PROXY_DERNIERE_ECRITURE_MISSION
 }
