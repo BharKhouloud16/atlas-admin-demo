@@ -1197,6 +1197,16 @@ model Mission {
   // PHASE 2B-1 — Mission Skill Proposal (28/09/2026) — voir MissionSkillProposal
   skillProposals MissionSkillProposal[]
 
+  // A6.1 — Outcome Foundation (voir OutcomeAssessment) : jamais plus d'une
+  // ligne "courante" (supersededBy IS NULL, c'est-à-dire aucune ligne
+  // suivante ne la référence par supersedesId) par Mission à un instant
+  // donné — invariant applicatif (lib/outcome/service.ts), pas une
+  // contrainte DB (même choix que ClientNeed.needParentId ne pouvant pas
+  // exprimer "au plus une ligne non-supersédée" nativement). Mission.statut
+  // n'est JAMAIS modifié par ce lot : TERMINEE reste une clôture
+  // administrative, jamais une preuve de résultat (voir OutcomeAssessment).
+  outcomeAssessments OutcomeAssessment[]
+
   @@index([sourceDemandeId])
 }
 
@@ -1504,6 +1514,14 @@ model ClientNeed {
   // requise par Prisma en contrepartie de SolutionOption.need, aucun champ
   // existant modifié.
   solutionOptions    SolutionOption[]
+  // A6.1 — Outcome Foundation : un OutcomeAssessment pointe vers la version
+  // EXACTE du Need qu'il évalue (needVersionId), jamais la version
+  // courante recalculée — voir OutcomeAssessment. Relation Prisma réelle
+  // (jamais une chaîne de traçabilité pure) pour garantir qu'un Outcome ne
+  // puisse jamais pointer vers un ClientNeed inexistant ; n'affecte en rien
+  // la logique de fork/versioning (lib/client-need/versioning.ts, non
+  // modifiée par ce lot).
+  outcomeAssessments OutcomeAssessment[]
   createdAt          DateTime                  @default(now())
   updatedAt          DateTime                  @updatedAt
 
@@ -2283,4 +2301,148 @@ model PreferenceNotification {
   categoriesEmail AttentionCategorie[]
   createdAt       DateTime             @default(now())
   updatedAt       DateTime             @updatedAt
+}
+
+// COMPANY ATLAS — A6.1 : Outcome Foundation (01/10/2026).
+//
+// Implémente le contrat défini par le rapport A6 ("ATLAS — A6 — OUTCOME
+// CONTRACT / PRODUCT DESIGN") : répond à "la Mission a-t-elle réellement
+// produit le résultat attendu par le Need validé ?" — jamais une deuxième
+// Evaluation, jamais un proxy de satisfaction, jamais une conclusion
+// inventée quand les preuves sont insuffisantes (voir OutcomeStatut.
+// INDETERMINABLE ci-dessous).
+//
+// Mission / Evaluation / Evidence / Quality / Outcome restent strictement
+// séparés (A6 §A6.3) : ce lot ne modifie ni Mission.statut, ni le modèle
+// Evaluation, ni SolutionOption, ni Decision/DecisionOption (Control
+// Plane) — `decisionOptionId` ci-dessous est une pure référence de
+// traçabilité (même patron que SolutionOption.sourceOptionId/
+// demandeTalentId : une simple colonne, jamais une relation Prisma),
+// délibérément pour ne jamais exiger de champ inverse sur SolutionOption.
+enum OutcomeStatut {
+  OBTENU               // ACHIEVED
+  PARTIELLEMENT_OBTENU // PARTIALLY_ACHIEVED
+  NON_OBTENU           // NOT_ACHIEVED
+  // Jamais une absence de ligne : un critère/ensemble de critères évalué
+  // sans preuve suffisante produit explicitement cet état, jamais un
+  // OBTENU/NON_OBTENU par défaut (règle absolue, A6 §9 et mandat A6.1 §15).
+  INDETERMINABLE       // NOT_DETERMINABLE
+}
+
+// Méthode de vérification d'un critère — distincte de la confiance
+// (OutcomeConfiance ci-dessous, qui réutilise VERIFIE/DECLARE/INFERE/
+// INCONNU comme StatutPreuveCompetence/ClientNeedFait.statut, 5e instance
+// du même vocabulaire à dessein jamais partagée, A6 §A6.3/§A6.10).
+enum OutcomeMethodeVerification {
+  VERIFIE_HUMAIN  // HUMAN_VERIFIED — un ADMIN a vérifié activement.
+  DECLARE_CLIENT  // CLIENT_DECLARED — le client déclare lui-même.
+  MESURE_SYSTEME  // SYSTEM_MEASURED — calculé depuis une donnée objective existante.
+  INFERE_IA       // AI_INFERRED — une IA propose ; jamais suffisant seul pour OBTENU/NON_OBTENU.
+}
+
+enum OutcomeConfiance {
+  VERIFIE
+  DECLARE
+  INFERE
+  INCONNU
+}
+
+model OutcomeAssessment {
+  id              String   @id @default(cuid())
+  mission         Mission  @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  missionId       String
+  // Version EXACTE, immuable, du Need évaluée — jamais la version
+  // courante recalculée au moment de la lecture (A6 §A6.6 "point-in-time
+  // truth"). Nullable : la majorité des Mission existantes n'ont pas de
+  // sourceDemandeId traçable (voir Mission.sourceDemandeId) — ne jamais
+  // deviner, laisser explicitement absent plutôt qu'inventer un lien.
+  needVersion     ClientNeed? @relation(fields: [needVersionId], references: [id])
+  needVersionId   String?
+  // Référence de traçabilité pure vers la ligne SolutionOption (niveau
+  // DECISION) qui a mené à cette Mission — jamais une relation Prisma
+  // complète (même patron que SolutionOption.demandeTalentId), pour ne
+  // jamais exiger de champ inverse sur SolutionOption (hors périmètre A6.1
+  // explicite : "Ne modifie pas SolutionOption").
+  decisionOptionId String?
+  // Copie figée de RESULTAT_ATTENDU au moment de l'évaluation, si ce fait
+  // existe sur la version pinnée — jamais une relecture live (le Need peut
+  // avoir déjà forké depuis). Null si absent sur cette version (pas une
+  // valeur inventée).
+  expectedOutcome String?
+
+  // Dérivé des OutcomeCriterionResult ci-dessous par
+  // lib/outcome/verification.ts::verifierResultatVsNeed — jamais assigné
+  // directement par un appelant (voir lib/outcome/service.ts).
+  overallStatus   OutcomeStatut
+
+  assessedAt      DateTime @default(now())
+  // ADMIN uniquement (A6 §A6.11 — jamais le Client, jamais l'Ingénieur :
+  // risque d'auto-validation ; jamais un Agent sans passer par B22, qui ne
+  // s'applique à aucun appelant dans ce lot). Jamais null : l'API exige une
+  // identité humaine authentifiée avant toute création.
+  assessedByEmail String
+  assessedByRole  String
+
+  criteria        OutcomeCriterionResult[]
+
+  // A15 — Supersession corrigée (même doctrine que DeliveryEvidence,
+  // A12.1) : le pointeur vit sur la NOUVELLE ligne (supersedesId), jamais
+  // sur l'ancienne — une ligne déjà créée n'est plus jamais réécrite,
+  // aucune exception. "Courant" pour une Mission = supersededBy IS NULL
+  // (aucune ligne suivante ne la référence par supersedesId). Au plus une
+  // ligne courante par Mission à un instant donné — invariant applicatif
+  // (transaction Serializable + retry, lib/outcome/service.ts), jamais une
+  // contrainte DB (voir commentaire sur Mission.outcomeAssessments
+  // ci-dessus). @unique sur supersedesId empêche structurellement toute
+  // branche (deux lignes ne peuvent jamais superséder la même ligne).
+  supersedesId    String?            @unique
+  supersedes      OutcomeAssessment? @relation("OutcomeSupersession", fields: [supersedesId], references: [id], onDelete: Restrict)
+  supersededBy    OutcomeAssessment? @relation("OutcomeSupersession")
+
+  createdAt       DateTime @default(now())
+
+  @@index([missionId])
+  @@index([needVersionId])
+}
+
+model OutcomeCriterionResult {
+  id              String            @id @default(cuid())
+  assessment      OutcomeAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  assessmentId    String
+  // Référence de traçabilité pure vers l'instance ClientNeedFait(cle=
+  // CRITERE_REUSSITE) précise évaluée — jamais une relation Prisma
+  // complète (ClientNeedFait reste un modèle à très fort trafic, non
+  // modifié par ce lot ; même discipline que decisionOptionId ci-dessus).
+  // Null si ce critère ne correspond à aucun fait structuré (ex. critère
+  // global unique faute de CRITERE_REUSSITE sur la version pinnée).
+  sourceFaitId    String?
+  // Copie figée du texte du critère au moment de l'évaluation — jamais
+  // une relecture live.
+  criterionText   String
+  actualResult    String?
+  status          OutcomeStatut
+  confidence      OutcomeConfiance
+  verificationMethod OutcomeMethodeVerification?
+
+  evidences       OutcomeEvidence[]
+
+  createdAt       DateTime @default(now())
+
+  @@index([assessmentId])
+}
+
+model OutcomeEvidence {
+  id          String                  @id @default(cuid())
+  criterion   OutcomeCriterionResult  @relation(fields: [criterionId], references: [id], onDelete: Cascade)
+  criterionId String
+  // Libre, texte court — même rôle que SkillEvidence.source/detail,
+  // jamais une copie de document complet (voir A6 §A6.8 : ce lot ne
+  // construit pas de Deliverable Engine/Evidence Graph, uniquement le
+  // point d'extension minimal permettant d'y brancher plus tard une
+  // source réelle sans refactor).
+  source      String
+  detail      String?
+  createdAt   DateTime @default(now())
+
+  @@index([criterionId])
 }

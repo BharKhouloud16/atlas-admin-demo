@@ -37,12 +37,19 @@ export type SuggestionAnalyse = {
 //
 // Vocabulaire des clés de fait EXTRACTIBLES — sous-ensemble volontaire de
 // ClientNeedFaitCle (prisma/schema.prisma) : les clés purement déclaratives/
-// répétitives sans heuristique fiable (CONTRAINTE, CRITERE_REUSSITE,
-// PRIORITE, RISQUE, PREFERENCE) ne sont PAS extraites par le provider local
-// — un heuristique par mots-clés ne peut pas les détecter honnêtement, donc
-// il ne prétend pas le faire (ne jamais inventer une extraction, directive
-// de la mission). Recopié ici en chaîne (pas un import de @prisma/client) :
-// ce module reste indépendant de Prisma, comme SuggestionAnalyse ci-dessus.
+// répétitives sans heuristique fiable (CONTRAINTE, PRIORITE, RISQUE,
+// PREFERENCE) ne sont PAS extraites par le provider local — un heuristique
+// par mots-clés ne peut pas les détecter honnêtement, donc il ne prétend
+// pas le faire (ne jamais inventer une extraction, directive de la
+// mission). Recopié ici en chaîne (pas un import de @prisma/client) : ce
+// module reste indépendant de Prisma, comme SuggestionAnalyse ci-dessus.
+//
+// A6.1 — Outcome Foundation (01/10/2026) : RESULTAT_ATTENDU (singleton) et
+// CRITERE_REUSSITE (répétable) rejoignent ce vocabulaire — même discipline
+// que les autres clés ci-dessous : uniquement sur signal explicite dans le
+// texte, jamais une déduction ni une valeur générique. CRITERE_REUSSITE
+// reste répétable (plusieurs lignes possibles par extraction) exactement
+// comme COMPETENCE ; voir extraireBesoin() ci-dessous pour le détail.
 export type CleFaitBesoinExtractible =
   | "OBJECTIF"
   | "ROLE"
@@ -58,6 +65,8 @@ export type CleFaitBesoinExtractible =
   | "DISPONIBILITE"
   | "LOCALISATION"
   | "REMOTE"
+  | "RESULTAT_ATTENDU"
+  | "CRITERE_REUSSITE"
   | "HYPOTHESE_DOMAINE_SOLUTION";
 
 export type FaitBesoinExtrait = {
@@ -241,6 +250,57 @@ class AiProviderLocal implements AiProvider {
       if (/tjm|journalier|jour/.test(normalise)) ajouter("BUDGET_TYPE", "TJM");
       else if (/forfait/.test(normalise)) ajouter("BUDGET_TYPE", "FORFAIT");
       else if (/abonnement/.test(normalise)) ajouter("BUDGET_TYPE", "ABONNEMENT");
+    }
+
+    // A6.1 — Outcome Foundation (01/10/2026). RESULTAT_ATTENDU — signal
+    // explicite uniquement ("nous voulons/souhaitons/cherchons à...",
+    // "l'objectif est de..."), jamais une déduction du sujet général du
+    // texte : capture uniquement ce qui suit le signal, jusqu'à la
+    // ponctuation de fin (. ! ? ; ou fin de texte) — jamais un résumé, une
+    // reformulation ou une invention. Opère sur `texte` (pas `normalise`)
+    // pour préserver la casse/accents d'origine dans la valeur capturée.
+    // Si aucun signal n'est trouvé, RESULTAT_ATTENDU reste absent (jamais
+    // de valeur par défaut) — son absence est ensuite traitée comme une
+    // clarification recommandée, jamais bloquante (voir
+    // CLES_IMPORTANTES_SI_ABSENTES, lib/client-need/extraction.ts).
+    const SIGNAUX_RESULTAT_ATTENDU = [
+      /nous (?:voulons|souhaitons|aimerions|cherchons [aà])\s+([^.!?;\n]{5,200})/i,
+      /(?:l[' ]objectif|notre objectif|le but)\s+est\s+de\s+([^.!?;\n]{5,200})/i,
+    ];
+    for (const regex of SIGNAUX_RESULTAT_ATTENDU) {
+      const m = texte.match(regex);
+      if (m && m[1].trim().length >= 5) {
+        ajouter("RESULTAT_ATTENDU", m[1].trim().slice(0, 200));
+        break;
+      }
+    }
+
+    // CRITERE_REUSSITE — répétable, même discipline : uniquement sur
+    // signal explicite ("critère(s) de réussite/succès...", "on saura que
+    // c'est réussi si...", "le succès sera mesuré par..."), jamais une
+    // déduction. Le texte capturé est découpé en instances distinctes sur
+    // les séparateurs d'énumération usuels (point-virgule, virgule, " et ")
+    // — simple découpage mécanique du texte littéral, jamais une
+    // compréhension de son contenu (ne construit pas un moteur NLP,
+    // directive de la mission A6.1 §7). Plafonné à 5 instances pour éviter
+    // une sur-segmentation artificielle d'une phrase mal ponctuée.
+    const SIGNAUX_CRITERE_REUSSITE = [
+      /crit[eè]res?\s+de\s+r[ée]ussite\s*:?\s*([^.!?\n]{5,300})/i,
+      /crit[eè]res?\s+de\s+succ[eè]s\s*:?\s*([^.!?\n]{5,300})/i,
+      /on\s+saura\s+que\s+c.?est\s+r[ée]ussi\s+si\s+([^.!?\n]{5,300})/i,
+      /le\s+succ[eè]s\s+sera\s+mesur[ée]\s+par\s+([^.!?\n]{5,300})/i,
+    ];
+    for (const regex of SIGNAUX_CRITERE_REUSSITE) {
+      const m = texte.match(regex);
+      if (m) {
+        const instances = m[1]
+          .split(/;|,| et /i)
+          .map((s) => s.trim())
+          .filter((s) => s.length >= 3)
+          .slice(0, 5);
+        for (const instance of instances) ajouter("CRITERE_REUSSITE", instance.slice(0, 200));
+        break;
+      }
     }
 
     // HYPOTHESE_DOMAINE_SOLUTION — TOUJOURS INFERE, jamais DECLARE : c'est

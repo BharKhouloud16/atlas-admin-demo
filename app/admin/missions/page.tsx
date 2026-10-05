@@ -4,6 +4,7 @@ import { useEffect, useState, FormEvent, Fragment } from "react";
 import Link from "next/link";
 import { bleuFonce, bleu, grisTexte, bordure } from "@/lib/theme";
 import MissionClosureReview from "./MissionClosureReview";
+import MissionOutcomePanel from "./MissionOutcomePanel";
 
 type Mission = {
   id: string;
@@ -92,6 +93,10 @@ export default function MissionsPage() {
   // missionId, jamais un Set) : SOFT GATE, jamais bloquant, purement une
   // couche UI autour du lifecycle existant.
   const [revueOuverte, setRevueOuverte] = useState<string | null>(null);
+  // A6.1 — Outcome Foundation : état séparé de revueOuverte (A6 §A6.3 —
+  // ne jamais fusionner Evidence/Quality des compétences Ingénieur et
+  // Outcome du Need dans un même panneau/état).
+  const [outcomeOuvert, setOutcomeOuvert] = useState<string | null>(null);
 
   // LOT 16.3 — MISSION LIST SCALABILITY : `page`/`total`/`totalPages`
   // proviennent toujours du serveur (jamais recalculés côté client) — voir
@@ -369,6 +374,16 @@ export default function MissionsPage() {
                       </button>
                     </div>
                   )}
+                  {isAdmin && m.statut === "TERMINEE" && (
+                    <div style={{ marginTop: 4 }}>
+                      <button
+                        onClick={() => setOutcomeOuvert((v) => (v === m.id ? null : m.id))}
+                        style={{ fontSize: 11, padding: "2px 6px", border: `1px solid ${bordure}`, background: "#fff", cursor: "pointer" }}
+                      >
+                        {outcomeOuvert === m.id ? "Fermer l'Outcome" : "Résultat attendu (Outcome)"}
+                      </button>
+                    </div>
+                  )}
                 </td>
                 {isAdmin && <td style={{ padding: "6px 8px" }}>{m.tjmVente != null ? Math.round(m.tjmVente) + " €" : "—"}</td>}
                 {isAdmin && <td style={{ padding: "6px 8px" }}>{m.ca != null ? Math.round(m.ca).toLocaleString("fr-FR") + " €" : "—"}</td>}
@@ -408,6 +423,13 @@ export default function MissionsPage() {
                         rechargerMissions();
                       }}
                     />
+                  </td>
+                </tr>
+              )}
+              {outcomeOuvert === m.id && (
+                <tr>
+                  <td colSpan={isAdmin ? 12 : 7} style={{ padding: 0 }}>
+                    <MissionOutcomePanel missionId={m.id} onFermer={() => setOutcomeOuvert(null)} />
                   </td>
                 </tr>
               )}

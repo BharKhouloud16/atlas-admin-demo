@@ -170,7 +170,13 @@ test.describe("COMPANY ATLAS LOT 3 — Client Need Validation & Clarification (A
       await repondre(request, besoin.id, "BUDGET_MONTANT", "CORRIGER", "500");
       await repondre(request, besoin.id, "LOCALISATION", "CORRIGER", "France");
       await repondre(request, besoin.id, "DISPONIBILITE", "CORRIGER", "Immédiate");
-      const derniere = await repondre(request, besoin.id, "DUREE", "CORRIGER", "6 mois");
+      await repondre(request, besoin.id, "DUREE", "CORRIGER", "6 mois");
+      // A6.1 — Outcome Foundation : RESULTAT_ATTENDU rejoint désormais
+      // CLES_IMPORTANTES_SI_ABSENTES (lib/client-need/extraction.ts) — sa
+      // résolution fait maintenant partie des manques importants à
+      // clarifier avant la sortie automatique de A_CLARIFIER, au même
+      // titre que les clés ci-dessus.
+      const derniere = await repondre(request, besoin.id, "RESULTAT_ATTENDU", "CORRIGER", "Renforcer l'équipe QA sur le projet.");
       expect(derniere.status(), await derniere.text()).toBe(201);
 
       const final = await relire(request, besoin.id);
@@ -191,7 +197,9 @@ test.describe("COMPANY ATLAS LOT 3 — Client Need Validation & Clarification (A
       await repondre(request, besoin.id, "BUDGET_MONTANT", "CORRIGER", "500");
       await repondre(request, besoin.id, "LOCALISATION", "CORRIGER", "France");
       await repondre(request, besoin.id, "DISPONIBILITE", "CORRIGER", "Immédiate");
-      const complet = await repondre(request, besoin.id, "DUREE", "CORRIGER", "6 mois");
+      await repondre(request, besoin.id, "DUREE", "CORRIGER", "6 mois");
+      // A6.1 — Outcome Foundation : voir commentaire équivalent ci-dessus.
+      const complet = await repondre(request, besoin.id, "RESULTAT_ATTENDU", "CORRIGER", "Renforcer l'équipe de développement.");
       expect(complet.status(), await complet.text()).toBe(201);
       const avant = (await complet.json()).besoin;
       expect(avant.statut).toBe("SOUMIS");
