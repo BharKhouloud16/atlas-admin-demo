@@ -514,16 +514,15 @@ test.describe("A25 — Outcome / Quality / Evidence (hors périmètre, jamais cr
     expect(outcomes).toBe(0);
   });
 
-  test("44. aucun modèle Quality n'existe — aucune ligne créée par ce lot (hors périmètre A25)", async ({ request }) => {
+  test("44. FINALIZED ne crée jamais automatiquement de DeliveryQualityGate (introduit par A27, hors périmètre A25)", async ({ request }) => {
     await connecter(request, "admin-demo@example.com");
     const mission = await creerMission(StatutMission.EN_COURS);
     const { deliverable, version } = await creerDeliverableDirect(mission.id);
     await mettreVersionEnStatut(version.id, "APPROVED");
     await patchVersion(request, mission.id, deliverable.id, version.id, { action: "finaliser" });
-    // Aucune table Quality n'existe dans ce schéma — ce test documente
-    // explicitement l'absence de toute relation/écriture vers un tel
-    // domaine, conformément au contrat A25 §29.
-    expect(true).toBe(true);
+
+    const qualityGates = await prisma.deliveryQualityGate.count({ where: { deliverableVersionId: version.id } });
+    expect(qualityGates).toBe(0);
   });
 
   test("45. aucune OutcomeEvidence créée automatiquement par FINALIZED", async ({ request }) => {

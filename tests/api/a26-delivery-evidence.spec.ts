@@ -575,11 +575,17 @@ test.describe("A26 — Outcome / Quality (hors périmètre, jamais créés autom
     expect(outcomes).toBe(0);
   });
 
-  test("69/70. aucun modèle Quality n'existe — aucune ligne créée, Evidence != PASS/FAIL", async () => {
-    // Aucune table Quality/QualityGate n'existe dans ce schéma (hors
-    // périmètre A26, contrat §22/§29) — ce test documente explicitement
-    // cette absence, comme pour le test équivalent A25 §44.
-    expect(true).toBe(true);
+  test("69/70. création d'une DeliveryQualityGate n'est jamais une conséquence automatique d'une Evidence — Evidence != PASS/FAIL (Quality introduit par A27)", async ({ request }) => {
+    await connecter(request, "admin-demo@example.com");
+    const mission = await creerMission(StatutMission.EN_COURS);
+    const workItem = await creerWorkItem(mission.id);
+
+    const reponse = await postEvidenceWorkItem(request, mission.id, workItem.id, { methode: "VALIDATION_ADMIN", contenu: "Vérifié." });
+    expect(reponse.status(), await reponse.text()).toBe(201);
+    const evidence = await reponse.json();
+
+    const liens = await prisma.qualityEvidenceLink.count({ where: { deliveryEvidenceId: evidence.id } });
+    expect(liens).toBe(0);
   });
 });
 

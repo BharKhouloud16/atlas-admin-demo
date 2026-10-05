@@ -347,11 +347,14 @@ test.describe("A22 — Blocage / déblocage", () => {
 });
 
 test.describe("A22 — Terminaison : aucune précondition WorkItem/Deliverable/Evidence/Quality/Outcome", () => {
-  // WorkItem/Deliverable/DeliveryEvidence/DeliveryQualityGate ne sont pas
-  // des modèles de ce schéma (contrat A22 §8 : concepts explicitement hors
-  // périmètre, jamais introduits par ce lot). Les seuls modèles "résultat"
-  // réellement présents sont OutcomeAssessment/OutcomeEvidence (A6.1) : on
-  // vérifie ici qu'aucun des deux n'est requis NI créé par la terminaison.
+  // WorkItem/Deliverable/DeliveryEvidence/DeliveryQualityGate (introduits
+  // respectivement par A23/A25/A26/A27, tous ultérieurs à ce lot) restent
+  // des domaines indépendants du lifecycle Mission (contrat A22 §8 :
+  // concepts explicitement hors périmètre, jamais introduits par ce lot,
+  // jamais une précondition/conséquence de la terminaison). Les seuls
+  // modèles "résultat" réellement présents au moment d'A22 sont
+  // OutcomeAssessment/OutcomeEvidence (A6.1) : on vérifie ici qu'aucun des
+  // deux n'est requis NI créé par la terminaison.
 
   test("29. EN_COURS -> TERMINEE sans aucune OutcomeAssessment -> 200", async ({ request }) => {
     await connecter(request, "admin-demo@example.com");

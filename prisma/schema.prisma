@@ -3134,6 +3134,11 @@ model DeliverableVersion {
   // strictement nécessaire — aucune règle A25 n'est modifiée par cet ajout.
   deliveryEvidences DeliveryEvidence[]
 
+  // A27 — Quality Gate Foundation (05/10/2026). Inverse Prisma strictement
+  // nécessaire — aucune règle A25 (lifecycle, immutabilité, succession)
+  // n'est modifiée par cet ajout.
+  qualityGates DeliveryQualityGate[]
+
   @@unique([deliverableId, version])
   @@index([deliverableId])
 }
@@ -3243,6 +3248,11 @@ model DeliveryEvidence {
   createdAt      DateTime @default(now())
   createdByEmail String
 
+  // A27 — Quality Gate Foundation (05/10/2026). Inverse Prisma strictement
+  // nécessaire pour QualityEvidenceLink ci-dessous — aucune règle A26
+  // (immutabilité, succession, contenu) n'est modifiée par cet ajout.
+  qualityEvidenceLinks QualityEvidenceLink[]
+
   @@index([workItemId])
   @@index([deliverableVersionId])
 }
@@ -3266,4 +3276,212 @@ enum DeliveryEvidenceConfidence {
   DECLARE
   INFERE
   INCONNU
+}
+
+// COMPANY ATLAS — A27 : Quality Gate Foundation (05/10/2026).
+//
+// Répond à "ce qui a été livré respecte-t-il les critères d'acceptation
+// définis ?" — JAMAIS "le client a-t-il obtenu son résultat ?" (Outcome,
+// hors périmètre A27, contrat A27 §1/§3). Les trois assertions Evidence
+// (A26, "que s'est-il passé ?") / Quality (A27, "cela respecte-t-il les
+// critères ?") / Outcome (A6.1, "le client a-t-il obtenu son résultat ?")
+// restent strictement indépendantes, jamais fusionnées, jamais un
+// automatisme dans un sens ou dans l'autre (contrat A27 §3/§11/§28/§29).
+//
+// CIBLE — DÉCISION DE MODÉLISATION EXPLICITE (contrat A27 §6/§7,
+// documentée ici comme demandé) : UNIQUEMENT DeliverableVersion — jamais
+// WorkItem, contrairement à DeliveryEvidence (A26, XOR WorkItem/
+// DeliverableVersion). Raison : "critères" est le cœur même de ce que
+// Quality évalue, et acceptanceCriteria est un concept qui vit
+// EXCLUSIVEMENT sur Deliverable (voir ci-dessous) — WorkItem (A23) ne
+// porte structurellement aucune notion de critère d'acceptation : c'est
+// une unité de travail interne, pas un contenu livré à évaluer contre un
+// contrat d'acceptation. Introduire une cible WorkItem pour Quality
+// exigerait soit d'inventer un acceptanceCriteria sur WorkItem (hors
+// périmètre, non demandé), soit d'évaluer un WorkItem contre les critères
+// d'un Deliverable qu'il ne porte pas lui-même — une confusion de
+// domaine. Une cible générique (Option C) est également écartée : elle
+// introduirait une abstraction supplémentaire pour éviter une seule FK,
+// ce que le contrat interdit explicitement (§7 : "ne pas introduire une
+// abstraction générique seulement pour éviter deux FK"). Un seul FK
+// obligatoire, jamais nullable, jamais XOR — plus simple que A26 parce
+// que le besoin réel l'est aussi.
+//
+// IMMUABILITÉ DE CIBLE (contrat A27 §28) : une fois créée, une
+// DeliveryQualityGate reste pointée EXACTEMENT sur cette version — jamais
+// déplacée automatiquement vers une version plus récente si le
+// Deliverable évolue (même doctrine que DeliveryEvidence vs sa cible,
+// A26).
+//
+// CRITÈRES / SNAPSHOT (contrat A27 §9/§10, décision explicite) :
+// Deliverable.acceptanceCriteria (A25) est un champ libre MUTABLE sur
+// l'objet logique Deliverable, tandis qu'une DeliverableVersion est un
+// instantané immuable dans le temps — une Quality historique référençant
+// V1 ne doit JAMAIS réinterpréter silencieusement sous un
+// acceptanceCriteria modifié APRÈS coup. Solution minimale retenue (même
+// doctrine que OutcomeAssessment.expectedOutcome, A6.1, "copie figée au
+// moment de l'évaluation, jamais une relecture live") : `
+// acceptanceCriteriaSnapshot` copie littéralement Deliverable.
+// acceptanceCriteria au moment de la création, une seule fois, jamais mis
+// à jour ensuite. Aucun moteur de règles générique construit : simple
+// copie figée.
+//
+// GRANULARITÉ — DÉCISION EXPLICITE (contrat A27 §23/§24/§25/§26) : PAS de
+// QualityCriterionResult par critère (contrairement à OutcomeAssessment/
+// OutcomeCriterionResult, A6.1) — un seul résultat de premier niveau
+// (`resultat`). Raison indépendante, jamais une copie aveugle : Outcome
+// dispose d'une source STRUCTURÉE de critères (ClientNeedFait,
+// cle=CRITERE_REUSSITE) à itérer un par un ; Deliverable.acceptanceCriteria
+// est un unique champ texte libre (A25 §27), sans aucune liste structurée
+// à décomposer — construire une granularité par critère exigerait de
+// demander à l'évaluateur de ré-inventer un découpage que le modèle ne
+// fournit pas, contraire au principe "jamais inventer". `criteresEvalues`
+// (texte libre, obligatoire) porte la déclaration de l'évaluateur sur ce
+// qui a réellement été vérifié.
+//
+// RÉSULTAT (contrat A27 §11/§12/§13) : vocabulaire fermé DÉDIÉ
+// (DeliveryQualityResult), jamais réutilisé depuis OutcomeStatut (OBTENU/
+// PARTIELLEMENT_OBTENU/NON_OBTENU/INDETERMINABLE) ni depuis le vocabulaire
+// QualityStatus non lié de lib/quality/domain.ts (Quality Signals CI —
+// bounded context totalement différent, dérivé de CI/CODE_REVIEW/RUNTIME
+// pour la Sécurité/le code, AUCUN rapport avec cette Quality-ci malgré le
+// nom partagé — vérifié par l'audit A27 §4, aucune collision de modèle
+// Prisma). NOT_DETERMINABLE est préféré à un faux PASS/FAIL quand la
+// preuve est insuffisante — jamais forcé par défaut.
+//
+// LIFECYCLE (contrat A27 §17/§18) : DRAFT -> FINALIZED uniquement, machine
+// minimale à deux états (jamais un vocabulaire flou) — transition en
+// écriture conditionnelle (`updateMany` sur id+statut, même discipline
+// que DeliverableVersion/WorkItem, AUCUN invariant croisé entre lignes,
+// donc jamais de transaction Serializable ici). AUCUNE SUCCESSION
+// (supersedesId) dans ce lot (contrat A27 §17, "une simple nouvelle
+// Quality indépendante peut suffire si le besoin n'est pas démontré") :
+// contrairement à OutcomeAssessment/DeliverableVersion (UN SEUL objet
+// courant par parent, succession auto-détectée nécessaire), plusieurs
+// DeliveryQualityGate INDÉPENDANTES peuvent légitimement coexister sur la
+// MÊME DeliverableVersion (ex. une évaluation "fonctionnelle" et une
+// évaluation "sécurité" ne sont jamais des versions l'une de l'autre) —
+// il n'existe donc PAS de notion de "ligne courante unique par cible" à
+// remplacer, donc rien à superséder structurellement. Une correction
+// après FINALIZED est simplement une NOUVELLE DeliveryQualityGate
+// indépendante sur la même cible, jamais une réécriture de l'ancienne.
+//
+// RBAC (hors de ce modèle/service, contrôlé par les routes, contrat A27
+// §17-21 audité) : ADMIN et INGENIEUR (sur les Missions où il est
+// autorisé, via lib/delivery-evidence/access.ts::
+// estIngenieurAutoriseSurMission, même fonction partagée que A26 pour
+// DeliverableVersion) peuvent créer/préparer une DRAFT ; seul ADMIN peut
+// finaliser (jamais l'Ingénieur, même sur sa propre ligne — risque
+// d'auto-validation, même doctrine que OutcomeAssessment, A6.1 §A6.11) ;
+// le CLIENT ne devient JAMAIS automatiquement approbateur Quality (sa
+// validation reste exclusivement DeliveryEvidence.VALIDATION_CLIENT,
+// A26) — lecture uniquement sur ses propres Mission.
+//
+// AUCUN RÔLE AGENT (contrat A27 §22-27, limitation déjà documentée par
+// A26/A6.1) : ce schéma n'ajoute aucune identité Agent — une Quality
+// "proposée par IA" devrait passer par ADMIN comme pour INFERENCE_IA
+// (A26) ou DECLARE_CLIENT/INFERE_IA (Outcome), jamais une création
+// directe FINALIZED.
+//
+// ISOLATION ABSOLUE (contrat A27 §37-42) : ce domaine ne modifie JAMAIS
+// DeliveryEvidence (seulement référencée via QualityEvidenceLink, jamais
+// son contenu copié), ne modifie JAMAIS Deliverable/DeliverableVersion
+// (contenu, statut, FINALIZE/REJECT), ne modifie JAMAIS WorkItem.statut,
+// ne modifie JAMAIS Mission.statut. Mission TERMINEE/ANNULEE ne bloque
+// JAMAIS la création d'une DeliveryQualityGate historiquement nécessaire
+// (même doctrine que DeliveryEvidence/DeliverableVersion, A25/A26) :
+// aucune précondition Mission.statut/DeliverableVersion.statut n'est
+// vérifiée ici.
+enum DeliveryQualityResult {
+  PASS
+  FAIL
+  NOT_DETERMINABLE
+}
+
+enum DeliveryQualityStatut {
+  DRAFT
+  FINALIZED
+}
+
+model DeliveryQualityGate {
+  id String @id @default(cuid())
+
+  // Cible UNIQUE et immuable (contrat A27 §6/§7/§28) — jamais XOR, jamais
+  // nullable, jamais déplacée vers une version ultérieure. onDelete:
+  // Restrict (jamais Cascade) : une Quality est un fait historique, elle
+  // ne doit jamais disparaître silencieusement si sa cible était
+  // supprimée (même doctrine que DeliveryEvidence vs ses cibles, A26).
+  deliverableVersion   DeliverableVersion @relation(fields: [deliverableVersionId], references: [id], onDelete: Restrict)
+  deliverableVersionId String
+
+  // Déclaration libre de l'évaluateur sur ce qui a réellement été vérifié
+  // — obligatoire (champ minimal "critères" du contrat A27 §5), jamais
+  // une relecture automatique de acceptanceCriteriaSnapshot ci-dessous
+  // (qui reste une copie contextuelle, pas une liste à cocher).
+  criteresEvalues String
+
+  // Copie figée de Deliverable.acceptanceCriteria au moment de la
+  // création — jamais relue live ensuite (contrat A27 §9/§10). Null si
+  // le Deliverable n'avait aucun acceptanceCriteria renseigné à cet
+  // instant (pas une valeur inventée).
+  acceptanceCriteriaSnapshot String?
+
+  resultat DeliveryQualityResult
+
+  // DRAFT à la création, jamais choisi par l'appelant (contrat A27 §17).
+  statut DeliveryQualityStatut @default(DRAFT)
+
+  // Évaluateur + date (champs minimaux du contrat A27 §5) — immuables
+  // après création, même discipline que WorkItem/MissionAssignment/
+  // DeliverableVersion/DeliveryEvidence.
+  evaluatedAt      DateTime @default(now())
+  evaluatedByEmail String
+  evaluatedByRole  String
+
+  createdAt      DateTime @default(now())
+  createdByEmail String
+
+  evidenceLinks QualityEvidenceLink[]
+
+  @@index([deliverableVersionId])
+}
+
+// Provenance Evidence d'une Quality — N:M, jamais une copie de contenu
+// (contrat A27 §14/§15/§16/§33-36) : référence l'EXACTE ligne
+// DeliveryEvidence citée au moment de l'évaluation. Une Evidence
+// supersédée PLUS TARD par une nouvelle ligne reste légalement
+// référencée ici, jamais déplacée vers la nouvelle (contrat A27 §16) —
+// aucune vérification de supersession n'est faite à la création du lien,
+// volontairement. Ajout/retrait uniquement tant que la Quality parente
+// est DRAFT (contrôlé par le service, jamais en base) — une fois
+// FINALIZED, le contenu de la Quality (y compris ses liens Evidence)
+// devient immuable, même discipline que DeliverableVersion (contrat
+// A25 §18).
+//
+// Hard delete (même discipline que DeliverableWorkItemLink, A25 §44) : ce
+// lien ne porte lui-même aucun fait métier à historiser, seul un
+// pointeur de traçabilité — son retrait ne détruit ni la Quality ni
+// l'Evidence référencée.
+model QualityEvidenceLink {
+  id String @id @default(cuid())
+
+  qualityGate   DeliveryQualityGate @relation(fields: [qualityGateId], references: [id], onDelete: Cascade)
+  qualityGateId String
+
+  // onDelete: Restrict (jamais Cascade) : une DeliveryEvidence est un
+  // fait historique de A26, jamais supprimée silencieusement parce
+  // qu'une Quality la référence (même doctrine que DeliverableWorkItemLink.
+  // workItemId, A25).
+  deliveryEvidence   DeliveryEvidence @relation(fields: [deliveryEvidenceId], references: [id], onDelete: Restrict)
+  deliveryEvidenceId String
+
+  createdAt      DateTime @default(now())
+  createdByEmail String
+
+  // Idempotence : jamais deux liens identiques entre la même Quality et
+  // la même Evidence (contrat A27 §33-36, "optionnellement empêcher les
+  // doublons exacts").
+  @@unique([qualityGateId, deliveryEvidenceId])
+  @@index([qualityGateId])
+  @@index([deliveryEvidenceId])
 }
