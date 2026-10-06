@@ -139,8 +139,14 @@ export class MaxIterationsAtteintError extends Error {
 // nouvelle architecture.
 // ---------------------------------------------------------------------------
 
+// A34 — Learning Loop Runtime (06/10/2026) : LEARNING ajoutée ici, exactement
+// comme ce registre l'anticipait ("une future boucle ajoute une entrée ici,
+// jamais une nouvelle architecture") — zéro changement de comportement pour
+// FOUNDATION, zéro nouvel état/transition (contrat A34, "le Run doit rester
+// dans la state machine A32").
 const REGISTRE_LOOPS: Record<AgenticLoopType, { version: number }> = {
   FOUNDATION: { version: 1 },
+  LEARNING: { version: 1 },
 };
 
 // Plafond serveur ABSOLU — même sous une valeur cliente "raisonnable", le

@@ -85,6 +85,67 @@ export type SuggestionBesoin = {
   confiance: number; // 0-1 — jamais 1.0 pour un provider heuristique/local
 };
 
+// COMPANY ATLAS — A34 : Learning Loop Runtime (06/10/2026).
+//
+// Pointeur de fait — jamais une copie du contenu source (même discipline
+// que Learning.source*Id, A30) : un identifiant + le type de source + le
+// palier de preuve déjà porté par CE fait dans son propre modèle d'origine
+// (contrat A33 §12/A34 §12, vocabulaire RAW_DATA/BUSINESS_FACT/
+// VERIFIED_RESULT/DECLARATION/INFERENCE — jamais un nouvel enum de
+// provenance, voir lib/learning-loop/facts.ts pour le mapping exact depuis
+// A26/A27/A29/A30) + un résumé court factuel (jamais le contenu brut).
+export type LearningSourceType =
+  | "MISSION"
+  | "NEED"
+  | "NEED_FACT"
+  | "SOLUTION_DECISION"
+  | "WORK_ITEM"
+  | "DELIVERABLE"
+  | "DELIVERABLE_VERSION"
+  | "DELIVERY_EVIDENCE"
+  | "QUALITY_GATE"
+  | "OUTCOME_ASSESSMENT"
+  | "FINANCIAL_RESULT";
+
+export type PalierPreuve = "RAW_DATA" | "BUSINESS_FACT" | "VERIFIED_RESULT" | "DECLARATION" | "INFERENCE";
+
+export type PointeurFait = {
+  sourceType: LearningSourceType;
+  id: string;
+  palier: PalierPreuve;
+  resume: string;
+};
+
+// Suggestion BRUTE — jamais écrite telle quelle (contrat A34 §23, pipeline
+// obligatoire) : le serveur (lib/learning-loop/classification.ts) recalcule
+// systématiquement type/scope/provenance/confidence selon les règles
+// déterministes A33/A34, quelle que soit la valeur suggérée ici. Ce type
+// documente uniquement la FORME que le provider peut proposer — jamais un
+// droit d'écriture direct.
+export type SuggestionLearning = {
+  type: "LESSON" | "PATTERN" | "BEST_PRACTICE" | "ANTI_PATTERN" | "RECOMMENDATION" | "INSIGHT";
+  scope: "MISSION" | "CLIENT" | "DOMAIN" | "CAPABILITY" | "ATLAS"; // suggestion uniquement — le serveur impose MISSION (contrat A34 §21)
+  titre: string;
+  statement: string;
+  confianceSuggeree: "LOW" | "MEDIUM" | "HIGH"; // suggestion uniquement — le serveur recalcule (contrat A34 §20)
+  justification: string;
+  pointeurFaitPrincipal: PointeurFait | null;
+};
+
+export type ContexteApprentissage = {
+  missionId: string;
+  faits: PointeurFait[];
+  // Calculé par le moteur déterministe AVANT l'appel au provider (jamais
+  // par le provider lui-même) — voir lib/learning-loop/recurrence.ts.
+  missionsComparablesCount: number;
+};
+
+export type SuggestionApprentissage = {
+  candidats: SuggestionLearning[];
+  incertitudes: string[];
+  contradictionsDetectees: string[];
+};
+
 export interface AiProvider {
   readonly nom: string; // "local" | "anthropic" | "openai" | "gemini" ...
   analyserTexte(texte: string, competencesConnues: string[]): Promise<SuggestionAnalyse>;
@@ -92,6 +153,15 @@ export interface AiProvider {
   // en tête de fichier : brancher un vrai provider ne doit demander qu'une
   // implémentation de cette méthode, jamais un changement des appelants).
   extraireBesoin(texte: string, competencesConnues: string[], paysConnus: string[]): Promise<SuggestionBesoin>;
+  // A34 — additive à l'interface existante, même principe. Entrée fermée
+  // (ContexteApprentissage, jamais un texte libre concaténé — contrat A34
+  // §25 : toute donnée métier reste DATA, jamais une instruction) ; sortie
+  // fermée (SuggestionApprentissage, jamais `any`/JSON arbitraire — contrat
+  // A34 §22). Purement ADVISORY (contrat A34 §23) : aucun appelant ne
+  // persiste directement cette sortie, toujours revalidée/reclassifiée
+  // server-side (lib/learning-loop/classification.ts) avant tout appel à
+  // creerLearningAvecRetry (A30).
+  proposerApprentissage(contexte: ContexteApprentissage): Promise<SuggestionApprentissage>;
 }
 
 // Provider par défaut, sans aucune dépendance réseau ni clé API : extraction
@@ -317,6 +387,72 @@ class AiProviderLocal implements AiProvider {
     const confianceBesoin = faits.filter((f) => f.cle !== "HYPOTHESE_DOMAINE_SOLUTION").length >= 3 ? 0.4 : 0.2;
 
     return { faits, confiance: confianceBesoin };
+  }
+
+  // A34 — Learning Loop Runtime (06/10/2026). Heuristique locale,
+  // déterministe, zéro dépendance réseau/clé API (contrat A34 §19) :
+  // sélectionne le fait le plus fort du dossier (priorité Outcome >
+  // FinancialResult > Quality > Evidence > reste) et en dérive UN candidat
+  // textuel, construit par simple gabarit à partir du `resume` déjà
+  // factuel du pointeur — jamais une paraphrase/interprétation nouvelle.
+  // PUREMENT CONSULTATIF (contrat A34 §18/§23) : type/scope/confiance
+  // suggérés ici sont TOUJOURS recalculés server-side
+  // (lib/learning-loop/classification.ts) avant toute persistance ; ce
+  // provider ne décide jamais de la vérité.
+  async proposerApprentissage(contexte: ContexteApprentissage): Promise<SuggestionApprentissage> {
+    const PRIORITE_SOURCE: Record<LearningSourceType, number> = {
+      OUTCOME_ASSESSMENT: 7,
+      FINANCIAL_RESULT: 6,
+      QUALITY_GATE: 5,
+      DELIVERY_EVIDENCE: 4,
+      DELIVERABLE_VERSION: 3,
+      DELIVERABLE: 2,
+      SOLUTION_DECISION: 2,
+      NEED_FACT: 1,
+      NEED: 1,
+      WORK_ITEM: 1,
+      MISSION: 0,
+    };
+
+    const faitsExploitables = contexte.faits.filter((f) => f.sourceType !== "MISSION" && f.palier !== "RAW_DATA");
+    if (faitsExploitables.length === 0) {
+      return {
+        candidats: [],
+        incertitudes: ["Aucun fait suffisamment solide (au-delà d'une simple donnée brute) pour proposer un Learning."],
+        contradictionsDetectees: [],
+      };
+    }
+
+    const faitPrincipal = [...faitsExploitables].sort((a, b) => PRIORITE_SOURCE[b.sourceType] - PRIORITE_SOURCE[a.sourceType])[0];
+
+    const confianceSuggeree: "LOW" | "MEDIUM" | "HIGH" =
+      contexte.missionsComparablesCount >= 2 && faitPrincipal.palier === "VERIFIED_RESULT"
+        ? "HIGH"
+        : contexte.missionsComparablesCount >= 2 || faitPrincipal.palier === "VERIFIED_RESULT"
+          ? "MEDIUM"
+          : "LOW";
+
+    const type: SuggestionLearning["type"] = contexte.missionsComparablesCount >= 2 ? "PATTERN" : "LESSON";
+
+    return {
+      candidats: [
+        {
+          type,
+          scope: "MISSION",
+          // Dérivé du contenu réel du fait (jamais un gabarit id-only) —
+          // sinon la détection de doublon/contradiction par recoupement de
+          // titre (lib/learning-loop/duplicates.ts, contradictions.ts)
+          // n'aurait structurellement jamais aucun mot à comparer.
+          titre: faitPrincipal.resume.slice(0, 200),
+          statement: faitPrincipal.resume,
+          confianceSuggeree,
+          justification: `Fait principal : ${faitPrincipal.sourceType}:${faitPrincipal.id} (palier ${faitPrincipal.palier}). ${contexte.missionsComparablesCount} mission(s) comparable(s) détectée(s).`,
+          pointeurFaitPrincipal: faitPrincipal,
+        },
+      ],
+      incertitudes: [],
+      contradictionsDetectees: [],
+    };
   }
 }
 

@@ -12,15 +12,18 @@
 // un pont générique. Le Runtime (lib/agentic/runtime.ts) n'invoque QUE les
 // fonctions exportées ici, jamais Prisma directement (contrat A32 §30).
 //
-// A32 — OBSERVATION ONLY (contrat A32 §18) : ce registre ne contient
-// aujourd'hui QU'UN seul Tool, purement diagnostique, zéro lecture/écriture
-// métier (aucun import de lib/need, lib/mission, lib/outcome, lib/financial-result,
-// lib/learning, lib/delivery-quality, lib/delivery-evidence) — la preuve que
-// le mécanisme Guard -> Tool -> ActionExecution fonctionne de bout en bout
-// sans jamais toucher Need/Mission/Outcome/FinancialResult/Learning/Quality/
-// Evidence (contrat A32 §18, dernière ligne). Les Tools mutant réellement
+// A32 — OBSERVATION ONLY (contrat A32 §18) : à sa livraison, ce registre ne
+// contenait QU'UN seul Tool, purement diagnostique, zéro lecture/écriture
+// métier — la preuve que le mécanisme Guard -> Tool -> ActionExecution
+// fonctionne de bout en bout sans jamais toucher Need/Mission/Outcome/
+// FinancialResult/Learning/Quality/Evidence (contrat A32 §18, dernière
+// ligne). A32 lui-même anticipait la suite : "Les Tools mutant réellement
 // un domaine métier seront introduits dans des lots dédiés FUTURS, après
-// validation explicite du Runtime lui-même (contrat A32 §18).
+// validation explicite du Runtime lui-même" — voir LEARNING_LOOP_STEP
+// ci-dessous (A34, premier Tool de ce type).
+
+import { prisma } from "@/lib/prisma";
+import { executerObservation, executerPropositionEtAction } from "@/lib/learning-loop/engine";
 
 export type ToolResultat = {
   ok: boolean;
@@ -77,7 +80,52 @@ const PING: Tool = {
   },
 };
 
-const REGISTRE: ReadonlyMap<string, Tool> = new Map([[PING.id, PING]]);
+// A34 — Learning Loop Runtime (06/10/2026). Premier Tool mutant réellement
+// un domaine métier (contrat A32 §17, "les Tools mutant réellement un
+// domaine métier seront introduits dans des lots dédiés FUTURS, après
+// validation explicite du Runtime lui-même" — ce lot). Classé ANALYZE/
+// TALENT (OBSERVATION, lib/control-plane/commitment.ts) : permission
+// AgentPermission réelle ajoutée additivement pour ce lot (voir migration
+// a34_learning_loop_permission, même précédent que B32-PERM) — jamais
+// (READ,TALENT), déjà occupé par PING ci-dessus (contrat A32 §17, "au
+// plus un Tool par couple"). Toute la logique métier vit dans
+// lib/agentic/tools.ts n'appelle QUE lib/learning-loop/engine.ts (jamais
+// Prisma directement depuis ce fichier au-delà de la résolution
+// stepIndex/runId ci-dessous) — même doctrine de couches que le Runtime
+// (contrat A32 §30).
+const LEARNING_LOOP_STEP: Tool = {
+  id: "learning-loop.step",
+  version: 1,
+  action: "ANALYZE",
+  scope: "TALENT",
+  async executer(contexte) {
+    const step = await prisma.agenticStep.findUnique({ where: { id: contexte.stepId }, select: { stepIndex: true } });
+    const run = await prisma.agenticRun.findUnique({ where: { id: contexte.runId }, select: { missionId: true, createdByEmail: true, createdByRole: true } });
+    if (!step || !run || !run.missionId) {
+      return { ok: false, detail: "Contexte Learning Loop incomplet (Step/Run/missionId introuvable)." };
+    }
+
+    if (step.stepIndex === 1) {
+      const resultat = await executerObservation(run.missionId);
+      return { ok: resultat.ok, detail: resultat.detail, data: resultat.data };
+    }
+
+    const resultat = await executerPropositionEtAction({
+      runId: contexte.runId,
+      stepId: contexte.stepId,
+      missionId: run.missionId,
+      correlationId: contexte.correlationId,
+      createdByEmail: run.createdByEmail,
+      createdByRole: run.createdByRole,
+    });
+    return { ok: resultat.ok, detail: resultat.detail, data: resultat.data };
+  },
+};
+
+const REGISTRE: ReadonlyMap<string, Tool> = new Map([
+  [PING.id, PING],
+  [LEARNING_LOOP_STEP.id, LEARNING_LOOP_STEP],
+]);
 
 export function resoudreTool(toolId: string): Tool | null {
   return REGISTRE.get(toolId) ?? null;

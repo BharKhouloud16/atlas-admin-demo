@@ -3836,6 +3836,21 @@ model Learning {
   createdByEmail String
   createdByRole  String
 
+  // COMPANY ATLAS — A34 : Learning Loop Runtime (06/10/2026).
+  //
+  // Mécanisme de liaison PUR vers l'AgenticRun (A32) qui a proposé ce
+  // Learning — jamais une relation Prisma (même discipline que les
+  // pointeurs sourceXxxId ci-dessus, contrat A33 §10/§29 décision CTO D1) :
+  // Learning reste un modèle fermé, AgenticRun ne gagne aucun champ
+  // inverse. Nullable à dessein : un Learning créé directement par un
+  // humain (A30, API existante, inchangée) garde correlationId=NULL —
+  // aucun backfill historique (contrat A34 §6, "ne rétro-remplis aucun
+  // historique"). Lorsqu'un Learning Run (A34) produit ce Learning,
+  // le service copie EXACTEMENT AgenticRun.correlationId ici, jamais une
+  // nouvelle valeur générée localement — permet de reconstruire la chaîne
+  // Mission -> AgenticRun -> AgenticStep -> Learning via une seule requête
+  // JournalActivite/Learning sur ce correlationId (contrat A34 §30).
+  correlationId String?
 
   @@index([missionId])
   @@index([sourceWorkItemId])
@@ -3847,6 +3862,7 @@ model Learning {
   @@index([sourceFinancialResultId])
   @@index([statut])
   @@index([scope])
+  @@index([correlationId])
 }
 
 // Typologie verrouillée (contrat A30 §5) — six valeurs explicitement
@@ -3959,9 +3975,12 @@ enum LearningApplicabilite {
 // existe pour ce lot ; le registre fermé des loopType/loopVersion valides
 // vit dans le code (lib/agentic/runtime.ts::REGISTRE_LOOPS), jamais en base.
 // L'enum ci-dessous reste additif (une future boucle ajoute une valeur,
-// jamais une table parallèle).
+// jamais une table parallèle). LEARNING ajoutée par A34 (contrat A33/A34,
+// décision CTO) : premier type de boucle métier réelle, productrice de
+// propositions Learning (A30) — voir lib/learning-loop/.
 enum AgenticLoopType {
   FOUNDATION
+  LEARNING
 }
 
 // Machine d'état validée par l'audit A31 §7, réduite à 9 états (WAITING_INPUT
@@ -3984,7 +4003,12 @@ enum AgenticRunStatut {
 
 // Vocabulaire FERMÉ (contrat A32 §11) — jamais une chaîne arbitraire
 // fournie par le client. Couvre exactement les 11 catégories mandatées
-// par A32.
+// par A32, plus NOT_DETERMINABLE ajoutée par A34 (contrat A33 §21/§23,
+// décision CTO D2) : un Run SUCCEEDED avec stopReason=NOT_DETERMINABLE
+// signifie "le Run a terminé correctement son mandat et a conclu
+// qu'aucun Learning suffisamment déterminable ne pouvait être proposé"
+// — jamais un échec, jamais un nouveau statut de Run (AgenticRunStatut
+// reste inchangé, 9 valeurs).
 enum AgenticStopReason {
   GOAL_REACHED
   MAX_ITERATIONS_REACHED
@@ -3997,6 +4021,7 @@ enum AgenticStopReason {
   EMERGENCY_STOP
   HUMAN_STOP
   ESCALATION_REQUIRED
+  NOT_DETERMINABLE
 }
 
 // Deux formes de Step suffisent pour la fondation (contrat A31 §8 : une

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import {
   creerRun,
   AgentIdentityIntrouvableError,
@@ -33,6 +34,26 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json().catch(() => null);
+
+  // A34 — Learning Loop Runtime (06/10/2026). Précondition spécifique au
+  // loop LEARNING (contrat A34 §4) : la Mission doit être TERMINEE avant
+  // toute création de Run — non-existante -> 404, autre statut -> 400.
+  // Gardée strictement ICI, jamais dans lib/agentic/runtime.ts::creerRun
+  // (générique à tous les loopType, contrat A32 §30 : la RBAC/précondition
+  // métier reste de la responsabilité de l'appelant, jamais du service).
+  // Zéro impact sur FOUNDATION ou tout autre loopType.
+  if (body?.loopType === "LEARNING") {
+    if (typeof body?.missionId !== "string" || body.missionId.length === 0) {
+      return NextResponse.json({ error: "missionId requis pour le loop LEARNING." }, { status: 400 });
+    }
+    const mission = await prisma.mission.findUnique({ where: { id: body.missionId }, select: { statut: true } });
+    if (!mission) {
+      return NextResponse.json({ error: "Mission introuvable." }, { status: 404 });
+    }
+    if (mission.statut !== "TERMINEE") {
+      return NextResponse.json({ error: `Mission non TERMINEE (statut actuel : ${mission.statut}) — le loop LEARNING exige une Mission terminée.` }, { status: 400 });
+    }
+  }
 
   try {
     const run = await creerRun({
