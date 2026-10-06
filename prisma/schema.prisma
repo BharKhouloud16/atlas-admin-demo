@@ -3836,6 +3836,7 @@ model Learning {
   createdByEmail String
   createdByRole  String
 
+
   @@index([missionId])
   @@index([sourceWorkItemId])
   @@index([sourceDeliverableId])
@@ -3932,4 +3933,271 @@ enum LearningStatut {
 enum LearningApplicabilite {
   ACTIVE
   OBSOLETE
+}
+
+// ============================================================================
+// COMPANY ATLAS — A32 : AGENTIC RUNTIME FOUNDATION (05/10/2026).
+//
+// Socle d'exécution contrôlée pour de futures boucles agentiques — PAS une
+// boucle métier autonome (contrat A32 §1/§18). Implémente exactement le
+// contrat validé par l'audit A31 : GOAL -> CONTEXT -> OBSERVE -> PROPOSE ->
+// AUTHORIZE -> ACT -> VERIFY -> STOP/CONTINUE, sans jamais introduire de
+// nouveau système Agent/RBAC/Permission/Approval/EmergencyStop/AuditEvent/
+// Evidence/Learning/Outcome (contrat A32 §4, liste d'interdictions).
+//
+// ZÉRO MODIFICATION D'UN MODÈLE EXISTANT (B19/B20/B22/A18-A30) : toute
+// référence vers AgentIdentity/AgentPermission/Decision/Delegation/
+// AuthorizationRequest/EmergencyStop/Mission/ClientNeed/SolutionOption est
+// un simple pointeur texte (String, jamais @relation) — même discipline
+// que Learning.sourceFinancialResultId (A30) et OutcomeAssessment.
+// decisionOptionId (A6.1) : une relation Prisma forcerait un champ inverse
+// sur ces modèles, modification structurellement hors périmètre de ce
+// lot. Vérifié par le service (lib/agentic/runtime.ts), jamais en base.
+//
+// AgenticLoopType/AgenticLoopVersion : contrat A32 §6 interdit explicitement
+// une table "AgenticLoop" — un seul type technique de fondation ("FOUNDATION")
+// existe pour ce lot ; le registre fermé des loopType/loopVersion valides
+// vit dans le code (lib/agentic/runtime.ts::REGISTRE_LOOPS), jamais en base.
+// L'enum ci-dessous reste additif (une future boucle ajoute une valeur,
+// jamais une table parallèle).
+enum AgenticLoopType {
+  FOUNDATION
+}
+
+// Machine d'état validée par l'audit A31 §7, réduite à 9 états (WAITING_INPUT
+// du contrat initial fusionné dans WAITING_APPROVAL — aucun flux existant
+// n'a jamais eu besoin d'un second mécanisme de blocage sur une question
+// humaine libre, voir A31 §7). SUCCEEDED/FAILED/STOPPED/ESCALATED sont
+// terminaux — aucune route de ce lot ne permet de les rouvrir (contrat
+// A32 §7, "aucun terminal state ne peut être réouvert").
+enum AgenticRunStatut {
+  DRAFT
+  READY
+  RUNNING
+  WAITING_APPROVAL
+  PAUSED
+  SUCCEEDED
+  FAILED
+  STOPPED
+  ESCALATED
+}
+
+// Vocabulaire FERMÉ (contrat A32 §11) — jamais une chaîne arbitraire
+// fournie par le client. Couvre exactement les 11 catégories mandatées
+// par A32.
+enum AgenticStopReason {
+  GOAL_REACHED
+  MAX_ITERATIONS_REACHED
+  TIMEOUT
+  PERMISSION_DENIED
+  APPROVAL_REJECTED
+  INVARIANT_VIOLATION
+  EXECUTION_ERROR
+  VERIFICATION_FAILED
+  EMERGENCY_STOP
+  HUMAN_STOP
+  ESCALATION_REQUIRED
+}
+
+// Deux formes de Step suffisent pour la fondation (contrat A31 §8 : une
+// itération = UN passage OBSERVE->REASON->PROPOSE->AUTHORIZE->ACT->VERIFY,
+// persisté comme UNE ligne à champs multiples, jamais une ligne par
+// sous-étape — même discipline que DeliveryQualityGate, A27).
+// OBSERVE_ONLY : la Step ne lit/observe que le contexte, ne produit aucune
+// proposition (ex. vérification de contexte avant démarrage). PROPOSE_AND_ACT :
+// la Step observe PUIS propose une action classée server-side (ActionClass,
+// B22, réutilisé tel quel) — éventuellement suivie d'une autorisation et
+// d'une tentative d'exécution via le Tool Registry.
+enum AgenticStepType {
+  OBSERVE_ONLY
+  PROPOSE_AND_ACT
+}
+
+enum AgenticStepStatut {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+enum ActionExecutionStatut {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+model AgenticRun {
+  id String @id @default(cuid())
+
+  // Registre fermé CODE (lib/agentic/runtime.ts), jamais une table
+  // "AgenticLoop" (contrat A32 §6). loopVersion est un entier simple,
+  // validé contre le registre à la création — jamais incrémenté en place.
+  loopType    AgenticLoopType @default(FOUNDATION)
+  loopVersion Int
+
+  // AgentIdentity (B19) — pointeur texte pur, jamais @relation (voir
+  // commentaire de bloc ci-dessus). Validé par le service : doit exister
+  // ET être ACTIVE au moment de la création (contrat A32 §13 : "AgentIdentity
+  // ≠ utilisateur humain ≠ autorité métier" — ce champ documente SOUS QUELLE
+  // identité déclarée le Run agit, jamais une autorité en lui-même).
+  agentIdentityId String
+
+  // Action/scope DÉCLARÉS pour toute la durée du Run — vocabulaire B20
+  // réutilisé EXACTEMENT (AgentPermissionAction/AgentPermissionScope,
+  // déjà présents dans ce schéma, jamais redéclarés). La classification
+  // réelle (ActionClass) est TOUJOURS recalculée server-side à chaque
+  // tentative de proposition (lib/control-plane/commitment.ts::classifierAction,
+  // réutilisé tel quel, contrat A32 §15) — jamais fournie par le client,
+  // jamais stockée ici en amont de cette classification.
+  declaredAction AgentPermissionAction
+  declaredScope  AgentPermissionScope
+
+  goal String
+
+  // Contexte PINNÉ, immuable après création (contrat A32 §12, A31 §13) —
+  // jamais une relation Prisma (voir commentaire de bloc). Tous optionnels :
+  // un Run FOUNDATION peut exister sans aucune Mission (ex. un run purement
+  // diagnostique) ; si missionId est renseigné, needVersionId/solutionDecisionId
+  // (si fournis) doivent être EXACTEMENT ceux déjà pinnés sur cette Mission
+  // (Mission.needVersionId/solutionDecisionId, A18) — vérifié par le service
+  // à la création (DRAFT) et revérifié à chaque reprise PAUSED->RUNNING
+  // (contrat A32 §8 : "si le contexte n'est plus valide, ne reprends pas
+  // silencieusement").
+  missionId          String?
+  needVersionId      String?
+  solutionDecisionId String?
+
+  statut AgenticRunStatut @default(DRAFT)
+
+  // Borne stricte, positive, définie à la création, jamais modifiée
+  // pendant le Run (contrat A32 §10) — plafonnée par le service
+  // (lib/agentic/runtime.ts::MAX_ITERATIONS_PLAFOND) pour interdire toute
+  // boucle infinie même à la création.
+  maxIterations  Int
+  iterationCount Int @default(0)
+
+  // Pointeur texte pur vers l'AuthorizationRequest (B22) qui bloque
+  // actuellement le Run en WAITING_APPROVAL — jamais @relation (voir
+  // commentaire de bloc). NULL hors de cet état.
+  currentAuthorizationRequestId String?
+
+  stopReason   AgenticStopReason?
+  resultSummary String?
+  errorDetail   String?
+
+  // Chaîne tous les événements Run->Step->ActionExecution (JournalActivite,
+  // jamais AuditEvent B22 — contrat A32 §26, "AuditEvent reste réservé au
+  // bounded context B22 existant"). Généré à la création, jamais fourni
+  // par l'appelant (même discipline que lib/security/events.ts::nouveauCorrelationId).
+  correlationId String
+
+  createdAt      DateTime  @default(now())
+  createdByEmail String
+  createdByRole  String
+  startedAt      DateTime?
+  pausedAt       DateTime?
+  resumedAt      DateTime?
+  completedAt    DateTime?
+
+  steps AgenticStep[]
+
+  @@index([statut])
+  @@index([missionId])
+  @@index([agentIdentityId])
+  @@index([correlationId])
+}
+
+model AgenticStep {
+  id String @id @default(cuid())
+
+  run   AgenticRun @relation(fields: [runId], references: [id], onDelete: Restrict)
+  runId String
+
+  // Server-assigné, strictement croissant à partir de 1 par Run — jamais
+  // choisi par l'appelant (même discipline que DeliverableVersion.version,
+  // A25). @@unique ci-dessous est le filet de sécurité concurrence pour
+  // le compteur d'itérations (contrat A32 §9/§10).
+  stepIndex Int
+  stepType  AgenticStepType
+
+  // Conclusion d'observation, JAMAIS la chaîne de raisonnement brute d'un
+  // LLM (contrat A32 §5, "ne crée pas de stockage de chain of thought") —
+  // texte court, factuel, suffisant pour l'audit.
+  observation String
+
+  // Rempli uniquement pour PROPOSE_AND_ACT — jamais une conversion
+  // implicite en action (contrat A32 §20 : Proposal -> Authorization ->
+  // Action -> Verification, aucune étape sautée).
+  proposal String?
+
+  // Snapshot de la classification server-side AU MOMENT de cette Step
+  // (lib/control-plane/commitment.ts::classifierAction, B22, réutilisé
+  // tel quel — AUCUNE redéclaration d'enum, voir le champ lui-même qui
+  // référence directement ActionClass, B22).
+  actionClass ActionClass?
+
+  // Pointeur texte pur vers l'AuthorizationRequest (B22) créée pour cette
+  // Step, si la classification l'a exigé — jamais @relation.
+  authorizationRequestId String?
+
+  // Pointeur texte pur vers le Tool invoqué (registre CODE, lib/agentic/tools.ts)
+  // — jamais une table Tool (contrat A32 §17, préférence registre code-first).
+  toolId String?
+
+  verificationResult  String?
+  verificationPassed  Boolean?
+
+  statut      AgenticStepStatut @default(PENDING)
+  errorDetail String?
+
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  actionExecution ActionExecution?
+
+  @@unique([runId, stepIndex])
+  @@index([runId])
+}
+
+// Trace CHAQUE tentative d'invocation d'un Tool (contrat A32 §16) —
+// distincte d'Evidence (A26, réutilisée SANS modification lorsqu'une
+// action produit réellement une preuve métier, contrat A32 §24 : "ne crée
+// pas une nouvelle table Evidence générique", "ActionExecution != Evidence").
+// 1:1 avec AgenticStep dans ce lot (une Step propose au plus une action) —
+// relation conservée extensible (pas de contrainte empêchant une évolution
+// future), mais jamais exploitée au-delà de 1:1 ici.
+model ActionExecution {
+  id String @id @default(cuid())
+
+  step   AgenticStep @relation(fields: [stepId], references: [id], onDelete: Restrict)
+  stepId String      @unique
+  // Dénormalisé depuis step.runId — vérification directe sans jointure,
+  // même patron que SolutionOption.clientId (dénormalisation en lecture
+  // seule, jamais une seconde source de vérité : toujours écrit depuis
+  // step.runId par le service, jamais fourni par l'appelant).
+  runId String
+
+  toolId String
+
+  // Clé d'idempotence serveur = `${runId}:${stepIndex}:${toolId}` — jamais
+  // fournie par l'appelant (contrat A32 §16, A31 §14). @@unique est le
+  // filet de sécurité concurrence contre une double exécution.
+  idempotencyKey String @unique
+
+  // Entrée VALIDÉE/normalisée réellement transmise au Tool — jamais une
+  // copie brute non validée de l'entrée agent (contrat A32 §16/§30). Aucun
+  // secret/token/mot de passe n'est jamais stocké ici (rédaction obligatoire
+  // à la charge du Tool, même discipline que AuditEvent.metadata, B22, et
+  // EvenementSecurite.detail, B16).
+  inputNormalise Json?
+  resultat       Json?
+
+  statut      ActionExecutionStatut @default(PENDING)
+  erreur      String?
+  correlationId String
+
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  @@index([runId])
+  @@index([toolId])
 }
