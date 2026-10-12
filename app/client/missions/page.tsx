@@ -6,6 +6,7 @@ import type { Realisation } from "@/app/api/ingenieur/realisations/route";
 import type { BadgeConfiance } from "@/lib/scoring";
 import { Card, Section, EmptyState, Bouton, Badge } from "@/components/client/primitives";
 import EvaluationsAFaire, { type MissionEvaluable } from "@/components/client/EvaluationsAFaire";
+import MissionOutcomeSection from "./MissionOutcomeSection";
 
 // LOT 1 — Client Workspace Foundation (15/09/2026) : rubrique "Missions",
 // extraite de l'ancien dashboard (app/client/page.tsx) — même appel API
@@ -43,9 +44,23 @@ export default function MissionsClientPage() {
   const [chargement, setChargement] = useState(true);
   const [missionsEvaluables, setMissionsEvaluables] = useState<MissionEvaluable[]>([]);
   const [ouvertes, setOuvertes] = useState<Set<string>>(new Set());
+  // DB-08 — Outcome UI : état séparé de `ouvertes` (vitrine du profil),
+  // même discipline que app/admin/missions/page.tsx (outcomeOuvert distinct
+  // de revueOuverte) — ne jamais fusionner deux panneaux sans rapport dans
+  // un seul état.
+  const [outcomesOuverts, setOutcomesOuverts] = useState<Set<string>>(new Set());
 
   function basculer(id: string) {
     setOuvertes((prev) => {
+      const suivant = new Set(prev);
+      if (suivant.has(id)) suivant.delete(id);
+      else suivant.add(id);
+      return suivant;
+    });
+  }
+
+  function basculerOutcome(id: string) {
+    setOutcomesOuverts((prev) => {
       const suivant = new Set(prev);
       if (suivant.has(id)) suivant.delete(id);
       else suivant.add(id);
@@ -115,13 +130,27 @@ export default function MissionsClientPage() {
                       </div>
                     )}
                   </div>
-                  {aVitrine && (
-                    <Bouton variant="secondary" onClick={() => basculer(m.id)}>
-                      {ouverte ? "Masquer le profil" : "Voir le profil"}
-                    </Bouton>
-                  )}
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {aVitrine && (
+                      <Bouton variant="secondary" onClick={() => basculer(m.id)}>
+                        {ouverte ? "Masquer le profil" : "Voir le profil"}
+                      </Bouton>
+                    )}
+                    {/* DB-08 — Outcome UI : affiché uniquement une fois la
+                        mission TERMINEE (seul état où le backend autorise la
+                        création d'un Outcome, A6.1 — avant cela la lecture
+                        renverrait toujours outcome=null) — même gating que
+                        le bouton "Résultat attendu (Outcome)" côté Admin
+                        (app/admin/missions/page.tsx). */}
+                    {m.statut === "TERMINEE" && (
+                      <Bouton variant="secondary" onClick={() => basculerOutcome(m.id)}>
+                        {outcomesOuverts.has(m.id) ? "Masquer le résultat" : "Voir le résultat"}
+                      </Bouton>
+                    )}
+                  </div>
                 </div>
                 {ouverte && <ProfilVitrineDetail profil={m.profil} />}
+                {outcomesOuverts.has(m.id) && <MissionOutcomeSection missionId={m.id} />}
               </Card>
             );
           })}

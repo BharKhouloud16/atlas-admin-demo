@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { DISPONIBILITES, STATUTS_EN_MISSION, MISSIONS_APRES, PREAVIS } from "@/lib/disponibilite";
 import { PAYS, NATIONALITES, DEVISES, calculerRegimeSuggere } from "@/lib/localisation";
 import { COMPETENCES_GROUPES } from "@/lib/competences";
@@ -114,7 +115,15 @@ export default function EspaceIngenieur() {
             Espace Ingénieur
           </span>
         </div>
-        <BoutonDeconnexion />
+        {/* DB-01 — Delivery UI (08/10/2026) : seul point d'entrée vers
+            /ingenieur/livraison — EspaceIngenieur ne liait auparavant vers
+            aucune autre page (constat de l'audit Product V1, DB-01). */}
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <Link href="/ingenieur/livraison" style={{ fontSize: 13, fontWeight: 600, color: bleu }}>
+            Mon travail
+          </Link>
+          <BoutonDeconnexion />
+        </div>
       </header>
       <main style={{ maxWidth: 1000, margin: "40px auto", padding: "0 24px", display: "flex", gap: 32 }}>
         <div style={{ flex: 1, minWidth: 0 }}>

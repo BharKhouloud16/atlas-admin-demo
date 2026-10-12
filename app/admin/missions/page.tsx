@@ -355,6 +355,40 @@ export default function MissionsPage() {
                       </Link>
                     </>
                   )}
+                  {/* DB-01 — Delivery UI : WorkItem/Deliverable/Evidence restent
+                      strictement Admin-only (A23/A24, aucune route n'accepte
+                      INGENIEUR) — ce lien n'est donc jamais affiché à l'Ingénieur,
+                      même si cette page lui reste par ailleurs accessible. */}
+                  {isAdmin && (
+                    <div style={{ marginTop: 4, display: "flex", gap: 10 }}>
+                      <Link href={`/admin/missions/${m.id}/work-items`} style={{ fontSize: 11, color: bleu }}>
+                        WorkItems →
+                      </Link>
+                      {/* DB-02 — Financial Result UI : surface strictement
+                          Admin, jamais Client/Ingénieur (A29 §28/§29). */}
+                      <Link href={`/admin/missions/${m.id}/financial-results`} style={{ fontSize: 11, color: bleu }}>
+                        Résultat financier →
+                      </Link>
+                      {/* DB-09 — Capability UI : MissionCapabilityLink (A21)
+                          reste strictement Admin-only (contrat A21 §14, même
+                          restriction que WorkItems/Financial ci-dessus) —
+                          jamais exposé à l'Ingénieur/Client par ce lot. */}
+                      <Link href={`/admin/missions/${m.id}/capabilities`} style={{ fontSize: 11, color: bleu }}>
+                        Capabilities →
+                      </Link>
+                    </div>
+                  )}
+                  {/* DB-04 — Learning UI : contrairement à WorkItem/Financial,
+                      la lecture Learning est accordée à l'Ingénieur autorisé sur
+                      cette Mission (contrat A30 §18, même fonction
+                      estIngenieurAutoriseSurMission que A26/A27/A29) — ce lien
+                      n'est donc jamais gated par isAdmin, à la différence des
+                      deux ci-dessus. */}
+                  <div style={{ marginTop: 4 }}>
+                    <Link href={`/admin/missions/${m.id}/learning`} style={{ fontSize: 11, color: bleu }}>
+                      Learning →
+                    </Link>
+                  </div>
                   {isAdmin && m.statut === "EN_COURS" && (
                     <div style={{ marginTop: 4, display: "flex", gap: 8 }}>
                       {/* MISSION CLOSURE INTELLIGENCE : "Terminer" ouvre désormais la

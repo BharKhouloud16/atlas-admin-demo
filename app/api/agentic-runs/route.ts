@@ -27,6 +27,45 @@ import {
 // (contrat A32 §28, "ne donne pas automatiquement à CLIENT l'accès").
 // Aucun rôle Agent (structurellement impossible : aucune session agent
 // n'existe, B19/B20).
+// DB-06 — Agentic Runtime UI (08/10/2026) : GAP BACKEND IDENTIFIÉ ET
+// DOCUMENTÉ avant tout code (contrat DB-06 §2/§19, "ne suppose aucun
+// endpoint ; si une capacité manque, STOP et documente le manque, propose
+// la route minimale, n'élargis pas le backend sans justification") — A32
+// n'exposait jusqu'ici AUCUNE route de LISTE des AgenticRun (seuls GET
+// /api/agentic-runs/[runId] et POST existaient), rendant structurellement
+// impossible la page "Liste des Runs" exigée par DB-06 §5. Ce GET est
+// STRICTEMENT additif, lecture seule, ADMIN-only — même patron EXACT que
+// les listes Control Plane déjà existantes et inchangées (GET
+// /api/control-plane/authorization-requests, GET
+// /api/control-plane/emergency-stops : Prisma.findMany direct dans la
+// route, filtre optionnel, `limite` plafonnée à 200, orderBy createdAt
+// desc). Zéro ligne ajoutée à lib/agentic/runtime.ts (fichier protégé) —
+// aucune fonction de service créée, aucune nouvelle sémantique Runtime,
+// aucune jointure vers Mission/Learning/Decision Context.
+export async function GET(req: NextRequest) {
+  const session = await getSession();
+  if (!session || session.role !== "ADMIN") {
+    return NextResponse.json({ error: "Accès réservé à l'administrateur" }, { status: 403 });
+  }
+
+  try {
+    const { searchParams } = new URL(req.url);
+    const statut = searchParams.get("statut") ?? undefined;
+    const limiteBrute = Number(searchParams.get("limite"));
+    const limite = Number.isFinite(limiteBrute) && limiteBrute > 0 ? Math.min(limiteBrute, 200) : 100;
+
+    const runs = await prisma.agenticRun.findMany({
+      where: statut ? { statut: statut as never } : {},
+      orderBy: { createdAt: "desc" },
+      take: limite,
+    });
+
+    return NextResponse.json({ runs });
+  } catch {
+    return NextResponse.json({ error: "Erreur interne lors de la lecture des Agentic Runs." }, { status: 500 });
+  }
+}
+
 export async function POST(req: NextRequest) {
   const session = await getSession();
   if (!session || session.role !== "ADMIN") {
