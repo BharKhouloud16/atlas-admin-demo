@@ -70,6 +70,28 @@ model User {
   desactive   Boolean   @default(false)
   desactiveLe DateTime?
 
+  // ENGINEER ACCESS & TRUST (09/10/2026) — Identity/Access/Trust séparés
+  // (contrat §1/§5). Capture l'adresse IP déjà calculée pour le rate
+  // limiting de l'inscription (adresseIp(req), voir lib/rate-limit.ts et
+  // app/api/auth/signup/route.ts) — jamais une nouvelle collecte, jamais
+  // une géolocalisation précise. Nullable : absente pour tout compte créé
+  // avant ce lot ou créé directement en base (ADMIN). Minimisation (contrat
+  // §22) : sert uniquement de signal Access Integrity explicite ("combien
+  // d'autres inscriptions depuis cette même adresse"), jamais affichée à
+  // quiconque hors ADMIN, jamais utilisée pour une décision automatique.
+  // Une politique de rétention/anonymisation dédiée reste un point de
+  // raccordement explicite pour un futur lot (hors périmètre ici).
+  inscriptionIp String?
+
+  // Historique des décisions ADMIN sur une candidature — toujours
+  // append-only (voir EngineerAccessDecision ci-dessous) : la décision la
+  // plus récente fait foi, jamais une réécriture de l'ancienne. Distinct de
+  // `actif` (qui reste la SEULE source de vérité pour l'accès réel —
+  // APPROUVER se traduit par `actif: true`, exactement comme avant ce lot) :
+  // cette relation est un journal traçable des décisions, jamais un second
+  // système de statut parallèle.
+  accessDecisions EngineerAccessDecision[]
+
   // Consentement RGPD au traitement des données (voir /confidentialite),
   // recueilli obligatoirement à l'inscription pour un compte INGENIEUR ou
   // CLIENT (case à cocher, voir /inscription). Sert de preuve de
@@ -104,6 +126,46 @@ model User {
   // PreferenceNotification ci-dessous pour le détail de conception.
   messageLectures        MessageLecture[]
   preferenceNotification PreferenceNotification?
+}
+
+// COMPANY ATLAS — ENGINEER ACCESS & TRUST (09/10/2026).
+//
+// Journal APPEND-ONLY des décisions ADMIN sur une candidature (contrat
+// §14 : "une décision doit être traçable"). Ne remplace JAMAIS `User.actif`
+// comme source de vérité d'accès — APPROUVER continue de passer par
+// exactement la même écriture qu'avant ce lot (`actif: true, valideLe`,
+// voir app/api/comptes/route.ts) ; cette table ne fait qu'enregistrer
+// l'historique humain de la décision (qui, quand, pourquoi), jamais une
+// deuxième machine à états qui pourrait diverger de `actif`. REFUSER et
+// DEMANDER_INFORMATIONS ne changent JAMAIS `actif` : le compte reste
+// `actif=false` indéfiniment après un REFUSER (jamais de suppression
+// automatique, jamais de blocage définitif distinct — l'admin peut toujours
+// changer d'avis en créant une nouvelle décision APPROUVER plus tard,
+// jamais une réécriture de l'ancienne ligne).
+model EngineerAccessDecision {
+  id     String @id @default(cuid())
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+
+  decision EngineerAccessDecisionType
+
+  // Obligatoire pour REFUSER/DEMANDER_INFORMATIONS, jamais pour APPROUVER —
+  // contrôlé par le service (lib/engineer-access/decision.ts), jamais par
+  // une contrainte DB (Prisma ne peut pas exprimer une NOT NULL
+  // conditionnelle au statut, même limitation documentée ailleurs dans ce
+  // schéma, ex. DeliveryQualityGate.criteresEvalues).
+  raison String?
+
+  decidedByEmail String
+  decidedAt      DateTime @default(now())
+
+  @@index([userId])
+}
+
+enum EngineerAccessDecisionType {
+  APPROUVER
+  REFUSER
+  DEMANDER_INFORMATIONS
 }
 
 // Throttle par IP sur les endpoints sensibles (connexion, inscription) —
@@ -1044,6 +1106,7 @@ model Client {
   solutionOptions       SolutionOption[] // V2.1-A — C3 Solution Intelligence (16/09/2026) — voir SolutionOption
   factures              Facture[] // V2.2-B — Billing Foundation (17/09/2026) — voir Facture
   messageLectures       MessageLecture[] // V2.5 — Communication Intelligence (21/09/2026) — voir MessageLecture
+  candidateProposals    CandidateProposal[] // ATLAS CANDIDATE PROPOSAL (A35.8) — voir CandidateProposal
 }
 
 // Fiche interne d'un profil d'ingénieur. Créée automatiquement, vide de
@@ -1062,6 +1125,15 @@ model Profil {
   cvNomFichier String?
   cvImporteLe  DateTime?
   cvValide     Boolean   @default(false)
+  // ENGINEER ACCESS & TRUST (09/10/2026) — empreinte SHA-256 du contenu
+  // exact du fichier CV importé (voir app/api/ingenieur/cv/route.ts),
+  // recalculée à chaque ré-import. Permet un signal Access Integrity
+  // "CV identique" déterministe et explicable (comparaison d'empreintes
+  // exactes entre Profil, jamais une similarité floue/IA — contrat §9/§10 :
+  // aucun mécanisme de similarité floue n'existe aujourd'hui, jamais
+  // inventé ici). Nullable : absente pour tout Profil n'ayant jamais
+  // importé de CV depuis ce lot.
+  cvHash String?
 
   anneesExperience   Int?
   seniorite          String?
@@ -1197,6 +1269,21 @@ model Mission {
   // de demande source.
   sourceDemande   DemandeTalent? @relation(fields: [sourceDemandeId], references: [id])
   sourceDemandeId String?
+
+  // ATLAS CANDIDATE PROPOSAL (A35.8) — voir
+  // docs/architecture/CANDIDATE_PROPOSAL_IMPLEMENTATION_CONTRACT.md §7.
+  // Identité d'unicité métier anti-double-Mission (Design Contract §11.2,
+  // D2 LOCKED) : garantie posée en base, insensible à toute isolation de
+  // transaction côté application — au plus une Mission par
+  // CandidateProposal ACCEPTEE (Postgres autorise plusieurs NULL, mais un
+  // seul non-NULL par valeur, même pattern que @@unique([needParentId]),
+  // A5.2). Additif, nullable : aucun backfill, les Mission historiques
+  // (créées avant ce champ, ou par le flux Admin ordinaire sans passer par
+  // une CandidateProposal) conservent NULL — jamais une association
+  // rétroactive par heuristique. Immutable une fois posé : contrôlé au
+  // niveau service (lib/candidate-proposal/mission.ts), jamais réécrit.
+  sourceCandidateProposal   CandidateProposal? @relation(fields: [sourceCandidateProposalId], references: [id], onDelete: Restrict)
+  sourceCandidateProposalId String?            @unique
 
   // Contexte opérationnel réellement décidé pour cette intervention —
   // jamais une seconde source de vérité pour le besoin (celui-ci reste
@@ -1490,6 +1577,10 @@ model DemandeTalent {
   createdAt DateTime          @default(now())
   updatedAt DateTime          @updatedAt
 
+  candidateSelections CandidateSelection[]
+  finalDecisions      CandidateFinalDecision[]
+  candidateProposals  CandidateProposal[]
+
   @@index([clientId])
 }
 
@@ -1513,7 +1604,352 @@ model ShortlistEntree {
   valideLe       DateTime?
   createdAt      DateTime        @default(now())
 
+  candidateSelections CandidateSelection[]
+
   @@unique([demandeId, profilId])
+}
+
+// ============================================================================
+// ATLAS CANDIDATE DECISION + INTERVIEW (11/10/2026)
+//
+// Couche commerciale complémentaire — voir
+// docs/architecture/CANDIDATE_DECISION_INTERVIEW_{DESIGN_CONTRACT,
+// CTO_VALIDATION,IMPLEMENTATION_CONTRACT}.md, source d'autorité verrouillée
+// pour tout ce bloc. Ne remplace ni ne modifie ShortlistEntree/DemandeTalent/
+// Mission/MissionAssignment/Matching V2 : chaque relation ci-dessous
+// référence l'existant, jamais l'inverse. Aucun nouveau Staffing Engine,
+// aucun nouveau Matching Engine, aucun recalcul de score Matching.
+// ============================================================================
+
+enum CandidateSelectionStatut {
+  ACTIVE
+  RETIREE
+}
+
+// Choix du Client de faire avancer un candidat ShortlistEntree(VALIDEE) vers
+// l'étape Interview — distinct de ShortlistEntree, jamais une modification
+// de celle-ci (Implementation Contract §1.1). Au plus une ligne
+// statut=ACTIVE par shortlistEntreeId, vérifié en transaction Serializable
+// (voir lib/candidate-selection/service.ts), jamais une contrainte DB
+// (même discipline que MissionAssignment.estResponsablePrincipal).
+model CandidateSelection {
+  id                String                   @id @default(cuid())
+  shortlistEntree   ShortlistEntree          @relation(fields: [shortlistEntreeId], references: [id], onDelete: Restrict)
+  shortlistEntreeId String
+  demandeTalent     DemandeTalent            @relation(fields: [demandeTalentId], references: [id], onDelete: Cascade)
+  demandeTalentId   String
+  statut            CandidateSelectionStatut @default(ACTIVE)
+  selectedByEmail   String
+  selectedAt        DateTime                 @default(now())
+  retireeParEmail   String?
+  retireeLe         DateTime?
+  createdAt         DateTime                 @default(now())
+
+  interviews        Interview[]
+  finalDecisionEntrees CandidateFinalDecisionEntree[]
+
+  @@index([demandeTalentId])
+  @@index([shortlistEntreeId])
+}
+
+enum InterviewStatut {
+  PLANIFIE
+  CONFIRME
+  TERMINE
+  ANNULE
+  ABSENT
+}
+
+enum InterviewCanal {
+  VIDEO
+  TELEPHONE
+  PRESENTIEL
+  AUTRE
+}
+
+// Événement d'entretien — source de vérité métier (jamais un fournisseur
+// vidéo/calendrier). Lifecycle verrouillé par la CTO Validation §7 :
+// PLANIFIE -> CONFIRME (tous les participants CANDIDAT/organisateur
+// ACCEPTEE, voir lib/interview/lifecycle.ts::peutConfirmer, jamais un score/
+// une moyenne/une IA) -> TERMINE | ANNULE | ABSENT (terminaux, jamais
+// réutilisés — une répétition crée un nouvel Interview référençant la même
+// CandidateSelection). EN_COURS n'existe pas (aucune intégration live).
+model Interview {
+  id                   String          @id @default(cuid())
+  candidateSelection   CandidateSelection @relation(fields: [candidateSelectionId], references: [id], onDelete: Restrict)
+  candidateSelectionId String
+  statut               InterviewStatut @default(PLANIFIE)
+  canal                InterviewCanal
+  dateHeure            DateTime
+  dureeMinutes         Int
+  timezoneSaisie       String
+  lieu                 String?
+  objectif             String?
+  meetingProvider      String?
+  meetingUrl           String?
+  meetingExternalId    String?
+  createdByEmail       String
+  createdAt            DateTime       @default(now())
+  updatedAt             DateTime      @updatedAt
+  annuleParEmail        String?
+  annuleLe              DateTime?
+  motifAnnulation        String?
+
+  participants          InterviewParticipant[]
+  evaluations            InterviewEvaluation[]
+
+  @@index([candidateSelectionId])
+}
+
+enum InterviewParticipantRole {
+  CANDIDAT
+  CLIENT
+  ADMIN_RECRUTEUR
+  INTERVIEWEUR_INTERNE
+}
+
+enum StatutInvitation {
+  EN_ATTENTE
+  ENVOYEE
+  ACCEPTEE
+  REFUSEE
+  CRENEAU_ALTERNATIF_PROPOSE
+}
+
+// Un "intervieweur technique" côté Client est représenté par role=CLIENT +
+// fonctionDeclaree (texte libre) — jamais une 5e valeur d'enum sans preuve
+// d'usage réelle (CTO Validation §7). telephoneInterview est capturé ici,
+// scopé à CET Interview, jamais sur Profil (CTO Validation §5).
+model InterviewParticipant {
+  id                  String                   @id @default(cuid())
+  interview           Interview                @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  interviewId         String
+  role                InterviewParticipantRole
+  emailParticipant    String
+  profilId            String?
+  fonctionDeclaree    String?
+  estOrganisateur     Boolean                  @default(false)
+  telephoneInterview  String?
+  statutInvitation    StatutInvitation         @default(EN_ATTENTE)
+  invitationEnvoyeeLe DateTime?
+  reponseLe           DateTime?
+  messageReponse      String?
+  createdAt           DateTime                 @default(now())
+
+  reminders           InterviewReminder[]
+  calendarSync        CalendarSyncRecord?
+
+  @@unique([interviewId, emailParticipant])
+}
+
+enum AppreciationCritere {
+  POSITIF
+  NEUTRE
+  NEGATIF
+}
+
+enum RecommandationEvaluation {
+  RECOMMANDE
+  RECOMMANDE_AVEC_RESERVES
+  NON_RECOMMANDE
+}
+
+// Résultat qualitatif d'un Interview — jamais un score opaque, jamais une
+// décision automatique (Evaluation != Decision). Immuable : une correction
+// crée une nouvelle ligne via supersedesId (même pattern que
+// FinancialResult), jamais une réécriture en place. evaluateurRole est un
+// snapshot au moment de l'évaluation (déterminant la visibilité §10 du
+// Implementation Contract), jamais relu dynamiquement.
+model InterviewEvaluation {
+  id                 String                    @id @default(cuid())
+  interview          Interview                 @relation(fields: [interviewId], references: [id], onDelete: Restrict)
+  interviewId        String
+  evaluateurEmail    String
+  evaluateurRole     InterviewParticipantRole
+  criteres           Json
+  observations       String?
+  recommandation     RecommandationEvaluation
+  commentairesLibres String?
+  supersedesId       String?                   @unique
+  supersedes         InterviewEvaluation?      @relation("InterviewEvaluationSuccession", fields: [supersedesId], references: [id])
+  supersededBy       InterviewEvaluation?      @relation("InterviewEvaluationSuccession")
+  createdAt          DateTime                  @default(now())
+
+  @@index([interviewId])
+}
+
+// Décision finale exclusivement Client (CTO Validation §13, MODIFIED) :
+// decideParEmail doit être un email CLIENT, sauf si
+// communiqueParClientHorsSysteme=true ET canalHorsSysteme renseigné (Admin
+// enregistrant pour compte du Client — jamais une décision Admin autonome,
+// validé au niveau service, jamais en DB). Append-only via supersedesId.
+// Ne crée jamais de Mission ni de Proposal directement.
+model CandidateFinalDecision {
+  id                             String                   @id @default(cuid())
+  demandeTalent                  DemandeTalent            @relation(fields: [demandeTalentId], references: [id], onDelete: Restrict)
+  demandeTalentId                String
+  decideParEmail                 String
+  communiqueParClientHorsSysteme Boolean                  @default(false)
+  canalHorsSysteme               String?
+  supersedesId                   String?                  @unique
+  supersedes                     CandidateFinalDecision?  @relation("CandidateFinalDecisionSuccession", fields: [supersedesId], references: [id])
+  supersededBy                   CandidateFinalDecision?  @relation("CandidateFinalDecisionSuccession")
+  createdAt                      DateTime                 @default(now())
+
+  entrees                        CandidateFinalDecisionEntree[]
+
+  @@index([demandeTalentId])
+}
+
+enum CandidateFinalDecisionStatutEntree {
+  RETENU
+  NON_RETENU
+}
+
+model CandidateFinalDecisionEntree {
+  id                   String                             @id @default(cuid())
+  decision             CandidateFinalDecision             @relation(fields: [decisionId], references: [id], onDelete: Cascade)
+  decisionId           String
+  candidateSelection   CandidateSelection                 @relation(fields: [candidateSelectionId], references: [id], onDelete: Restrict)
+  candidateSelectionId String
+  statut               CandidateFinalDecisionStatutEntree
+  justification        String?
+
+  // ATLAS CANDIDATE PROPOSAL (A35.8) — relation inverse uniquement, cette
+  // entrée ne porte elle-même aucun champ `supersededBy` (voir
+  // CandidateProposal ci-dessous §6.1.d.vi du contrat d'implémentation).
+  candidateProposals CandidateProposal[]
+
+  @@unique([decisionId, candidateSelectionId])
+}
+
+// ============================================================================
+// ATLAS CANDIDATE PROPOSAL (A35.8, 11/10/2026) — voir
+// docs/architecture/CANDIDATE_PROPOSAL_DESIGN_CONTRACT.md et
+// docs/architecture/CANDIDATE_PROPOSAL_IMPLEMENTATION_CONTRACT.md (§3, §5,
+// §13 étape 1 — LOCKED A35/A35.1, corrigé A35.4/A35.6, audité A35.7).
+//
+// Parent métier : exactement une CandidateFinalDecisionEntree (statut
+// RETENU au moment de la création, vérifié au niveau service, jamais en
+// base). demandeTalentId/clientId dénormalisés pour une vérification
+// d'ownership Client en une seule lecture (même précédent que
+// SolutionOption.clientId) — jamais une nouvelle convention.
+// ============================================================================
+
+enum CandidateProposalStatut {
+  BROUILLON
+  EMISE
+  ACCEPTEE
+  REFUSEE
+  RETIREE
+}
+
+model CandidateProposal {
+  id String @id @default(cuid())
+
+  candidateFinalDecisionEntree   CandidateFinalDecisionEntree @relation(fields: [candidateFinalDecisionEntreeId], references: [id], onDelete: Restrict)
+  candidateFinalDecisionEntreeId String
+
+  // Dénormalisés, immuables — jamais une copie des critères de
+  // DemandeTalent (IC §3.1, même précédent que SolutionOption.clientId).
+  demandeTalent   DemandeTalent @relation(fields: [demandeTalentId], references: [id], onDelete: Restrict)
+  demandeTalentId String
+  client          Client        @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  clientId        String
+
+  statut CandidateProposalStatut @default(BROUILLON)
+
+  // Append-only — même pattern que CandidateFinalDecision.supersedesId.
+  // Au plus un successeur par proposition, garanti en base.
+  supersedesId String?             @unique
+  supersedes   CandidateProposal?  @relation("CandidateProposalSuccession", fields: [supersedesId], references: [id])
+  supersededBy CandidateProposal?  @relation("CandidateProposalSuccession")
+
+  // Snapshot commercial — figé à l'émission (IC §4.2/§6.2), jamais
+  // recalculé. Noms choisis par cohérence avec les champs déjà existants
+  // de Mission (tjmVente/deviseVente/nbJours) — aucune valeur ni formule
+  // inventée, uniquement saisis par l'Admin au moment de l'émission.
+  tjmPropose          Float?
+  devise              String?
+  dureeJours          Int?
+  dateDebutEnvisagee  DateTime?
+  dateValidite        DateTime?
+
+  emisLe        DateTime?
+  emisParEmail  String?
+
+  decideLe       DateTime?
+  decideParEmail String?
+
+  communiqueParClientHorsSysteme Boolean @default(false)
+  canalHorsSysteme               String?
+
+  retireeLe DateTime?
+
+  createdByEmail String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relation inverse uniquement — Mission porte le champ
+  // sourceCandidateProposalId (@unique). Jamais de création automatique
+  // depuis ce modèle.
+  missionCreee Mission?
+
+  @@index([candidateFinalDecisionEntreeId])
+  @@index([demandeTalentId])
+  @@index([clientId])
+}
+
+enum InterviewReminderStatutEnvoi {
+  PLANIFIE
+  ENVOYE
+  ANNULE
+  ECHEC
+}
+
+// Rappels générés à la création de l'Interview (politique "24h + 1h" par
+// défaut, configurable — CTO Validation §10). declencheA est calculé et
+// stocké pour une requête de polling efficace par l'endpoint interne (voir
+// lib/interview/reminders.ts). Un rescheduling supprime les lignes PLANIFIE
+// et en recrée pour la nouvelle date (hard-delete acceptable ici : artefact
+// de planification interne, pas un fait métier/audité en soi).
+model InterviewReminder {
+  id                     String                        @id @default(cuid())
+  interviewParticipant   InterviewParticipant          @relation(fields: [interviewParticipantId], references: [id], onDelete: Cascade)
+  interviewParticipantId String
+  delaiAvantMinutes      Int
+  declencheA             DateTime
+  statutEnvoi            InterviewReminderStatutEnvoi  @default(PLANIFIE)
+  envoyeLe               DateTime?
+  createdAt              DateTime                      @default(now())
+
+  @@unique([interviewParticipantId, delaiAvantMinutes])
+  @@index([declencheA, statutEnvoi])
+}
+
+enum CalendarSyncStatut {
+  NON_CONNECTE
+  EN_ATTENTE
+  SUCCES
+  ECHEC
+  ANNULE_EXTERNE
+}
+
+// EXTERNAL INTEGRATION — découplée du domaine ATLAS. Un statutSync=ECHEC
+// n'invalide jamais l'Interview ATLAS (invariant absolu, vérifié par
+// construction : aucune FK inverse, aucun service Interview ne lit ce
+// modèle). Aucun fournisseur n'est imposé ni appelé dans ce lot.
+model CalendarSyncRecord {
+  id                     String             @id @default(cuid())
+  interviewParticipant   InterviewParticipant @relation(fields: [interviewParticipantId], references: [id], onDelete: Cascade)
+  interviewParticipantId String             @unique
+  provider               String?
+  externalEventId        String?
+  statutSync             CalendarSyncStatut @default(NON_CONNECTE)
+  dernierEssaiLe         DateTime?
+  erreurDetail           String?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
 }
 
 // COMPANY ATLAS — LOT 2 : Client Need Intelligence Foundation (15/09/2026).
