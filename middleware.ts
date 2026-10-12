@@ -30,6 +30,17 @@ const INGENIEUR_PREFIXES = ["/admin/missions", "/api/missions", "/ingenieur", "/
 // startsWith, ce qui bloquait l'Admin sur /admin/clients (bug trouvé le 4
 // sept. lors du test de la nouvelle page /admin/clients).
 const CLIENT_PREFIXES = ["/client", "/api/client/"];
+// ENGINEER ACCESS & TRUST (09/10/2026) — espace candidature limité : un
+// INGENIEUR dont la session porte actif=false (voir lib/auth.ts,
+// app/api/auth/login/route.ts) n'a droit à RIEN d'autre que ces chemins,
+// même s'ils matchent par ailleurs INGENIEUR_PREFIXES/SHARED_PREFIXES —
+// cette liste est volontairement plus stricte, vérifiée en PLUS des
+// vérifications habituelles (jamais à la place). "/ingenieur/cv" et
+// "/api/ingenieur/cv" sont réutilisés tels quels (contrat A23/ATLAS ENGINEER
+// INTELLIGENCE PROFILE, inchangés) : l'upload CV ne vérifie déjà que
+// role+profilId, jamais `actif` — aucune route backend n'a donc besoin
+// d'être modifiée pour rester accessible ici.
+const CANDIDATE_PREFIXES = ["/ingenieur/candidature", "/ingenieur/cv", "/api/ingenieur/candidature", "/api/ingenieur/cv"];
 // Endpoints partagés entre les 3 rôles, chaque route gérant elle-même le
 // détail des permissions (voir app/api/feuilles-de-temps et
 // app/api/evaluations) — accessibles à ADMIN par défaut (cf. plus bas),
@@ -136,6 +147,22 @@ export async function middleware(req: NextRequest) {
       // un Ingénieur n'a jamais accès à /api/talent (ni côté Client, ni
       // matching/shortlist réservé Admin).
       if (!allowed) return redirectToLogin(req, "/admin/missions");
+
+      // ENGINEER ACCESS & TRUST — restriction appliquée EN PLUS de
+      // `allowed` ci-dessus, jamais à sa place : un candidat (actif=false)
+      // reste par ailleurs un INGENIEUR normal pour toutes les vérifications
+      // déjà en place. Comparaison stricte à `false` : `undefined` (TOUTE
+      // session émise avant ce lot, voir lib/auth.ts) signifie un accès
+      // complet, jamais restreint rétroactivement.
+      if (payload.actif === false) {
+        const autoriseEnCandidature = CANDIDATE_PREFIXES.some((p) => pathname.startsWith(p));
+        if (!autoriseEnCandidature) {
+          if (pathname.startsWith("/api")) {
+            return NextResponse.json({ error: "Candidature en attente de décision — accès limité à l'espace candidature." }, { status: 403 });
+          }
+          return NextResponse.redirect(new URL("/ingenieur/candidature", req.url));
+        }
+      }
 
       // Compte temporairement désactivé par l'ingénieur lui-même (voir
       // /ingenieur -> "Mon compte") : seul l'écran de réactivation (et son

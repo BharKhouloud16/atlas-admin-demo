@@ -1,8 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
+import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { uploaderFichier } from "@/lib/storage";
 import { extraireInfosCV, resultatNeutre, type ResultatExtractionCV } from "@/lib/cv-extraction";
+
+// ENGINEER ACCESS & TRUST (09/10/2026) — contrat §8 : contrôles obligatoires
+// sur l'upload CV. Taille maximale raisonnable pour un CV PDF — aucune
+// limite n'existait avant ce lot (constat de l'audit), jamais une valeur
+// arbitrairement choisie sans rapport avec l'usage réel.
+const TAILLE_MAX_OCTETS = 10 * 1024 * 1024; // 10 Mo
+
+// Nom de fichier sûr pour le stockage (contrat §8 : "nom de fichier sûr",
+// "aucune confiance dans le nom de fichier") — jamais le nom fourni par
+// l'appelant utilisé tel quel dans la clé de stockage (voir
+// lib/storage.ts::uploaderFichier, qui l'interpole directement). Conserve
+// uniquement un sous-ensemble de caractères sûrs, plafonne la longueur, et
+// force toujours l'extension .pdf (seul type accepté par cette route) —
+// jamais déduite du nom fourni.
+function nomFichierSur(): string {
+  return `cv-${crypto.randomUUID()}.pdf`;
+}
 
 // Upload du CV par l'ingénieur connecté. Le contenu du fichier est envoyé à
 // l'IA (Claude) pour pré-remplir les champs InfoCV avec les informations
@@ -30,7 +48,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Format non supporté. Utilisez un PDF." }, { status: 400 });
   }
 
+  // ENGINEER ACCESS & TRUST — taille maximale vérifiée AVANT toute lecture
+  // complète/extraction IA (contrat §8), jamais après coup.
+  if (fichier.size > TAILLE_MAX_OCTETS) {
+    return NextResponse.json({ error: "Fichier trop volumineux (10 Mo maximum)." }, { status: 400 });
+  }
+
   const octets = await fichier.arrayBuffer();
+  // Empreinte du contenu EXACT du fichier — signal Access Integrity "CV
+  // identique" (contrat §9/§10, voir lib/engineer-access/integrity.ts),
+  // jamais une comparaison floue/IA inventée ici.
+  const cvHash = crypto.createHash("sha256").update(Buffer.from(octets)).digest("hex");
 
   // Extraction + vérification du secteur AVANT l'upload : un CV hors-sujet
   // (pas informatique/QA) est rejeté sans être stocké ni rattaché au profil.
@@ -77,7 +105,7 @@ export async function POST(req: NextRequest) {
 
   let url: string;
   try {
-    const uploade = await uploaderFichier(fichier.name, new Blob([octets], { type: fichier.type }), "cv");
+    const uploade = await uploaderFichier(nomFichierSur(), new Blob([octets], { type: fichier.type }), "cv");
     url = uploade.url;
   } catch (e: any) {
     // LOT 12.1 — SECURITY HARDENING : ne jamais renvoyer e.message au
@@ -115,9 +143,13 @@ export async function POST(req: NextRequest) {
       where: { id: session.profilId },
       data: {
         cvUrl: url,
-        cvNomFichier: fichier.name,
+        // Nom affiché à l'utilisateur (jamais utilisé comme clé de
+        // stockage, voir nomFichierSur ci-dessus) — plafonné en longueur,
+        // jamais une confiance totale dans la valeur fournie.
+        cvNomFichier: fichier.name.slice(0, 200),
         cvImporteLe: new Date(),
         cvValide: false,
+        cvHash,
         infosCv: { create: champs },
       },
     }),

@@ -11,6 +11,17 @@ type SessionUser = {
   profilId: string | null;
   clientId: string | null;
   desactive?: boolean; // true pour un ingénieur ayant temporairement désactivé son compte
+  // ENGINEER ACCESS & TRUST (09/10/2026) — reflète User.actif AU MOMENT de
+  // la connexion, pour un rôle INGENIEUR uniquement (voir
+  // app/api/auth/login/route.ts : CLIENT/ADMIN restent bloqués avant
+  // création de session tant que actif=false, comme avant ce lot).
+  // Absent (undefined) = toujours interprété comme accès complet
+  // (middleware.ts) : c'est le cas de TOUTE session émise avant ce lot,
+  // puisqu'aucune session n'a jamais pu exister pour actif=false
+  // auparavant — jamais une restriction rétroactive. false = accès
+  // candidat limité (middleware.ts restreint alors aux routes de
+  // candidature/CV).
+  actif?: boolean;
 };
 
 export async function createSession(user: SessionUser) {
