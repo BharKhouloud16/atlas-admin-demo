@@ -33,10 +33,19 @@ export function determinerProvenance(pointeurFaitPrincipal: PointeurFait): Learn
 // Vocabulaire fermé A30, règles de dérivation A34 §9 : PATTERN/
 // BEST_PRACTICE/ANTI_PATTERN exigent TOUJOURS ≥2 Missions comparables
 // (contrat A34 §10) — jamais déduits d'une Mission seule, quelle que soit
-// la confiance de l'IA. RECOMMENDATION reste une interprétation textuelle
-// du candidat fourni par le provider, jamais recalculée ici (contrat A34
-// §9 dernier paragraphe, §17) : le serveur ne fait que l'accepter ou la
-// rejeter comme les autres types, jamais la générer lui-même.
+// la confiance de l'IA.
+//
+// A35.1-FIX (contrat A35 F3, audit A35) : le provider reste PUREMENT
+// advisory — "provider suggestion ≠ server classification". La suggestion
+// "RECOMMENDATION" du provider disposait d'un chemin privilégié qui
+// contournait intégralement les règles ci-dessous ; un provider futur
+// aurait pu ainsi imposer le type final d'un Learning par simple
+// auto-déclaration, sans aucune vérification serveur — exactement le même
+// défaut de principe que le bypass VERIFIED_RESULT du garde-fou causal
+// (contrat A34 P0.2). Ce chemin est supprimé : "typeSuggere" n'influence
+// plus jamais la valeur retournée, quelle qu'elle soit. Paramètre conservé
+// dans la signature pour compatibilité des appelants existants (voir
+// engine.ts) mais plus jamais lu.
 export type SignalResultat = { positif: boolean | null }; // null = non déterminable
 
 export function determinerType(
@@ -44,11 +53,6 @@ export function determinerType(
   signal: SignalResultat,
   typeSuggere: LearningType
 ): LearningType {
-  // RECOMMENDATION est acceptée telle quelle si suggérée (texte uniquement,
-  // contrat A34 §9/§17) — aucune règle de récidive ne s'y applique, ce
-  // n'est pas une observation factuelle mais une suggestion future.
-  if (typeSuggere === "RECOMMENDATION") return "RECOMMENDATION";
-
   if (missionsComparablesCount >= 2) {
     if (signal.positif === true) return "BEST_PRACTICE";
     if (signal.positif === false) return "ANTI_PATTERN";
@@ -63,15 +67,34 @@ export function determinerType(
 }
 
 // --- CONFIDENCE -----------------------------------------------------------
-// Jamais un score numérique (contrat A34 §16). HIGH réservé à récidive
-// démontrée (≥2) ET source la plus forte VERIFIED_RESULT. MEDIUM pour une
-// convergence de faits sans être au plafond. LOW par défaut — jamais HIGH
-// simplement parce que l'IA "semble sûre" (la confianceSuggeree du
-// provider n'est jamais lue ici, voir engine.ts).
-export function determinerConfidence(missionsComparablesCount: number, palierPrincipal: PalierPreuve): LearningConfidence {
-  if (missionsComparablesCount >= 2 && palierPrincipal === "VERIFIED_RESULT") return "HIGH";
-  if (missionsComparablesCount >= 2 || palierPrincipal === "VERIFIED_RESULT") return "MEDIUM";
+// Jamais un score numérique (contrat A34 §16). La confianceSuggeree du
+// provider n'est jamais lue ici (voir engine.ts) — purement advisory,
+// jamais autoritaire.
+//
+// A35.5-FIX (contrat A35 F2, audit A35.4) : un UNIQUE fait VERIFIED_RESULT
+// isolé (ni récidive F4 ≥2, ni convergence d'un second fait VERIFIED_RESULT
+// dans le MÊME dossier) ne doit plus jamais produire MEDIUM — seule une
+// répétabilité démontrée (récidive F4, déjà expurgée des Missions
+// contradictoires, voir recurrence.ts) OU une convergence d'AU MOINS DEUX
+// faits VERIFIED_RESULT distincts dans le dossier de la Mission courante
+// justifie MEDIUM. HIGH exige les deux dimensions simultanément (récidive
+// ≥2 ET (palier principal VERIFIED_RESULT OU convergence ≥2)). "Faits
+// distincts" = pointeurs (sourceType,id) distincts du dossier (jamais une
+// même ligne comptée deux fois — voir facts.ts, chaque pointeur pointe
+// vers une ligne Prisma réelle et unique).
+export function determinerConfidence(missionsComparablesCount: number, palierPrincipal: PalierPreuve, nombreFaitsVerifies: number): LearningConfidence {
+  const convergence = nombreFaitsVerifies >= 2;
+  if (missionsComparablesCount >= 2 && (palierPrincipal === "VERIFIED_RESULT" || convergence)) return "HIGH";
+  if (missionsComparablesCount >= 2 || convergence) return "MEDIUM";
   return "LOW";
+}
+
+// Convergence DÉTERMINISTE (contrat A35 F2) : nombre de pointeurs distincts
+// du dossier factuel portant eux-mêmes le palier VERIFIED_RESULT — jamais
+// un embedding/une similarité sémantique, uniquement un comptage direct
+// sur les paliers déjà attribués par facts.ts (contrat A34 §8, inchangé).
+export function compterFaitsVerifies(pointeurs: PointeurFait[]): number {
+  return pointeurs.filter((p) => p.palier === "VERIFIED_RESULT").length;
 }
 
 // --- SIGNAL (positif/négatif/non déterminable) --------------------------

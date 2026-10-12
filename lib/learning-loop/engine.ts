@@ -5,7 +5,7 @@ import type { PointeurFait, SuggestionLearning } from "@/lib/ai/provider";
 import { creerLearningAvecRetry } from "@/lib/learning/learning";
 import { construireDossierFaits, MissionIntrouvableLearningLoopError, MissionNonTermineeError, type DossierFaits } from "./facts";
 import { compterMissionsComparables } from "./recurrence";
-import { determinerConfidence, determinerProvenance, determinerScope, determinerType, deriverSignalResultat, contientAffirmationCausaleNonJustifiee } from "./classification";
+import { determinerConfidence, determinerProvenance, determinerScope, determinerType, deriverSignalResultat, contientAffirmationCausaleNonJustifiee, compterFaitsVerifies } from "./classification";
 import { estDoublon } from "./duplicates";
 import { detecterContradictions } from "./contradictions";
 
@@ -80,8 +80,13 @@ export async function executerPropositionEtAction(params: {
   const dossierBrut = stepObservation?.actionExecution?.resultat as { dossier?: DossierFaits } | null | undefined;
   const dossier = dossierBrut?.dossier ?? (await construireDossierFaits(params.missionId));
 
-  const missionsComparablesCount = await compterMissionsComparables(params.missionId);
+  // A35.3-FIX (contrat A35 F4) : le signal recherché (signal de la Mission
+  // COURANTE) doit être connu avant de compter les Missions comparables,
+  // pour pouvoir distinguer récidive positive de récidive contradictoire
+  // (voir recurrence.ts) — ordre inversé par rapport à l'ancienne version,
+  // comportement de deriverSignalResultat lui-même inchangé.
   const signal = deriverSignalResultat(dossier);
+  const { count: missionsComparablesCount } = await compterMissionsComparables(params.missionId, signal);
 
   const provider = resoudreAiProvider();
   const suggestion = await provider.proposerApprentissage({
@@ -104,7 +109,7 @@ export async function executerPropositionEtAction(params: {
 
     const type = determinerType(missionsComparablesCount, signal, candidat.type);
     const provenance = determinerProvenance(pointeur);
-    const confidence = determinerConfidence(missionsComparablesCount, pointeur.palier);
+    const confidence = determinerConfidence(missionsComparablesCount, pointeur.palier, compterFaitsVerifies(dossier.pointeurs));
     const scope = determinerScope();
     const titre = candidat.titre.trim().slice(0, 200);
     let statement = candidat.statement.trim();
@@ -121,7 +126,7 @@ export async function executerPropositionEtAction(params: {
       continue; // contrat A34 §13 : jamais de doublon exact, candidat suivant.
     }
 
-    const contradictions = await detecterContradictions(dossier.clientId, type, titre);
+    const contradictions = await detecterContradictions(params.missionId, dossier.clientId, type, titre);
     const justificationAvecContradictions =
       contradictions.length > 0
         ? `${candidat.justification}\n\nContradiction(s) détectée(s) avec Learning(s) existant(s), conservées sans arbitrage automatique : ${contradictions.map((c) => `${c.learningId} (${c.type})`).join(", ")}.`
