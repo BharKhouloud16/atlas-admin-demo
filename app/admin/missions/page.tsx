@@ -186,12 +186,26 @@ export default function MissionsPage() {
     const libelle = action === "terminer" ? "terminer" : "annuler";
     if (!confirm(`Confirmer : ${libelle} cette mission ? Cette action est définitive.`)) return;
 
+    // LOT 16.3 FIX (A35.14) — "annuler" exige TOUJOURS un motif non vide
+    // (lib/mission/lifecycle.ts, contrat A22 §12, inchangé) : ce bouton ne
+    // le transmettait jamais, causant un rejet 400 systématique (cause
+    // confirmée A35.13 §7). Même convention que demanderEtTransitionner()
+    // dans app/admin/missions/[id]/work-items/[workItemId]/page.tsx :
+    // prompt() obligatoire, abandon local si vide — jamais un contournement
+    // de la validation serveur, qui reste seule juge en dernier ressort.
+    let motif: string | undefined;
+    if (action === "annuler") {
+      const saisie = prompt("Motif de l'annulation :");
+      if (!saisie) return;
+      motif = saisie;
+    }
+
     setErreurTransition(null);
     setTransition(missionId + action);
     const res = await fetch(`/api/missions/${missionId}/transition`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({ action, motif }),
     });
     setTransition(null);
 

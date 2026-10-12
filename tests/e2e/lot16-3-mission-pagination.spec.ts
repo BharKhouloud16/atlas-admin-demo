@@ -94,20 +94,71 @@ async function missionEnPage2(repere: string, statutDepart: "EN_COURS" | "TERMIN
   return mission;
 }
 
+// LOT 16.3 FIX (A35.14, cause confirmée A35.13 §4/§5) — les tests 1 et 2 ne
+// créaient historiquement AUCUNE fixture et supposaient un volume ambiant
+// de plus de TAILLE_PAGE Missions, vrai uniquement dans la base partagée
+// atlas_ci (jamais réinitialisée), jamais garanti sur une base neuve (voir
+// A35.11-A35.13 : total=1 sur une base jetable fraîchement seedée). Ce
+// helper crée TAILLE_PAGE + 1 Missions avec un `repere` DISTINCT par ligne
+// (jamais un repere partagé entre elles, à la différence du "remplissage"
+// de missionEnPage2) : la comparaison positionnelle du test 2 (première
+// cellule avant/après navigation) porte ainsi sur un contenu réellement
+// distinct, jamais une coïncidence de texte identique entre deux lignes.
+async function creerVolumeMinimalPagination(prefix: string): Promise<void> {
+  const client = await clientDemo();
+  const maintenant = Date.now();
+  const profils = await Promise.all(
+    Array.from({ length: TAILLE_PAGE + 1 }, (_, i) =>
+      prisma.profil.create({ data: { nom: `LOT163-E2E-volume-${prefix}-${i}-${Math.random()}` } })
+    )
+  );
+  await prisma.mission.createMany({
+    data: profils.map((p, i) => ({
+      clientId: client.id,
+      profilId: p.id,
+      repere: `LOT163-E2E-volume-${prefix}-${i}`,
+      nbJours: 1,
+      tjmVente: 100,
+      createdAt: new Date(maintenant + i),
+    })),
+  });
+}
+
 test.describe("Admin — /admin/missions — pagination", () => {
+  // LOT 16.3 FIX (A35.14) — les tests 1 et 2 lisent désormais le rang réel
+  // (page 1 / page 2) des missions qu'ils viennent de créer. Sous
+  // `fullyParallel: true` (actif hors CI), un scénario frère de CE MÊME
+  // fichier peut insérer ses propres missions, elles aussi datées "now",
+  // ENTRE les deux lectures d'un test (ex. avant/après retour page 1) —
+  // déplaçant un contenu que le test croyait stable. Cette interférence
+  // intra-fichier est déjà le mécanisme documenté dans playwright.config.ts
+  // (tests/api/*.spec.ts partageant un profil) et sa mitigation retenue par
+  // le dépôt est `workers: 1` en CI — ici, restreindre ce SEUL describe à
+  // "serial" obtient le même effet sans toucher playwright.config.ts ni la
+  // concurrence des autres fichiers : chaque test de pagination s'exécute
+  // désormais seul, jamais en même temps qu'un scénario frère de ce fichier.
+  test.describe.configure({ mode: "serial" });
+
   test("1. l'indicateur de page s'affiche, Précédent désactivé sur la page 1, Suivant activé (base > 1 page)", async ({ page }) => {
+    // LOT 16.3 FIX (A35.14) — volume minimal créé par CE test, jamais une
+    // dépendance au volume déjà présent en base (cause confirmée A35.13 §4 :
+    // nul sur une base jetable neuve, contrairement à atlas_ci).
+    await creerVolumeMinimalPagination(`page1-${Date.now()}`);
+
     await page.goto("/admin/missions");
     await expect(page.getByRole("heading", { name: /missions/i })).toBeVisible();
 
     await expect(page.getByText(/^Page 1 \//)).toBeVisible();
     await expect(page.getByRole("button", { name: "Précédent" })).toBeDisabled();
-    // La base de test accumule des milliers de missions au fil de
-    // l'engagement (règle fondateur : jamais réinitialisée) — il existe
-    // donc structurellement toujours plus d'une page.
     await expect(page.getByRole("button", { name: "Suivant" })).toBeEnabled();
   });
 
   test("2. Suivant charge la page 2 (contenu distinct), Précédent revient à la page 1 (contenu initial identique)", async ({ page }) => {
+    // LOT 16.3 FIX (A35.14) — même correction que le test 1 : volume propre
+    // à ce test (cause confirmée A35.13 §5), jamais une dépendance au
+    // contenu déjà présent en base.
+    await creerVolumeMinimalPagination(`page2-${Date.now()}`);
+
     await page.goto("/admin/missions");
     await expect(page.getByText(/^Page 1 \//)).toBeVisible();
     const premiereCelluleP1 = await page.locator("tbody tr").first().locator("td").nth(2).innerText();
@@ -141,9 +192,29 @@ test.describe("Admin — /admin/missions — pagination", () => {
     // inchangé par ce lot. On termine réellement depuis le panneau.
     const panneau = ligne.locator("xpath=following-sibling::tr[1]");
     await expect(panneau.getByText("Revue de clôture", { exact: true })).toBeVisible();
+
+    // LOT 16.3 FIX (A35.14, cause confirmée A35.13 §6) — l'ancienne attente
+    // (disparition du bouton "Terminer la mission") est un proxy trompeur :
+    // son libellé passe SYNCHRONE à "Terminaison..." dès le clic (voir
+    // MissionClosureReview.tsx, état `terminaison`), AVANT toute activité
+    // réseau — la précédente version de ce test pouvait donc lire la base
+    // avant que la mutation n'ait eu le temps de se terminer. On attend
+    // désormais explicitement la réponse HTTP réelle de la transition
+    // (statut + résultat métier), PUIS l'état persisté tel que l'affiche
+    // l'application elle-même ("statut actuel :", jamais un délai
+    // arbitraire) — seul ce second signal garantit que rechargerMissions()
+    // a bien reflété la mutation avant toute lecture directe de la base.
+    const reponseTransition = page.waitForResponse(
+      (resp) => resp.url().includes(`/api/missions/${mission.id}/transition`) && resp.request().method() === "PATCH"
+    );
     page.once("dialog", (d) => d.accept());
     await panneau.getByRole("button", { name: "Terminer la mission" }).click();
-    await expect(panneau.getByRole("button", { name: "Terminer la mission" })).toHaveCount(0, { timeout: 15000 });
+    const reponse = await reponseTransition;
+    expect(reponse.status()).toBe(200);
+    const corpsReponse = await reponse.json();
+    expect(corpsReponse.statut).toBe("TERMINEE");
+
+    await expect(panneau.getByText(/statut actuel : TERMINEE/)).toBeVisible({ timeout: 15000 });
 
     const enBase = await prisma.mission.findUniqueOrThrow({ where: { id: mission.id } });
     expect(enBase.statut).toBe("TERMINEE");
@@ -153,6 +224,7 @@ test.describe("Admin — /admin/missions — pagination", () => {
     test.setTimeout(60000);
     const repere = `LOT163-E2E-annuler-${Date.now()}`;
     const mission = await missionEnPage2(repere, "EN_COURS");
+    const motifAnnulation = `Motif E2E LOT163 : fin de prestation anticipée (${repere}).`;
 
     await page.goto("/admin/missions");
     await page.getByRole("button", { name: "Suivant" }).click();
@@ -160,12 +232,39 @@ test.describe("Admin — /admin/missions — pagination", () => {
 
     const ligne = ligneDe(page, repere);
     await expect(ligne).toBeVisible();
-    page.once("dialog", (d) => d.accept());
+
+    // LOT 16.3 FIX (A35.14, cause confirmée A35.13 §7) — "annuler" exige
+    // désormais un motif (voir app/admin/missions/page.tsx,
+    // transitionnerMission()), collecté via un second dialog natif
+    // (prompt) déclenché après le confirm() existant — jamais un
+    // contournement de la validation serveur (lib/mission/lifecycle.ts,
+    // inchangé) : ce motif est réellement transmis au contrat existant.
+    page.on("dialog", (d) => {
+      if (d.type() === "prompt") d.accept(motifAnnulation);
+      else d.accept();
+    });
+
+    const reponseTransition = page.waitForResponse(
+      (resp) => resp.url().includes(`/api/missions/${mission.id}/transition`) && resp.request().method() === "PATCH"
+    );
     await ligne.getByRole("button", { name: "Annuler", exact: true }).click();
+    const reponse = await reponseTransition;
+    expect(reponse.status()).toBe(200);
 
     await expect(ligne.getByText(/ANNULEE/)).toBeVisible({ timeout: 15000 });
     const enBase = await prisma.mission.findUniqueOrThrow({ where: { id: mission.id } });
     expect(enBase.statut).toBe("ANNULEE");
+
+    // Le motif n'a pas de colonne dédiée sur Mission — seul
+    // JournalActivite.detail le conserve (lib/mission/lifecycle.ts,
+    // inchangé, même convention que tests/api/a22-mission-lifecycle.spec.ts
+    // #35b) : vérifié ici qu'il est réellement transmis, pas seulement
+    // accepté par l'UI.
+    const entreeJournal = await prisma.journalActivite.findFirst({
+      where: { action: "mission.lifecycle.transition", cible: `mission:${mission.id}` },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(entreeJournal?.detail).toContain(motifAnnulation);
   });
 
   test("5. Revue de clôture reste accessible et fonctionnelle en page 2 (mission déjà Terminée)", async ({ page }) => {
