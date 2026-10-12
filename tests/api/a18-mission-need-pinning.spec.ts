@@ -54,6 +54,24 @@ async function creerDecision(clientId: string, needId: string) {
   });
 }
 
+// DB-03 — ligne SolutionOption à un niveau autre que DECISION (HYPOTHESE/
+// OPTION/RECOMMANDATION) : jamais finalisée (decideParEmail/decideLe
+// absents), exactement comme le produit réel les crée (voir
+// lib/client-solution/generation.ts) — jamais une DECISION déguisée.
+async function creerLigneNiveau(clientId: string, needId: string, niveau: "HYPOTHESE" | "OPTION" | "RECOMMANDATION") {
+  return prisma.solutionOption.create({
+    data: {
+      clientId,
+      needId,
+      niveau,
+      typeSolution: "TALENT",
+      titre: `Ligne de test A18 — ${niveau}`,
+      justification: `Ligne ${niveau} pour test A18 (DB-03).`,
+      donnees: {},
+    },
+  });
+}
+
 test.describe("A18 — POST /api/missions : pins Need/SolutionDecision", () => {
   test("1. Mission sans Need -> création valide, needVersionId/solutionDecisionId null", async ({ request }) => {
     await connecter(request, "admin-demo@example.com");
@@ -137,6 +155,30 @@ test.describe("A18 — POST /api/missions : pins Need/SolutionDecision", () => {
     expect(reponse.status(), await reponse.text()).toBe(400);
     expect(await prisma.mission.count({ where: { needVersionId: needA.id } })).toBe(0);
   });
+
+  // DB-03 — AUDIT PRODUIT V1 : seule une ligne niveau=DECISION peut être
+  // envoyée comme solutionDecisionId. validerPinsMission (lib/mission/
+  // need-pinning.ts) le vérifiait déjà (SolutionDecisionNiveauInvalideError) ;
+  // ces 3 tests verrouillent explicitement chaque niveau de la chaîne
+  // append-only (contrat A13 §5 / mandat DB-03 §4) — une RECOMMANDATION,
+  // une OPTION ou une HYPOTHESE ne doivent jamais être acceptées, même si
+  // c'est techniquement la ligne la plus avancée disponible pour ce Need.
+  for (const niveau of ["RECOMMANDATION", "OPTION", "HYPOTHESE"] as const) {
+    test(`5b. solutionDecisionId référence une ligne niveau=${niveau} (jamais DECISION) -> refus 400`, async ({ request }) => {
+      await connecter(request, "admin-demo@example.com");
+      const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
+      const need = await creerNeedAvecFaits(client!.id);
+      const ligne = await creerLigneNiveau(client!.id, need.id, niveau);
+      const profil = await creerProfil();
+      const reponse = await request.post("/api/missions", {
+        data: { clientId: client!.id, profilId: profil.id, nbJours: 5, tjmVente: 400, needVersionId: need.id, solutionDecisionId: ligne.id },
+      });
+      expect(reponse.status(), await reponse.text()).toBe(400);
+      const corps = await reponse.json();
+      expect(corps.error).toBe("La SolutionOption référencée n'est pas de niveau DECISION");
+      expect(await prisma.mission.count({ where: { needVersionId: need.id } })).toBe(0);
+    });
+  }
 
   test("6a. needVersionId inexistant -> 404, jamais une substitution par le Need courant", async ({ request }) => {
     await connecter(request, "admin-demo@example.com");

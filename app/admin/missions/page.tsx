@@ -32,6 +32,15 @@ type Mission = {
 type ClientOption = { id: string; nom: string };
 type ProfilOption = { id: string; nom: string; prenom?: string | null };
 
+// DB-03 — MISSION DECISION PINNING (audit Product V1, rupture DB-03). Le
+// backend (lib/mission/need-pinning.ts::validerPinsMission, A18) sait déjà
+// recevoir/valider needVersionId + solutionDecisionId, mais jusqu'ici aucun
+// écran ne les collectait. Types ci-dessous : reflet strict de ce que
+// GET /api/talent/besoins et GET /api/talent/besoins/[id]/solutions
+// renvoient déjà — aucun nouveau champ, aucune nouvelle route.
+type BesoinOption = { id: string; clientId: string; titre: string | null; texteOriginal: string };
+type SolutionDecisionOption = { id: string; titre: string; justification: string; decideLe: string | null };
+
 // LOT 16.3 — MISSION LIST SCALABILITY. Même valeur par défaut que
 // PAGE_SIZE_DEFAUT côté serveur (app/api/missions/route.ts) — envoyée
 // explicitement pour ne jamais dépendre implicitement du défaut serveur.
@@ -75,6 +84,16 @@ export default function MissionsPage() {
   const [tjmVente, setTjmVente] = useState("");
   const [creation, setCreation] = useState(false);
   const [erreurCreation, setErreurCreation] = useState<string | null>(null);
+
+  // DB-03 — Need (besoin) et SolutionDecision (optionnels) : needVersionId/
+  // solutionDecisionId ne sont JAMAIS envoyés si l'Admin ne les sélectionne
+  // pas explicitement — comportement métier existant (Mission indépendante)
+  // préservé à l'identique (voir "Aucun (mission indépendante)" ci-dessous).
+  const [besoins, setBesoins] = useState<BesoinOption[]>([]);
+  const [needId, setNeedId] = useState("");
+  const [decisions, setDecisions] = useState<SolutionDecisionOption[]>([]);
+  const [decisionId, setDecisionId] = useState("");
+  const [chargementDecisions, setChargementDecisions] = useState(false);
 
   // Phase 2B-0 — Mission Lifecycle : transition minimale Terminer/Annuler,
   // réservée Admin (voir app/api/missions/[id]/transition/route.ts). Ne
@@ -139,11 +158,35 @@ export default function MissionsPage() {
         setRole("ADMIN");
         r.json().then(setClients);
         fetch("/api/profils").then((r2) => (r2.ok ? r2.json() : { profils: [] })).then((d) => setProfils(d.profils ?? [])).catch(() => {});
+        // DB-03 : vue transverse déjà existante (GET /api/talent/besoins,
+        // réservée ADMIN) — réutilisée telle quelle, jamais une nouvelle
+        // route ; filtrée par clientId côté client au rendu ci-dessous.
+        fetch("/api/talent/besoins").then((r3) => (r3.ok ? r3.json() : { besoins: [] })).then((d) => setBesoins(d.besoins ?? [])).catch(() => {});
       } else {
         setRole("INGENIEUR");
       }
     }).catch(() => {});
   }, []);
+
+  // DB-03 : un besoin sélectionné déclenche la récupération de ses
+  // SolutionDecision réelles (niveau=DECISION uniquement, déjà filtré par
+  // GET /api/talent/besoins/[id]/solutions — jamais une RECOMMANDATION/
+  // OPTION/HYPOTHESE affichée ici). Aucune décision disponible -> liste
+  // vide, jamais une valeur inventée.
+  useEffect(() => {
+    if (!needId) {
+      setDecisions([]);
+      setDecisionId("");
+      return;
+    }
+    setChargementDecisions(true);
+    setDecisionId("");
+    fetch(`/api/talent/besoins/${needId}/solutions`)
+      .then((r) => (r.ok ? r.json() : { decisions: [] }))
+      .then((d) => setDecisions(d.decisions ?? []))
+      .catch(() => setDecisions([]))
+      .finally(() => setChargementDecisions(false));
+  }, [needId]);
 
   async function creerMission(e: FormEvent) {
     e.preventDefault();
@@ -162,6 +205,12 @@ export default function MissionsPage() {
         repere: repere || undefined,
         nbJours: Number(nbJours),
         tjmVente: Number(tjmVente),
+        // DB-03 : jamais envoyés si l'Admin n'a rien sélectionné — le
+        // backend (validerPinsMission) reste seul juge de leur validité ;
+        // ce formulaire ne fait que transmettre un choix explicite, jamais
+        // une valeur devinée.
+        needVersionId: needId || undefined,
+        solutionDecisionId: decisionId || undefined,
       }),
     });
     setCreation(false);
@@ -175,6 +224,8 @@ export default function MissionsPage() {
     setRepere("");
     setNbJours("");
     setTjmVente("");
+    setNeedId("");
+    setDecisionId("");
     setAfficherFormulaire(false);
     // La nouvelle mission apparaît en tête de tri (createdAt desc) : revenir
     // à la page 1 pour la rendre immédiatement visible, plutôt que rester
@@ -277,13 +328,66 @@ export default function MissionsPage() {
             >
               <label style={{ fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
                 Client
-                <select value={clientId} onChange={(e) => setClientId(e.target.value)} style={{ padding: 6, minWidth: 180 }}>
+                <select
+                  value={clientId}
+                  onChange={(e) => {
+                    // DB-03 : un besoin/décision sélectionné appartient au
+                    // Client précédent — changer de Client sans les
+                    // réinitialiser risquerait d'envoyer un needVersionId
+                    // d'un autre tenant (le backend le refuserait de toute
+                    // façon, mais ce formulaire ne doit jamais présenter un
+                    // choix devenu incohérent).
+                    setClientId(e.target.value);
+                    setNeedId("");
+                    setDecisionId("");
+                  }}
+                  style={{ padding: 6, minWidth: 180 }}
+                >
                   <option value="">Choisir...</option>
                   {clients.map((c) => (
                     <option key={c.id} value={c.id}>{c.nom}</option>
                   ))}
                 </select>
               </label>
+              <label style={{ fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
+                Besoin d'origine (optionnel)
+                <select value={needId} onChange={(e) => setNeedId(e.target.value)} disabled={!clientId} style={{ padding: 6, minWidth: 220 }}>
+                  <option value="">Aucun (mission indépendante)</option>
+                  {besoins.filter((b) => b.clientId === clientId).map((b) => (
+                    <option key={b.id} value={b.id}>{b.titre ?? b.texteOriginal.slice(0, 60)}</option>
+                  ))}
+                </select>
+              </label>
+              {needId && (
+                <label style={{ fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
+                  Décision de solution
+                  <select
+                    value={decisionId}
+                    onChange={(e) => setDecisionId(e.target.value)}
+                    disabled={chargementDecisions || decisions.length === 0}
+                    style={{ padding: 6, minWidth: 260 }}
+                  >
+                    <option value="">
+                      {chargementDecisions
+                        ? "Chargement..."
+                        : decisions.length === 0
+                        ? "Aucune décision finalisée pour ce besoin"
+                        : "Aucune (mission non rattachée à une décision)"}
+                    </option>
+                    {decisions.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.titre}
+                        {d.decideLe ? ` — décidée le ${new Date(d.decideLe).toLocaleDateString("fr-FR")}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  {!chargementDecisions && decisions.length === 0 && (
+                    <span style={{ fontSize: 11, color: "#888" }}>
+                      Ce besoin n&apos;a pas encore de décision de solution finalisée — la mission sera créée sans rattachement à une décision.
+                    </span>
+                  )}
+                </label>
+              )}
               <label style={{ fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
                 Ingénieur
                 <select value={profilId} onChange={(e) => setProfilId(e.target.value)} style={{ padding: 6, minWidth: 180 }}>

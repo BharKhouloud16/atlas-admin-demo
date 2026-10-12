@@ -10,6 +10,12 @@ import { getSession } from "@/lib/auth";
 // jamais une copie des faits eux-mêmes (voir GET .../besoins/[id] pour le
 // détail). Aucune donnée n'est filtrée par clientId ici : c'est la vue
 // Admin volontairement transverse, comme /api/talent/demandes.
+//
+// DB-03 (Mission Decision Pinning UI) : `clientId` ajouté au select
+// ci-dessous — champ déjà existant sur ClientNeed, jamais une donnée
+// nouvelle — pour que le formulaire Admin de création de Mission puisse
+// filtrer les besoins par Client sélectionné sans fuite inter-client
+// (aucun autre champ ajouté, aucune route créée).
 export async function GET() {
   const session = await getSession();
   if (!session || session.role !== "ADMIN") {
@@ -19,6 +25,7 @@ export async function GET() {
   const besoins = await prisma.clientNeed.findMany({
     select: {
       id: true,
+      clientId: true,
       titre: true,
       texteOriginal: true,
       statut: true,
