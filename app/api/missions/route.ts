@@ -13,6 +13,14 @@ import {
   SolutionDecisionNonFinaliseeError,
   PinsIncoherentsError,
 } from "@/lib/mission/need-pinning";
+import { journaliser } from "@/lib/audit";
+import { CandidateProposalIntrouvableError } from "@/lib/candidate-proposal/proposal";
+import {
+  ChaineIdentiteCandidatRompueError,
+  MissionConflitParametresError,
+  PropositionNonAccepteeError,
+  creerOuReprendreMissionAvecRetry,
+} from "@/lib/candidate-proposal/mission";
 
 // LOT 16.3 — MISSION LIST SCALABILITY (30/09/2026). Pagination serveur
 // page/pageSize — un modèle curseur n'est pas justifié ici (pas de flux
@@ -154,6 +162,113 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
+
+  // ATLAS CANDIDATE PROPOSAL (A35.8) — voir
+  // docs/architecture/CANDIDATE_PROPOSAL_IMPLEMENTATION_CONTRACT.md §7.2/§10.8
+  // (LOCKED A35/A35.1, corrigé A35.4/A35.6, audité A35.7 PASS). Extension du
+  // body existant avec un champ optionnel candidateProposalId — jamais une
+  // nouvelle route de création de Mission (même discipline que
+  // sourceDemandeId, LOT 6). Chemin entièrement séparé et antérieur au
+  // comportement existant ci-dessous : un appelant qui n'utilise pas ce
+  // champ n'entre jamais dans cette branche, zéro changement de
+  // comportement pour lui (invariant §14 critère 3 du contrat).
+  //
+  // A36.6 (décision A36.5) — "profilId" n'est plus lu du corps pour cette
+  // branche : il est résolu exclusivement côté serveur depuis la chaîne de
+  // relations CandidateProposal -> ... -> ShortlistEntree.profilId (voir
+  // lib/candidate-proposal/mission.ts). Un appelant qui envoie encore ce
+  // champ n'a plus aucun effet sur l'identité du Profil retenu.
+  const candidateProposalId = typeof body.candidateProposalId === "string" && body.candidateProposalId.trim().length > 0 ? body.candidateProposalId : null;
+  if (candidateProposalId) {
+    // needVersionId/solutionDecisionId restent toujours null pour cette
+    // chaîne (invariant 17, D3 LOCKED) — jamais une correction silencieuse
+    // d'une valeur explicitement fournie par l'appelant, refus explicite.
+    if (body.needVersionId || body.solutionDecisionId) {
+      return NextResponse.json(
+        { error: "needVersionId/solutionDecisionId sont incompatibles avec candidateProposalId (toujours null pour cette chaîne)." },
+        { status: 400 }
+      );
+    }
+
+    // clientId toujours dérivé de la CandidateProposal côté serveur —
+    // jamais du corps de la requête (même discipline que sourceDemandeId).
+    const proposition = await prisma.candidateProposal.findUnique({ where: { id: candidateProposalId }, select: { clientId: true } });
+    if (!proposition) {
+      return NextResponse.json({ error: "CandidateProposal introuvable." }, { status: 404 });
+    }
+    const clientIdDerive = proposition.clientId;
+
+    if (!clientIdDerive || !body.nbJours || !body.tjmVente) {
+      return NextResponse.json({ error: "nbJours et tjmVente sont requis" }, { status: 400 });
+    }
+
+    const deviseDemandeeCP = typeof body.deviseVente === "string" ? body.deviseVente.trim().toUpperCase() : "";
+    const deviseVenteCP = DEVISES_ACCEPTEES.includes(deviseDemandeeCP) ? deviseDemandeeCP : "EUR";
+
+    let dateDebutCP: Date | null = null;
+    if (body.dateDebut !== undefined && body.dateDebut !== null) {
+      const parsed = new Date(body.dateDebut);
+      if (Number.isNaN(parsed.getTime())) return NextResponse.json({ error: "dateDebut invalide" }, { status: 400 });
+      dateDebutCP = parsed;
+    }
+    let dateFinCP: Date | null = null;
+    if (body.dateFin !== undefined && body.dateFin !== null) {
+      const parsed = new Date(body.dateFin);
+      if (Number.isNaN(parsed.getTime())) return NextResponse.json({ error: "dateFin invalide" }, { status: 400 });
+      dateFinCP = parsed;
+    }
+    let modeTravailCP: string | null = null;
+    if (body.modeTravail !== undefined && body.modeTravail !== null) {
+      if (!estModeTravailValide(body.modeTravail)) {
+        return NextResponse.json({ error: "modeTravail invalide (Remote, Hybride ou Sur site)" }, { status: 400 });
+      }
+      modeTravailCP = body.modeTravail;
+    }
+
+    try {
+      const { mission, mutationReelle } = await creerOuReprendreMissionAvecRetry({
+        candidateProposalId,
+        nbJours: body.nbJours,
+        tjmVente: body.tjmVente,
+        deviseVente: deviseVenteCP,
+        repere: body.repere ?? null,
+        margeCible: body.margeCible ?? 0.3,
+        dateDebut: dateDebutCP,
+        dateFin: dateFinCP,
+        modeTravail: modeTravailCP,
+      });
+
+      // §7.2 étape 3bis — uniquement pour la branche de création réelle,
+      // jamais pour une reprise idempotente (corrigé A35.4/F7).
+      if (mutationReelle) {
+        await journaliser({
+          acteurEmail: session.email,
+          acteurRole: "ADMIN",
+          action: "candidate.proposal.mission_created",
+          cible: `proposal:${candidateProposalId} mission:${mission.id}`,
+        });
+      }
+
+      return NextResponse.json(mission, { status: mutationReelle ? 201 : 200 });
+    } catch (erreur) {
+      if (erreur instanceof CandidateProposalIntrouvableError) {
+        return NextResponse.json({ error: "CandidateProposal introuvable." }, { status: 404 });
+      }
+      if (erreur instanceof PropositionNonAccepteeError) {
+        return NextResponse.json({ error: "CandidateProposal non acceptée (ACCEPTEE requis)." }, { status: 400 });
+      }
+      if (erreur instanceof MissionConflitParametresError) {
+        return NextResponse.json({ error: "Une Mission existe déjà pour cette proposition avec des paramètres différents." }, { status: 409 });
+      }
+      if (erreur instanceof ChaineIdentiteCandidatRompueError) {
+        // A36.6 — ne devrait structurellement jamais se produire (chaîne de
+        // FK onDelete:Restrict, voir A36.5) : signalé comme une erreur
+        // serveur explicite, jamais masqué ni fabriqué comme un succès.
+        return NextResponse.json({ error: "Impossible de déterminer l'ingénieur associé à cette proposition." }, { status: 500 });
+      }
+      throw erreur;
+    }
+  }
 
   // LOT 6 — Mission Context Bridge (16/09/2026) : lorsqu'une sourceDemandeId
   // est fournie, clientId est TOUJOURS dérivé de la DemandeTalent côté

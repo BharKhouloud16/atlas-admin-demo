@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { bordure, grisTexte } from "@/lib/theme";
 import { Card, Section, EmptyState, Badge, Bouton } from "@/components/client/primitives";
 import { TOUTES_COMPETENCES } from "@/lib/competences";
+import SelectionEtEntretiens from "./SelectionEtEntretiens";
+import PropositionsCandidat from "./PropositionsCandidat";
 
 type DemandeTalent = {
   id: string;
@@ -93,6 +95,12 @@ export default function TalentClientPage() {
               </p>
               <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${bordure}` }}>
                 <RequirementBuilder demandeId={d.id} descriptionInitiale={d.description} />
+              </div>
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${bordure}` }}>
+                <SelectionEtEntretiens demandeId={d.id} />
+              </div>
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${bordure}` }}>
+                <PropositionsCandidat demandeId={d.id} />
               </div>
             </Card>
           ))}

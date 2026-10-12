@@ -42,11 +42,17 @@ function resoudreBaseUrl(): string | null {
   return valeur.trim().replace(/\/+$/, "");
 }
 
-async function envoyerEmail({ to, subject, html }: EmailParams) {
+// Retourne `true` si l'envoi a été tenté sans erreur (y compris le mode
+// placeholder sans RESEND_API_KEY, cohérent avec le reste de ce fichier),
+// `false` uniquement si l'appel réel au fournisseur a levé une exception.
+// Valeur de retour ignorée par la totalité des appelants existants
+// (fire-and-forget) — ajoutée uniquement pour lib/interview/reminders.ts
+// (§12), qui doit distinguer ENVOYE d'ECHEC sur un InterviewReminder.
+async function envoyerEmail({ to, subject, html }: EmailParams): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
     console.log(`[email:placeholder] À: ${to} — Sujet: ${subject}\n${html}`);
-    return;
+    return true;
   }
   try {
     // Import dynamique : évite de charger la dépendance côté build quand
@@ -54,8 +60,10 @@ async function envoyerEmail({ to, subject, html }: EmailParams) {
     const { Resend } = await import("resend");
     const resend = new Resend(apiKey);
     await resend.emails.send({ from: EMAIL_FROM, to, subject, html });
+    return true;
   } catch (e) {
     console.error(`[email:erreur] Échec d'envoi à ${to} (${subject})`, e);
+    return false;
   }
 }
 
@@ -135,6 +143,50 @@ export async function envoyerEmailReinitialisationMotDePasse(params: {
       <p>Une demande de réinitialisation de mot de passe a été faite pour ce compte :</p>
       <p><a href="${lien}">${lien}</a></p>
       <p>Ce lien est valable 1 heure. Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.</p>
+      <p>À bientôt,<br/>L'équipe Atlas Quality Partners</p>
+    `,
+  });
+}
+
+// ENGINEER ACCESS & TRUST (09/10/2026) — pendant jumeau de
+// envoyerEmailCompteValide ci-dessous pour les deux autres décisions admin
+// possibles (contrat §20 : "Réutiliser les mécanismes existants" — même
+// fonction envoyerEmail()/même gestion best-effort, aucune nouvelle
+// infrastructure de notification).
+export async function envoyerEmailCompteRefuse(params: {
+  to: string;
+  nom: string;
+  raison: string;
+}) {
+  const { to, nom, raison } = params;
+  await envoyerEmail({
+    to,
+    subject: "Atlas Quality Partners — Votre candidature n'a pas été retenue",
+    html: `
+      <p>Bonjour ${nom},</p>
+      <p>Après examen de votre dossier, nous ne sommes pas en mesure de donner suite à votre candidature pour le moment.</p>
+      <p><strong>Motif :</strong> ${raison}</p>
+      <p>À bientôt,<br/>L'équipe Atlas Quality Partners</p>
+    `,
+  });
+}
+
+export async function envoyerEmailInformationsDemandees(params: {
+  to: string;
+  nom: string;
+  raison: string;
+}) {
+  const { to, nom, raison } = params;
+  const base = resoudreBaseUrl();
+  const lien = base ? `${base}/connexion?role=ingenieur` : null;
+  await envoyerEmail({
+    to,
+    subject: "Atlas Quality Partners — Informations complémentaires requises pour votre candidature",
+    html: `
+      <p>Bonjour ${nom},</p>
+      <p>Pour poursuivre l'examen de votre candidature, nous avons besoin d'informations complémentaires :</p>
+      <p><strong>${raison}</strong></p>
+      ${lien ? `<p>Connectez-vous à votre espace candidature pour les fournir : <a href="${lien}">${lien}</a></p>` : ""}
       <p>À bientôt,<br/>L'équipe Atlas Quality Partners</p>
     `,
   });
@@ -257,6 +309,210 @@ export async function envoyerEmailNouvelleEvaluation(params: {
       <p>Bonjour ${nom},</p>
       <p>Vous avez reçu une nouvelle évaluation client sur la mission <strong>${mission}</strong> : ${note}/5.</p>
       <p>Retrouvez le détail dans votre espace ingénieur, onglet Historique de mission avec Atlas.</p>
+      <p>À bientôt,<br/>L'équipe Atlas Quality Partners</p>
+    `,
+  });
+}
+
+// ATLAS CANDIDATE DECISION + INTERVIEW (11/10/2026) — voir
+// docs/architecture/CANDIDATE_DECISION_INTERVIEW_IMPLEMENTATION_CONTRACT.md
+// §10. Même discipline que le reste de ce fichier : best-effort (jamais
+// bloquant pour l'action métier appelante), lien absent si
+// EMAIL_APP_BASE_URL n'est pas configurée (fail-closed, jamais de repli
+// vers un domaine de démo). Confidentialité (§6/§17) : ces templates ne
+// révèlent JAMAIS l'identité (nom/prénom/email) d'un autre participant —
+// uniquement son rôle, jamais plus.
+function formaterDateHeureEntretien(dateHeure: Date, timezoneSaisie: string): string {
+  try {
+    return `${new Intl.DateTimeFormat("fr-FR", {
+      dateStyle: "full",
+      timeStyle: "short",
+      timeZone: timezoneSaisie,
+    }).format(dateHeure)} (${timezoneSaisie})`;
+  } catch {
+    return `${new Intl.DateTimeFormat("fr-FR", { dateStyle: "full", timeStyle: "short", timeZone: "UTC" }).format(dateHeure)} (UTC)`;
+  }
+}
+
+const LIBELLES_CANAL: Record<string, string> = {
+  VIDEO: "Visioconférence",
+  TELEPHONE: "Téléphone",
+  PRESENTIEL: "Présentiel",
+  AUTRE: "À préciser",
+};
+
+// Déclenchement : InterviewParticipant créé. Destinataire : ce participant
+// uniquement. Lien vers la page de réponse sans session (jeton signé,
+// pattern verifier-email, voir §15).
+export async function envoyerEmailInvitationEntretien(params: {
+  to: string;
+  token: string;
+  dateHeure: Date;
+  dureeMinutes: number;
+  canal: string;
+  lieu?: string | null;
+  objectif?: string | null;
+  timezoneSaisie: string;
+}) {
+  const { to, token, dateHeure, dureeMinutes, canal, lieu, objectif, timezoneSaisie } = params;
+  const base = resoudreBaseUrl();
+  if (!base) {
+    console.error("[email:configuration] EMAIL_APP_BASE_URL manquant ou vide — email d'invitation à un entretien non envoyé.");
+    return;
+  }
+  const lien = `${base}/entretiens/reponse?token=${encodeURIComponent(token)}`;
+  await envoyerEmail({
+    to,
+    subject: "Atlas Quality Partners — Invitation à un entretien",
+    html: `
+      <p>Bonjour,</p>
+      <p>Vous êtes invité(e) à un entretien :</p>
+      <ul>
+        <li><strong>Date :</strong> ${formaterDateHeureEntretien(dateHeure, timezoneSaisie)}</li>
+        <li><strong>Durée :</strong> ${dureeMinutes} minutes</li>
+        <li><strong>Canal :</strong> ${LIBELLES_CANAL[canal] ?? canal}</li>
+        ${lieu ? `<li><strong>Lieu :</strong> ${lieu}</li>` : ""}
+        ${objectif ? `<li><strong>Objectif :</strong> ${objectif}</li>` : ""}
+      </ul>
+      <p><a href="${lien}">Répondre à cette invitation</a></p>
+      <p>À bientôt,<br/>L'équipe Atlas Quality Partners</p>
+    `,
+  });
+}
+
+// Déclenchement : Interview.statut -> CONFIRME. Destinataires : tous les
+// participants.
+export async function envoyerEmailConfirmationEntretien(params: {
+  to: string;
+  dateHeure: Date;
+  dureeMinutes: number;
+  canal: string;
+  lieu?: string | null;
+  meetingUrl?: string | null;
+  timezoneSaisie: string;
+}) {
+  const { to, dateHeure, dureeMinutes, canal, lieu, meetingUrl, timezoneSaisie } = params;
+  await envoyerEmail({
+    to,
+    subject: "Atlas Quality Partners — Entretien confirmé",
+    html: `
+      <p>Bonjour,</p>
+      <p>L'entretien est confirmé par l'ensemble des participants requis :</p>
+      <ul>
+        <li><strong>Date :</strong> ${formaterDateHeureEntretien(dateHeure, timezoneSaisie)}</li>
+        <li><strong>Durée :</strong> ${dureeMinutes} minutes</li>
+        <li><strong>Canal :</strong> ${LIBELLES_CANAL[canal] ?? canal}</li>
+        ${lieu ? `<li><strong>Lieu :</strong> ${lieu}</li>` : ""}
+        ${meetingUrl ? `<li><strong>Lien de connexion :</strong> <a href="${meetingUrl}">${meetingUrl}</a></li>` : ""}
+      </ul>
+      <p>À bientôt,<br/>L'équipe Atlas Quality Partners</p>
+    `,
+  });
+}
+
+// Déclenchement : statutInvitation -> REFUSEE. Destinataire : Admin
+// organisateur (notification interne), jamais les autres participants.
+export async function envoyerEmailRefusEntretien(params: {
+  to: string;
+  participantRole: string;
+  dateHeure: Date;
+  timezoneSaisie: string;
+  messageReponse?: string | null;
+}) {
+  const { to, participantRole, dateHeure, timezoneSaisie, messageReponse } = params;
+  await envoyerEmail({
+    to,
+    subject: "Atlas Quality Partners — Un participant a refusé un entretien",
+    html: `
+      <p>Bonjour,</p>
+      <p>Un participant (rôle : <strong>${participantRole}</strong>) a refusé l'entretien prévu le
+      ${formaterDateHeureEntretien(dateHeure, timezoneSaisie)}.</p>
+      ${messageReponse ? `<p><strong>Message :</strong> ${messageReponse}</p>` : ""}
+      <p>Retrouvez le détail dans l'espace Admin.</p>
+      <p>À bientôt,<br/>L'équipe Atlas Quality Partners</p>
+    `,
+  });
+}
+
+// Déclenchement : rescheduling. Destinataires : tous les participants,
+// nouvelle date.
+export async function envoyerEmailModificationEntretien(params: {
+  to: string;
+  dateHeure: Date;
+  dureeMinutes: number;
+  canal: string;
+  lieu?: string | null;
+  timezoneSaisie: string;
+}) {
+  const { to, dateHeure, dureeMinutes, canal, lieu, timezoneSaisie } = params;
+  await envoyerEmail({
+    to,
+    subject: "Atlas Quality Partners — Entretien reprogrammé",
+    html: `
+      <p>Bonjour,</p>
+      <p>L'entretien a été reprogrammé :</p>
+      <ul>
+        <li><strong>Nouvelle date :</strong> ${formaterDateHeureEntretien(dateHeure, timezoneSaisie)}</li>
+        <li><strong>Durée :</strong> ${dureeMinutes} minutes</li>
+        <li><strong>Canal :</strong> ${LIBELLES_CANAL[canal] ?? canal}</li>
+        ${lieu ? `<li><strong>Lieu :</strong> ${lieu}</li>` : ""}
+      </ul>
+      <p>À bientôt,<br/>L'équipe Atlas Quality Partners</p>
+    `,
+  });
+}
+
+// Déclenchement : Interview.statut -> ANNULE. Destinataires : tous les
+// participants.
+export async function envoyerEmailAnnulationEntretien(params: {
+  to: string;
+  dateHeure: Date;
+  timezoneSaisie: string;
+  motifAnnulation?: string | null;
+}) {
+  const { to, dateHeure, timezoneSaisie, motifAnnulation } = params;
+  await envoyerEmail({
+    to,
+    subject: "Atlas Quality Partners — Entretien annulé",
+    html: `
+      <p>Bonjour,</p>
+      <p>L'entretien prévu le ${formaterDateHeureEntretien(dateHeure, timezoneSaisie)} a été annulé.</p>
+      ${motifAnnulation ? `<p><strong>Motif :</strong> ${motifAnnulation}</p>` : ""}
+      <p>À bientôt,<br/>L'équipe Atlas Quality Partners</p>
+    `,
+  });
+}
+
+// Déclenchement : InterviewReminder -> ENVOYE. Destinataire : le
+// participant concerné uniquement (lib/interview/reminders.ts, §12).
+// Retourne le succès réel de l'envoi (voir envoyerEmail ci-dessus) : seul
+// template de ce fichier dont le retour est exploité par l'appelant, pour
+// distinguer InterviewReminder.statutEnvoi = ENVOYE vs ECHEC (§12).
+export async function envoyerEmailRappelEntretien(params: {
+  to: string;
+  dateHeure: Date;
+  dureeMinutes: number;
+  canal: string;
+  lieu?: string | null;
+  meetingUrl?: string | null;
+  timezoneSaisie: string;
+  delaiAvantMinutes: number;
+}): Promise<boolean> {
+  const { to, dateHeure, dureeMinutes, canal, lieu, meetingUrl, timezoneSaisie, delaiAvantMinutes } = params;
+  const delaiLibelle = delaiAvantMinutes >= 60 ? `${Math.round(delaiAvantMinutes / 60)} heure(s)` : `${delaiAvantMinutes} minutes`;
+  return envoyerEmail({
+    to,
+    subject: `Atlas Quality Partners — Rappel : entretien dans ${delaiLibelle}`,
+    html: `
+      <p>Bonjour,</p>
+      <p>Rappel : vous avez un entretien dans ${delaiLibelle} :</p>
+      <ul>
+        <li><strong>Date :</strong> ${formaterDateHeureEntretien(dateHeure, timezoneSaisie)}</li>
+        <li><strong>Durée :</strong> ${dureeMinutes} minutes</li>
+        <li><strong>Canal :</strong> ${LIBELLES_CANAL[canal] ?? canal}</li>
+        ${lieu ? `<li><strong>Lieu :</strong> ${lieu}</li>` : ""}
+        ${meetingUrl ? `<li><strong>Lien de connexion :</strong> <a href="${meetingUrl}">${meetingUrl}</a></li>` : ""}
+      </ul>
       <p>À bientôt,<br/>L'équipe Atlas Quality Partners</p>
     `,
   });

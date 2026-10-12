@@ -271,6 +271,118 @@ export const missionSkillProposalDecisionSchema = z.object({
 // depuis le body au-delà de `missionId` lui-même — la Mission/le Client
 // réels restent systématiquement dérivés côté serveur par la route (jamais
 // par ce schéma), même discipline que missionSkillProposalSchema ci-dessus.
+// ATLAS CANDIDATE DECISION + INTERVIEW (11/10/2026) — schémas pour le
+// namespace app/api/client/talent-selection/ et l'extension Admin
+// app/api/talent/demandes/[id]/interviews. Même discipline que le reste de
+// ce fichier : chaque champ métier dérivé côté serveur (demandeTalentId,
+// candidateSelectionId du participant CANDIDAT, evaluateurRole...) n'est
+// jamais accepté depuis le body au-delà de ce que le schéma liste
+// explicitement ici.
+
+export const candidateSelectionCreationSchema = z.object({
+  shortlistEntreeId: z.string().trim().min(1, "shortlistEntreeId requis."),
+});
+
+const interviewParticipantInputSchema = z.object({
+  role: z.enum(["CANDIDAT", "CLIENT", "ADMIN_RECRUTEUR", "INTERVIEWEUR_INTERNE"]),
+  emailParticipant: z.string().trim().toLowerCase().email("emailParticipant invalide."),
+  profilId: z.string().trim().min(1).optional(),
+  fonctionDeclaree: z.string().trim().max(100).optional(),
+  estOrganisateur: z.boolean().optional(),
+  telephoneInterview: z.string().trim().max(50).optional(),
+});
+
+export const interviewCreationSchema = z.object({
+  candidateSelectionId: z.string().trim().min(1, "candidateSelectionId requis."),
+  canal: z.enum(["VIDEO", "TELEPHONE", "PRESENTIEL", "AUTRE"]),
+  dateHeure: z.string().datetime("dateHeure invalide."),
+  dureeMinutes: z.number().int().min(5, "dureeMinutes invalide.").max(480, "dureeMinutes invalide."),
+  timezoneSaisie: z.string().trim().min(1, "timezoneSaisie requis.").max(100),
+  lieu: z.string().trim().max(300).optional(),
+  objectif: z.string().trim().max(500).optional(),
+  participants: z.array(interviewParticipantInputSchema).min(1).max(20),
+});
+
+export const interviewPatchSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("reschedule"),
+    dateHeure: z.string().datetime("dateHeure invalide.").optional(),
+    dureeMinutes: z.number().int().min(5).max(480).optional(),
+    canal: z.enum(["VIDEO", "TELEPHONE", "PRESENTIEL", "AUTRE"]).optional(),
+    lieu: z.string().trim().max(300).optional(),
+  }),
+  z.object({
+    action: z.literal("cancel"),
+    motifAnnulation: z.string().trim().max(500).optional(),
+  }),
+]);
+
+export const interviewParticipantReponseSchema = z.object({
+  reponse: z.enum(["ACCEPTEE", "REFUSEE"]),
+  messageReponse: z.string().trim().max(500).optional(),
+});
+
+const critereEvaluationSchema = z.object({
+  critere: z.string().trim().min(1).max(100),
+  observation: z.string().trim().min(1).max(1000),
+  appreciation: z.enum(["POSITIF", "NEUTRE", "NEGATIF"]),
+});
+
+export const interviewEvaluationSchema = z.object({
+  criteres: z.array(critereEvaluationSchema).min(1).max(20),
+  observations: z.string().trim().max(1000).optional(),
+  recommandation: z.enum(["RECOMMANDE", "RECOMMANDE_AVEC_RESERVES", "NON_RECOMMANDE"]),
+  commentairesLibres: z.string().trim().max(2000).optional(),
+  supersedesId: z.string().trim().min(1).optional(),
+});
+
+const candidateFinalDecisionEntreeSchema = z.object({
+  candidateSelectionId: z.string().trim().min(1),
+  statut: z.enum(["RETENU", "NON_RETENU"]),
+  justification: z.string().trim().max(1000).optional(),
+});
+
+export const candidateFinalDecisionSchema = z.object({
+  entrees: z.array(candidateFinalDecisionEntreeSchema).min(1).max(50),
+  communiqueParClientHorsSysteme: z.boolean().optional(),
+  canalHorsSysteme: z.string().trim().max(200).optional(),
+});
+
+// ATLAS CANDIDATE PROPOSAL (A35.8) — voir
+// docs/architecture/CANDIDATE_PROPOSAL_IMPLEMENTATION_CONTRACT.md §10.
+export const candidateProposalCreationSchema = z.object({
+  candidateFinalDecisionEntreeId: z.string().trim().min(1, "candidateFinalDecisionEntreeId requis."),
+  supersedesId: z.string().trim().min(1).optional(),
+});
+
+// Devises reconnues — même liste que DEVISES_ACCEPTEES
+// (app/api/missions/route.ts), dupliquée volontairement : pas de module
+// partagé existant pour cette liste, pas une nouvelle convention.
+export const CANDIDATE_PROPOSAL_DEVISES_ACCEPTEES = ["EUR", "USD", "GBP", "CHF", "MAD", "TND", "DZD", "AED", "SAR", "QAR", "CAD"];
+
+export const candidateProposalEmissionSchema = z.object({
+  tjmPropose: z.number({ invalid_type_error: "tjmPropose invalide." }).positive("tjmPropose doit être strictement positif."),
+  devise: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .refine((v) => CANDIDATE_PROPOSAL_DEVISES_ACCEPTEES.includes(v), "Devise non reconnue."),
+  dureeJours: z
+    .number({ invalid_type_error: "dureeJours invalide." })
+    .int("dureeJours doit être un entier.")
+    .positive("dureeJours doit être strictement positif."),
+  dateDebutEnvisagee: z.coerce.date().optional(),
+  dateValidite: z.coerce.date().optional(),
+});
+
+export const candidateProposalDecisionHorsSystemeSchema = z.object({
+  reponse: z.enum(["ACCEPTEE", "REFUSEE"]),
+  communiqueParClientHorsSysteme: z.literal(true, {
+    errorMap: () => ({ message: "communiqueParClientHorsSysteme doit être true." }),
+  }),
+  canalHorsSysteme: z.string().trim().min(1, "canalHorsSysteme requis.").max(200),
+});
+
 export const evaluationSchema = z.object({
   missionId: z.string().trim().min(1, "missionId requis."),
   note: z.preprocess(
