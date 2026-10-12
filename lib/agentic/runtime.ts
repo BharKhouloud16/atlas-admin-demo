@@ -3,6 +3,7 @@ import type {
   AgenticRunStatut,
   AgenticStopReason,
   AgenticLoopType,
+  AgenticStepType,
   ActionClass,
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -148,6 +149,27 @@ const REGISTRE_LOOPS: Record<AgenticLoopType, { version: number }> = {
   FOUNDATION: { version: 1 },
   LEARNING: { version: 1 },
 };
+
+// A35.9-FIX (contrat A35 F1) : le vrai stepType (AgenticStepType, contrat
+// A31 §8) dépend du loopType ET de l'index du Step réservé — jamais une
+// valeur unique arbitraire. FOUNDATION (une seule forme de Step, contrat
+// A32 §18 : observe PUIS propose une action classée ActionClass) reste
+// TOUJOURS PROPOSE_AND_ACT, exactement le comportement déjà en place —
+// zéro changement pour FOUNDATION. LEARNING (contrat A34 §21) a deux
+// Steps à la sémantique distincte, déjà câblée ainsi dans
+// lib/agentic/tools.ts::LEARNING_LOOP_STEP (`step.stepIndex === 1` ->
+// executerObservation, sinon -> executerPropositionEtAction) : Step 1 =
+// OBSERVE_ONLY (ne lit que le contexte, ne propose rien), Step 2 =
+// PROPOSE_AND_ACT. Reste un simple mapping code-first au même registre
+// que REGISTRE_LOOPS ci-dessus — jamais une nouvelle table/abstraction,
+// jamais une déduction dynamique depuis le Tool (le Runtime ne doit
+// jamais appeler un Tool pour savoir quoi persister sur le Step lui-même).
+function determinerStepType(loopType: AgenticLoopType, stepIndex: number): AgenticStepType {
+  if (loopType === "LEARNING") {
+    return stepIndex === 1 ? "OBSERVE_ONLY" : "PROPOSE_AND_ACT";
+  }
+  return "PROPOSE_AND_ACT";
+}
 
 // Plafond serveur ABSOLU — même sous une valeur cliente "raisonnable", le
 // Runtime n'accepte jamais plus (contrat A32 §10 : "défini côté serveur").
@@ -389,13 +411,14 @@ async function reserverProchaineStep(runId: string): Promise<{ stepIndex: number
   for (let tentative = 0; tentative < MAX_TENTATIVES; tentative++) {
     try {
       return await prisma.$transaction(async (tx) => {
-        const run = await tx.agenticRun.findUnique({ where: { id: runId }, select: { statut: true, iterationCount: true, maxIterations: true } });
+        const run = await tx.agenticRun.findUnique({ where: { id: runId }, select: { statut: true, iterationCount: true, maxIterations: true, loopType: true } });
         if (!run || run.statut !== "RUNNING") return null;
         if (run.iterationCount >= run.maxIterations) return null;
 
         const stepIndex = run.iterationCount + 1;
+        const stepType = determinerStepType(run.loopType, stepIndex);
         const step = await tx.agenticStep.create({
-          data: { runId, stepIndex, stepType: "PROPOSE_AND_ACT", observation: "", statut: "PENDING" },
+          data: { runId, stepIndex, stepType, observation: "", statut: "PENDING" },
         });
         await tx.agenticRun.update({ where: { id: runId }, data: { iterationCount: stepIndex } });
         return { stepIndex, stepId: step.id };

@@ -644,3 +644,29 @@ test.describe("A32 — Audit", () => {
     expect(entrees.every((e) => e.correlationId === corps.correlationId)).toBe(true);
   });
 });
+
+// COMPANY ATLAS — A35.9-FIX (contrat A35 F1). FOUNDATION (une seule forme
+// de Step, contrat A32 §18) doit rester TOUJOURS PROPOSE_AND_ACT — zéro
+// changement de comportement pour ce loop — seul LEARNING (lib/learning-
+// loop, A34) introduit une distinction OBSERVE_ONLY/PROPOSE_AND_ACT (voir
+// tests/api/a34-learning-loop.spec.ts, "A35 F1").
+test.describe("A32 — F1 (AgenticStep.stepType, contrat A35)", () => {
+  test("réservation d'un Step FOUNDATION -> DB contient stepType=PROPOSE_AND_ACT (comportement inchangé)", async ({ request }) => {
+    const corps = await creerRunViaApi(request);
+    await connecter(request, "admin-demo@example.com");
+    await startRun(request, corps.id);
+
+    const step = await prisma.agenticStep.findFirstOrThrow({ where: { runId: corps.id, stepIndex: 1 } });
+    expect(step.stepType).toBe("PROPOSE_AND_ACT");
+  });
+
+  test("GET steps expose le stepType FOUNDATION réellement persisté", async ({ request }) => {
+    const corps = await creerRunViaApi(request);
+    await connecter(request, "admin-demo@example.com");
+    await startRun(request, corps.id);
+
+    const steps = (await (await getSteps(request, corps.id)).json()).steps;
+    expect(steps).toHaveLength(1);
+    expect(steps[0].stepType).toBe("PROPOSE_AND_ACT");
+  });
+});
