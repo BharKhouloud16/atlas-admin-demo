@@ -191,7 +191,9 @@ async function amenerMissionATerminee(request: APIRequestContext, missionId: str
 }
 
 test.describe("A28 — Chaîne canonique (Need -> Mission -> ... -> Outcome)", () => {
-  test("1-11. la chaîne complète Need V1 -> Decision D1 -> Mission M1 -> MA1 -> MC1 -> W1 -> WA1 -> DL1 -> DV1 -> E1 -> Q1 -> O1 fonctionne de bout en bout", async ({ request }) => {
+  test("1-11. la chaîne complète Need V1 -> Decision D1 -> Mission M1 -> MA1 -> MC1 -> W1 -> WA1 -> DL1 -> DV1 -> E1 -> Q1 -> O1 fonctionne de bout en bout", async () => {
+    let request = await connecter("ADMIN");
+
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
 
@@ -332,7 +334,9 @@ test.describe("A28 — Versioning (Need V1/V2, Deliverable V1/V2, historique)", 
     expect(missionRechargee?.needVersionId).not.toBe(needV2Id);
   });
 
-  test("14. Deliverable V1/V2 : DV2 supersède DV1, DV1 reste immuable", async ({ request }) => {
+  test("14. Deliverable V1/V2 : DV2 supersède DV1, DV1 reste immuable", async () => {
+    let request = await connecter("ADMIN");
+
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const mission = await creerMissionViaApi(request, { clientId: client.id, profilId });
@@ -351,7 +355,9 @@ test.describe("A28 — Versioning (Need V1/V2, Deliverable V1/V2, historique)", 
     expect(dv1Rechargee?.statut).toBe("DRAFT");
   });
 
-  test("15. Evidence historique : E1 (sur DV1) reste inchangée après création d'une DV2 et d'une E2 indépendante", async ({ request }) => {
+  test("15. Evidence historique : E1 (sur DV1) reste inchangée après création d'une DV2 et d'une E2 indépendante", async () => {
+    let request = await connecter("ADMIN");
+
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const mission = await creerMissionViaApi(request, { clientId: client.id, profilId });
@@ -374,7 +380,9 @@ test.describe("A28 — Versioning (Need V1/V2, Deliverable V1/V2, historique)", 
     expect(e2.deliverableVersionId).toBe(dv2.id);
   });
 
-  test("16. Quality historique : Q1 (sur DV1/E1) n'est jamais déplacée vers DV2/E2", async ({ request }) => {
+  test("16. Quality historique : Q1 (sur DV1/E1) n'est jamais déplacée vers DV2/E2", async () => {
+    let request = await connecter("ADMIN");
+
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const mission = await creerMissionViaApi(request, { clientId: client.id, profilId });
@@ -406,7 +414,9 @@ test.describe("A28 — Versioning (Need V1/V2, Deliverable V1/V2, historique)", 
     expect(q1Rechargee?.deliverableVersionId).not.toBe(dv2.id);
   });
 
-  test("17. Outcome historique : plusieurs OutcomeAssessment successifs restent chaînés (supersedesId), aucun réécrit", async ({ request }) => {
+  test("17. Outcome historique : plusieurs OutcomeAssessment successifs restent chaînés (supersedesId), aucun réécrit", async () => {
+    let request = await connecter("ADMIN");
+
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const needV1 = await creerNeedAvecFaits(client.id, [{ cle: "CRITERE_REUSSITE", valeur: "Critère" }]);
@@ -435,7 +445,9 @@ test.describe("A28 — Isolation (Quality/Evidence/Outcome strictement indépend
     return { mission, dl1, dv1, e1 };
   }
 
-  test("18/19. Quality (création + finalisation) ne modifie jamais Deliverable/DeliverableVersion ni Evidence", async ({ request }) => {
+  test("18/19. Quality (création + finalisation) ne modifie jamais Deliverable/DeliverableVersion ni Evidence", async () => {
+    let request = await connecter("ADMIN");
+
     const { mission, dv1, e1 } = await creerChaineMinimale(request);
     const dvAvant = await prisma.deliverableVersion.findUnique({ where: { id: dv1.id } });
     const eAvant = await prisma.deliveryEvidence.findUnique({ where: { id: e1.id } });
@@ -450,7 +462,9 @@ test.describe("A28 — Isolation (Quality/Evidence/Outcome strictement indépend
     expect(eApres).toEqual(eAvant);
   });
 
-  test("20/21. Quality ne modifie jamais Outcome, Outcome ne modifie jamais Quality", async ({ request }) => {
+  test("20/21. Quality ne modifie jamais Outcome, Outcome ne modifie jamais Quality", async () => {
+    let request = await connecter("ADMIN");
+
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const needV1 = await creerNeedAvecFaits(client.id, [{ cle: "CRITERE_REUSSITE", valeur: "Critère" }]);
@@ -469,7 +483,9 @@ test.describe("A28 — Isolation (Quality/Evidence/Outcome strictement indépend
     expect(q1Rechargee?.statut).toBe("FINALIZED");
   });
 
-  test("22. Evidence ne modifie jamais Quality", async ({ request }) => {
+  test("22. Evidence ne modifie jamais Quality", async () => {
+    let request = await connecter("ADMIN");
+
     const { mission, dl1, dv1 } = await creerChaineMinimale(request);
     const q1 = await (await postQuality(request, mission.id, { deliverableVersionId: dv1.id, criteresEvalues: "x", resultat: "PASS" })).json();
 
@@ -498,7 +514,9 @@ test.describe("A28 — Outcome (combinaisons, pin Need)", () => {
     return { mission, dl1, needV1, faitCritere: needV1.faits[0] };
   }
 
-  test("23. Quality PASS + Outcome NOT_DETERMINABLE (INDETERMINABLE) coexistent sans contrainte", async ({ request }) => {
+  test("23. Quality PASS + Outcome NOT_DETERMINABLE (INDETERMINABLE) coexistent sans contrainte", async () => {
+    let request = await connecter("ADMIN");
+
     const { mission, dl1, faitCritere } = await creerMissionTermineeAvecCritere(request);
     const q1 = await (await postQuality(request, mission.id, { deliverableVersionId: dl1.versions[0].id, criteresEvalues: "x", resultat: "PASS" })).json();
     expect(q1.resultat).toBe("PASS");
@@ -507,7 +525,9 @@ test.describe("A28 — Outcome (combinaisons, pin Need)", () => {
     expect(outcome.overallStatus).toBe("INDETERMINABLE");
   });
 
-  test("24. Quality FAIL + Outcome ACHIEVED (OBTENU) coexistent sans contrainte", async ({ request }) => {
+  test("24. Quality FAIL + Outcome ACHIEVED (OBTENU) coexistent sans contrainte", async () => {
+    let request = await connecter("ADMIN");
+
     const { mission, dl1, faitCritere } = await creerMissionTermineeAvecCritere(request);
     const q1 = await (await postQuality(request, mission.id, { deliverableVersionId: dl1.versions[0].id, criteresEvalues: "x", resultat: "FAIL" })).json();
     expect(q1.resultat).toBe("FAIL");
@@ -516,7 +536,9 @@ test.describe("A28 — Outcome (combinaisons, pin Need)", () => {
     expect(outcome.overallStatus).toBe("OBTENU");
   });
 
-  test("25. Outcome utilise Mission.needVersionId comme source primaire, jamais sourceDemande.sourceNeed quand le pin direct existe", async ({ request }) => {
+  test("25. Outcome utilise Mission.needVersionId comme source primaire, jamais sourceDemande.sourceNeed quand le pin direct existe", async () => {
+    let request = await connecter("ADMIN");
+
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const needDirect = await creerNeedAvecFaits(client.id, [{ cle: "CRITERE_REUSSITE", valeur: "Critère direct" }]);
@@ -576,19 +598,25 @@ test.describe("A28 — Lifecycle (TERMINEE/ANNULEE : freeze du travail, jamais d
     return { mission, dl1 };
   }
 
-  test("26. Mission TERMINEE : Evidence toujours créable", async ({ request }) => {
+  test("26. Mission TERMINEE : Evidence toujours créable", async () => {
+    let request = await connecter("ADMIN");
+
     const { mission, dl1 } = await creerMissionAvecDeliverable(request, "TERMINEE");
     const reponse = await postEvidenceVersion(request, mission.id, dl1.id, dl1.versions[0].id, { methode: "VALIDATION_ADMIN", contenu: "Preuve post-clôture." });
     expect(reponse.status(), await reponse.text()).toBe(201);
   });
 
-  test("27. Mission TERMINEE : Quality toujours créable", async ({ request }) => {
+  test("27. Mission TERMINEE : Quality toujours créable", async () => {
+    let request = await connecter("ADMIN");
+
     const { mission, dl1 } = await creerMissionAvecDeliverable(request, "TERMINEE");
     const reponse = await postQuality(request, mission.id, { deliverableVersionId: dl1.versions[0].id, criteresEvalues: "x", resultat: "PASS" });
     expect(reponse.status(), await reponse.text()).toBe(201);
   });
 
-  test("28. Mission TERMINEE : Outcome toujours créable, aucune réouverture, aucun nouveau WorkItem/Deliverable/WorkItemAssignment", async ({ request }) => {
+  test("28. Mission TERMINEE : Outcome toujours créable, aucune réouverture, aucun nouveau WorkItem/Deliverable/WorkItemAssignment", async () => {
+    let request = await connecter("ADMIN");
+
     const { mission } = await creerMissionAvecDeliverable(request, "TERMINEE");
 
     const outcome = await postOutcome(request, mission.id, { verdicts: [] });
@@ -603,19 +631,25 @@ test.describe("A28 — Lifecycle (TERMINEE/ANNULEE : freeze du travail, jamais d
     expect(nouveauDeliverable.status()).toBe(409);
   });
 
-  test("29. Mission ANNULEE : Evidence toujours créable", async ({ request }) => {
+  test("29. Mission ANNULEE : Evidence toujours créable", async () => {
+    let request = await connecter("ADMIN");
+
     const { mission, dl1 } = await creerMissionAvecDeliverable(request, "ANNULEE");
     const reponse = await postEvidenceVersion(request, mission.id, dl1.id, dl1.versions[0].id, { methode: "VALIDATION_ADMIN", contenu: "Preuve post-annulation." });
     expect(reponse.status(), await reponse.text()).toBe(201);
   });
 
-  test("30. Mission ANNULEE : Quality toujours créable", async ({ request }) => {
+  test("30. Mission ANNULEE : Quality toujours créable", async () => {
+    let request = await connecter("ADMIN");
+
     const { mission, dl1 } = await creerMissionAvecDeliverable(request, "ANNULEE");
     const reponse = await postQuality(request, mission.id, { deliverableVersionId: dl1.versions[0].id, criteresEvalues: "x", resultat: "NOT_DETERMINABLE" });
     expect(reponse.status(), await reponse.text()).toBe(201);
   });
 
-  test("31. Mission ANNULEE : Outcome toujours créable, aucune réouverture", async ({ request }) => {
+  test("31. Mission ANNULEE : Outcome toujours créable, aucune réouverture", async () => {
+    let request = await connecter("ADMIN");
+
     const { mission } = await creerMissionAvecDeliverable(request, "ANNULEE");
     const outcome = await postOutcome(request, mission.id, { verdicts: [] });
     // A6.1 impose Mission.statut === TERMINEE pour créer un Outcome —
@@ -628,7 +662,9 @@ test.describe("A28 — Lifecycle (TERMINEE/ANNULEE : freeze du travail, jamais d
 });
 
 test.describe("A28 — Cross-context (Mission/Need/Deliverable étrangers)", () => {
-  test("32. M1 -> Evidence(M2) refusée ; aucune chaîne M1 -> Evidence(M2) -> Quality(M1) ne peut jamais se former", async ({ request }) => {
+  test("32. M1 -> Evidence(M2) refusée ; aucune chaîne M1 -> Evidence(M2) -> Quality(M1) ne peut jamais se former", async () => {
+    let request = await connecter("ADMIN");
+
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const missionA = await creerMissionViaApi(request, { clientId: client.id, profilId });
@@ -666,7 +702,9 @@ test.describe("A28 — Cross-context (Mission/Need/Deliverable étrangers)", () 
     expect(lien.status()).toBe(409);
   });
 
-  test("34. Deliverable V1/V2 sur des Mission distinctes : une Quality créée sur DV(missionA) reste résolue sur missionA, jamais confondue avec une DV(missionB) homonyme", async ({ request }) => {
+  test("34. Deliverable V1/V2 sur des Mission distinctes : une Quality créée sur DV(missionA) reste résolue sur missionA, jamais confondue avec une DV(missionB) homonyme", async () => {
+    let request = await connecter("ADMIN");
+
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const missionA = await creerMissionViaApi(request, { clientId: client.id, profilId });
@@ -686,7 +724,9 @@ test.describe("A28 — Cross-context (Mission/Need/Deliverable étrangers)", () 
 });
 
 test.describe("A28 — RBAC cross-engine", () => {
-  test("35. INGENIEUR : peut préparer une DRAFT Quality et créer un Deliverable sur sa Mission, mais ne peut ni finaliser Quality, ni créer une Assignment/CapabilityLink/Outcome", async ({ request }) => {
+  test("35. INGENIEUR : peut préparer une DRAFT Quality et créer un Deliverable sur sa Mission, mais ne peut ni finaliser Quality, ni créer une Assignment/CapabilityLink/Outcome", async () => {
+    let request = await connecter("ADMIN");
+
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const mission = await creerMissionViaApi(request, { clientId: client.id, profilId });
@@ -710,7 +750,9 @@ test.describe("A28 — RBAC cross-engine", () => {
     expect(outcome.status()).toBe(403);
   });
 
-  test("36. CLIENT : lecture uniquement — ne peut finaliser Quality, modifier Outcome, modifier Mission, créer Capability ou Assignment", async ({ request }) => {
+  test("36. CLIENT : lecture uniquement — ne peut finaliser Quality, modifier Outcome, modifier Mission, créer Capability ou Assignment", async () => {
+    let request = await connecter("ADMIN");
+
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const mission = await creerMissionViaApi(request, { clientId: client.id, profilId });
@@ -789,7 +831,9 @@ test.describe("A28 — Immutabilité cross-engine", () => {
     expect(lienRecharge?.capability).toBe("Rust intermédiaire");
   });
 
-  test("40. DeliverableVersion : titre/natureContenu restent inchangés après création d'Evidence/Quality dessus", async ({ request }) => {
+  test("40. DeliverableVersion : titre/natureContenu restent inchangés après création d'Evidence/Quality dessus", async () => {
+    let request = await connecter("ADMIN");
+
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const mission = await creerMissionViaApi(request, { clientId: client.id, profilId });
@@ -804,7 +848,9 @@ test.describe("A28 — Immutabilité cross-engine", () => {
     expect(dv1Rechargee?.natureContenu).toBe(dv1.natureContenu);
   });
 
-  test("41. Evidence (contenu/confiance) reste inchangée après liaison et finalisation d'une Quality", async ({ request }) => {
+  test("41. Evidence (contenu/confiance) reste inchangée après liaison et finalisation d'une Quality", async () => {
+    let request = await connecter("ADMIN");
+
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const mission = await creerMissionViaApi(request, { clientId: client.id, profilId });
@@ -821,7 +867,9 @@ test.describe("A28 — Immutabilité cross-engine", () => {
     expect(e1Rechargee?.confiance).toBe("VERIFIE");
   });
 
-  test("42. Quality acceptanceCriteriaSnapshot reste figé après mutation de Deliverable.acceptanceCriteria, même une fois la Quality FINALIZED", async ({ request }) => {
+  test("42. Quality acceptanceCriteriaSnapshot reste figé après mutation de Deliverable.acceptanceCriteria, même une fois la Quality FINALIZED", async () => {
+    let request = await connecter("ADMIN");
+
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const mission = await creerMissionViaApi(request, { clientId: client.id, profilId });
@@ -835,7 +883,9 @@ test.describe("A28 — Immutabilité cross-engine", () => {
     expect(q1Rechargee?.acceptanceCriteriaSnapshot).toBe("Critère initial.");
   });
 
-  test("43. Outcome Need pin (needVersionId) reste figé sur la version exacte évaluée même si cette version n'est plus la version courante", async ({ request }) => {
+  test("43. Outcome Need pin (needVersionId) reste figé sur la version exacte évaluée même si cette version n'est plus la version courante", async () => {
+    let request = await connecter("ADMIN");
+
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const needV1 = await creerNeedAvecFaits(client.id, [{ cle: "CRITERE_REUSSITE", valeur: "Critère V1" }]);

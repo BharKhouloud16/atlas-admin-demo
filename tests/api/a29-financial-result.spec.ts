@@ -340,7 +340,9 @@ test.describe("A29 — Lifecycle", () => {
     expect(corps.statut).toBe("DRAFT");
   });
 
-  test("29. Mission TERMINEE : création et finalisation autorisées", async ({ request }) => {
+  test("29. Mission TERMINEE : création et finalisation autorisées", async () => {
+    let request = await connecter("ADMIN");
+
     const mission = await creerMission(StatutMission.TERMINEE);
     const corps = await creerResultatViaApi(request, mission.id);
     const finalisation = await patchFinancialResult(request, mission.id, corps.id, { action: "finaliser" });
@@ -412,14 +414,18 @@ test.describe("A29 — Independence (Outcome/Quality)", () => {
 });
 
 test.describe("A29 — Immutabilité", () => {
-  test("35. finalisation DRAFT -> FINALIZED -> 200", async ({ request }) => {
+  test("35. finalisation DRAFT -> FINALIZED -> 200", async () => {
+    let request = await connecter("ADMIN");
+
     const mission = await creerMission();
     const corps = await creerResultatViaApi(request, mission.id);
     const finalisation = await patchFinancialResult(request, mission.id, corps.id, { action: "finaliser" });
     expect(finalisation.status(), await finalisation.text()).toBe(200);
   });
 
-  test("36. mutation après finalisation refusée (409), contenu inchangé", async ({ request }) => {
+  test("36. mutation après finalisation refusée (409), contenu inchangé", async () => {
+    let request = await connecter("ADMIN");
+
     const mission = await creerMission();
     const corps = await creerResultatViaApi(request, mission.id, { revenueAmount: 16000, costAmount: 11200 });
     await patchFinancialResult(request, mission.id, corps.id, { action: "finaliser" });
@@ -431,7 +437,9 @@ test.describe("A29 — Immutabilité", () => {
     expect(rechargee?.costAmount?.toNumber()).toBe(11200);
   });
 
-  test("37. correction historique : nouvelle ligne supersède l'ancienne, jamais une réécriture", async ({ request }) => {
+  test("37. correction historique : nouvelle ligne supersède l'ancienne, jamais une réécriture", async () => {
+    let request = await connecter("ADMIN");
+
     const mission = await creerMission();
     const corps1 = await creerResultatViaApi(request, mission.id, { revenueAmount: 16000, costAmount: 11200 });
     await patchFinancialResult(request, mission.id, corps1.id, { action: "finaliser" });
@@ -446,7 +454,9 @@ test.describe("A29 — Immutabilité", () => {
 });
 
 test.describe("A29 — RBAC", () => {
-  test("38. ADMIN : création, lecture, finalisation -> OK", async ({ request }) => {
+  test("38. ADMIN : création, lecture, finalisation -> OK", async () => {
+    let request = await connecter("ADMIN");
+
     const mission = await creerMission();
     const corps = await creerResultatViaApi(request, mission.id);
     const lecture = await getFinancialResult(request, mission.id, corps.id);
@@ -477,7 +487,9 @@ test.describe("A29 — RBAC", () => {
 });
 
 test.describe("A29 — IDOR", () => {
-  test("41. FinancialResult d'une autre Mission -> 404", async ({ request }) => {
+  test("41. FinancialResult d'une autre Mission -> 404", async () => {
+    let request = await connecter("ADMIN");
+
     const missionA = await creerMission();
     const missionB = await creerMission();
     const corpsB = await creerResultatViaApi(request, missionB.id);
@@ -504,7 +516,9 @@ test.describe("A29 — IDOR", () => {
 });
 
 test.describe("A29 — Concurrence", () => {
-  test("43. double finalisation simultanée -> une seule gagne, jamais un état impossible", async ({ request }) => {
+  test("43. double finalisation simultanée -> une seule gagne, jamais un état impossible", async () => {
+    let request = await connecter("ADMIN");
+
     const mission = await creerMission();
     const corps = await creerResultatViaApi(request, mission.id);
 
@@ -544,7 +558,9 @@ test.describe("A29 — Journalisation", () => {
     expect(entree!.detail).toContain(corps.id);
   });
 
-  test("finalisation -> journal financial_result.finalized", async ({ request }) => {
+  test("finalisation -> journal financial_result.finalized", async () => {
+    let request = await connecter("ADMIN");
+
     const mission = await creerMission();
     const corps = await creerResultatViaApi(request, mission.id);
     await patchFinancialResult(request, mission.id, corps.id, { action: "finaliser" });
