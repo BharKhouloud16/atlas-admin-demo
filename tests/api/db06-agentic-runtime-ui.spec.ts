@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 
 // COMPANY ATLAS — DB-06 : Agentic Runtime UI (08/10/2026).
@@ -12,9 +13,22 @@ import { prisma } from "@/lib/prisma";
 // réimplémentation de tests/api/a32-agentic-runtime.spec.ts (déjà
 // exhaustif sur le moteur lui-même, non modifié).
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Réutilise la session déjà authentifiée une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test — élimine la contribution de ce fichier à
+// l'épuisement du rate-limit de connexion partagé par IP en CI
+// (lib/rate-limit.ts), sans changer le rôle/contexte testé.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function idAgent(request: APIRequestContext, nom: string): Promise<string> {
@@ -56,8 +70,8 @@ async function payloadValide(request: APIRequestContext, overrides: Record<strin
 }
 
 async function creerRunViaApi(request: APIRequestContext, overrides: Record<string, unknown> = {}) {
-  await connecter(request, "admin-demo@example.com");
-  const reponse = await postRun(request, await payloadValide(request, overrides));
+  const admin = await connecter("ADMIN");
+  const reponse = await postRun(admin, await payloadValide(admin, overrides));
   expect(reponse.status(), await reponse.text()).toBe(201);
   return reponse.json();
 }
@@ -86,9 +100,9 @@ async function creerMissionAssigneeIngenieur() {
 }
 
 test.describe("DB-06 — Accès / RBAC", () => {
-  test("1. ADMIN peut consulter la liste et le détail d'un Run", async ({ request }) => {
+  test("1. ADMIN peut consulter la liste et le détail d'un Run", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     const liste = await request.get("/api/agentic-runs");
     expect(liste.status(), await liste.text()).toBe(200);
     const { runs } = await liste.json();
@@ -98,40 +112,40 @@ test.describe("DB-06 — Accès / RBAC", () => {
     expect(detail.status()).toBe(200);
   });
 
-  test("2. INGENIEUR interdit (liste et détail)", async ({ request }) => {
+  test("2. INGENIEUR interdit (liste et détail)", async () => {
+    let request = await connecter("INGENIEUR");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "ingenieur-demo@example.com");
     expect((await request.get("/api/agentic-runs")).status()).toBe(403);
     expect((await getRun(request, corps.id)).status()).toBe(403);
     expect((await getSteps(request, corps.id)).status()).toBe(403);
   });
 
-  test("3. CLIENT interdit (liste et détail)", async ({ request }) => {
+  test("3. CLIENT interdit (liste et détail)", async () => {
+    let request = await connecter("CLIENT");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "client-demo@example.com");
     expect((await request.get("/api/agentic-runs")).status()).toBe(403);
     expect((await getRun(request, corps.id)).status()).toBe(403);
   });
 
-  test("4. accès cross-tenant interdit : un INGENIEUR légitimement affecté à la Mission du Run reste sans accès (le Runtime ne dérive jamais son RBAC d'une affectation Mission)", async ({ request }) => {
+  test("4. accès cross-tenant interdit : un INGENIEUR légitimement affecté à la Mission du Run reste sans accès (le Runtime ne dérive jamais son RBAC d'une affectation Mission)", async () => {
     const mission = await creerMissionAssigneeIngenieur();
+    let request = await connecter("INGENIEUR");
     const corps = await creerRunViaApi(request, { missionId: mission.id });
-    await connecter(request, "ingenieur-demo@example.com");
     expect((await getRun(request, corps.id)).status()).toBe(403);
     expect((await getSteps(request, corps.id)).status()).toBe(403);
   });
 
-  test("5. Run inexistant -> 404 (convention existante, inchangée)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("5. Run inexistant -> 404 (convention existante, inchangée)", async () => {
+    let request = await connecter("ADMIN");
     expect((await getRun(request, "inexistant-cuid")).status()).toBe(404);
     expect((await getSteps(request, "inexistant-cuid")).status()).toBe(404);
   });
 });
 
 test.describe("DB-06 — Runs (liste / détail / contexte)", () => {
-  test("6. liste des Runs retournée par GET /api/agentic-runs (seul ajout backend de ce lot)", async ({ request }) => {
+  test("6. liste des Runs retournée par GET /api/agentic-runs (seul ajout backend de ce lot)", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     const reponse = await request.get("/api/agentic-runs");
     expect(reponse.status(), await reponse.text()).toBe(200);
     const { runs } = await reponse.json();
@@ -139,18 +153,18 @@ test.describe("DB-06 — Runs (liste / détail / contexte)", () => {
     expect(runs.find((r: { id: string }) => r.id === corps.id)).toBeTruthy();
   });
 
-  test("7. détail Run — champs d'identité exacts", async ({ request }) => {
+  test("7. détail Run — champs d'identité exacts", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     const run = await (await getRun(request, corps.id)).json();
     expect(run.id).toBe(corps.id);
     expect(run.createdByEmail).toBe("admin-demo@example.com");
     expect(run.createdByRole).toBe("ADMIN");
   });
 
-  test("8. statut affiché correctement — valeurs réelles du backend uniquement", async ({ request }) => {
+  test("8. statut affiché correctement — valeurs réelles du backend uniquement", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     const run = await (await getRun(request, corps.id)).json();
     expect(run.statut).toBe("DRAFT");
 
@@ -161,39 +175,39 @@ test.describe("DB-06 — Runs (liste / détail / contexte)", () => {
     expect(demarre.statut).toBe("RUNNING");
   });
 
-  test("9. contexte Mission affiché — missionId exact, jamais recalculé", async ({ request }) => {
+  test("9. contexte Mission affiché — missionId exact, jamais recalculé", async () => {
     const mission = await creerMissionAssigneeIngenieur();
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { missionId: mission.id });
-    await connecter(request, "admin-demo@example.com");
     const run = await (await getRun(request, corps.id)).json();
     expect(run.missionId).toBe(mission.id);
   });
 
-  test("10. needVersionId exact — jamais une substitution par le Need courant", async ({ request }) => {
+  test("10. needVersionId exact — jamais une substitution par le Need courant", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const need = await prisma.clientNeed.create({ data: { clientId: client!.id, correlationId: `db06-${Date.now()}`, texteOriginal: "Besoin DB06" } });
     const profilId = await profilIngenieurDemo();
     const mission = await prisma.mission.create({
       data: { clientId: client!.id, profilId, repere: `Mission DB06 need ${Date.now()}`, nbJours: 5, tjmVente: 500, margeCible: 0.3, deviseVente: "EUR", statut: "EN_COURS", needVersionId: need.id },
     });
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { missionId: mission.id, needVersionId: need.id });
-    await connecter(request, "admin-demo@example.com");
     const run = await (await getRun(request, corps.id)).json();
     expect(run.needVersionId).toBe(need.id);
   });
 
-  test("11. solutionDecisionId exact — jamais inventé si absent", async ({ request }) => {
+  test("11. solutionDecisionId exact — jamais inventé si absent", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     const run = await (await getRun(request, corps.id)).json();
     expect(run.solutionDecisionId).toBeNull();
   });
 });
 
 test.describe("DB-06 — Steps", () => {
-  test("12/13/14. ordre, type et statut des Steps conservés tels que retournés par le backend", async ({ request }) => {
+  test("12/13/14. ordre, type et statut des Steps conservés tels que retournés par le backend", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { maxIterations: 2 });
-    await connecter(request, "admin-demo@example.com");
     await startRun(request, corps.id);
     const { steps } = await (await getSteps(request, corps.id)).json();
     expect(steps.length).toBeGreaterThanOrEqual(1);
@@ -203,11 +217,11 @@ test.describe("DB-06 — Steps", () => {
     expect(["PENDING", "SUCCEEDED", "FAILED"]).toContain(steps[0].statut);
   });
 
-  test("15. résultats/erreurs des Steps affichés lorsqu'ils existent", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("15. résultats/erreurs des Steps affichés lorsqu'ils existent", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "PRINCIPAL"); // aucune permission -> FAILED
     const corps = await creerRunViaApi(request, { agentIdentityId: agentId });
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     await startRun(request, corps.id);
     const { steps } = await (await getSteps(request, corps.id)).json();
     expect(steps[0].statut).toBe("FAILED");
@@ -217,8 +231,8 @@ test.describe("DB-06 — Steps", () => {
 });
 
 test.describe("DB-06 — ActionExecutions", () => {
-  test("16/17. ActionExecution affichée uniquement si une exécution a réellement eu lieu — proposition != exécution", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("16/17. ActionExecution affichée uniquement si une exécution a réellement eu lieu — proposition != exécution", async () => {
+    let request = await connecter("ADMIN");
     // ANALYZE/SECURITY (agent ATLAS_OS_SERVICES) : classe OBSERVATION
     // (classifierAction, inchangé) avec permission ACTIVE réelle, mais
     // AUCUN Tool enregistré pour ce couple (seuls READ/TALENT et
@@ -227,7 +241,7 @@ test.describe("DB-06 — ActionExecutions", () => {
     // exécutée.
     const agentId = await idAgent(request, "ATLAS_OS_SERVICES");
     const corps = await creerRunViaApi(request, { agentIdentityId: agentId, declaredAction: "ANALYZE", declaredScope: "SECURITY" });
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const demarre = await (await startRun(request, corps.id)).json();
     expect(demarre.statut).toBe("RUNNING");
     const { steps } = await (await getSteps(request, corps.id)).json();
@@ -236,11 +250,11 @@ test.describe("DB-06 — ActionExecutions", () => {
     expect(steps[0].statut).toBe("SUCCEEDED"); // l'observation elle-même réussit malgré tout
   });
 
-  test("18. erreur affichée sans secret (le backend redige déjà, jamais un contournement ici)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("18. erreur affichée sans secret (le backend redige déjà, jamais un contournement ici)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "PRINCIPAL");
     const corps = await creerRunViaApi(request, { agentIdentityId: agentId });
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     await startRun(request, corps.id);
     const run = await (await getRun(request, corps.id)).json();
     expect(run.errorDetail).not.toMatch(/sk-|password|secret|token/i);
@@ -248,9 +262,9 @@ test.describe("DB-06 — ActionExecutions", () => {
 });
 
 test.describe("DB-06 — Human Approval", () => {
-  test("19. WAITING_APPROVAL clairement exposé par le backend (currentAuthorizationRequestId renseigné)", async ({ request }) => {
+  test("19. WAITING_APPROVAL clairement exposé par le backend (currentAuthorizationRequestId renseigné)", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { declaredAction: "WRITE", declaredScope: "TALENT" });
-    await connecter(request, "admin-demo@example.com");
     const demarre = await (await startRun(request, corps.id)).json();
     expect(demarre.statut).toBe("WAITING_APPROVAL");
     expect(demarre.currentAuthorizationRequestId).toBeTruthy();
@@ -261,9 +275,9 @@ test.describe("DB-06 — Human Approval", () => {
     expect(demande.status).toBe("PENDING");
   });
 
-  test("20/21. approbation et refus utilisent exclusivement l'API Control Plane existante (PATCH approve)", async ({ request }) => {
+  test("20/21. approbation et refus utilisent exclusivement l'API Control Plane existante (PATCH approve)", async () => {
+    let request = await connecter("ADMIN");
     const corpsAllow = await creerRunViaApi(request, { declaredAction: "WRITE", declaredScope: "TALENT" });
-    await connecter(request, "admin-demo@example.com");
     const demarreAllow = await (await startRun(request, corpsAllow.id)).json();
     const approbation = await approuverDemande(request, demarreAllow.currentAuthorizationRequestId, "ALLOW");
     expect(approbation.status(), await approbation.text()).toBe(200);
@@ -271,7 +285,7 @@ test.describe("DB-06 — Human Approval", () => {
     expect(repris.statut).toBe("SUCCEEDED");
 
     const corpsDeny = await creerRunViaApi(request, { declaredAction: "WRITE", declaredScope: "TALENT" });
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const demarreDeny = await (await startRun(request, corpsDeny.id)).json();
     const refus = await approuverDemande(request, demarreDeny.currentAuthorizationRequestId, "DENY");
     expect(refus.status(), await refus.text()).toBe(200);
@@ -279,9 +293,9 @@ test.describe("DB-06 — Human Approval", () => {
     expect(["FAILED", "STOPPED"]).toContain(reprisDeny.statut);
   });
 
-  test("22. aucune approbation frontend simulée : sans décision réelle via l'API Control Plane, resume ne change jamais le statut WAITING_APPROVAL en SUCCEEDED", async ({ request }) => {
+  test("22. aucune approbation frontend simulée : sans décision réelle via l'API Control Plane, resume ne change jamais le statut WAITING_APPROVAL en SUCCEEDED", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { declaredAction: "WRITE", declaredScope: "TALENT" });
-    await connecter(request, "admin-demo@example.com");
     const demarre = await (await startRun(request, corps.id)).json();
     expect(demarre.statut).toBe("WAITING_APPROVAL");
 
@@ -293,8 +307,8 @@ test.describe("DB-06 — Human Approval", () => {
 });
 
 test.describe("DB-06 — Emergency Stop", () => {
-  test("23/24/25. état Emergency Stop lisible, action réelle uniquement via l'API Control Plane existante", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("23/24/25. état Emergency Stop lisible, action réelle uniquement via l'API Control Plane existante", async () => {
+    let request = await connecter("ADMIN");
     const avant = await (await request.get("/api/control-plane/emergency-stops?actif=true")).json();
     expect(Array.isArray(avant.emergencyStops)).toBe(true);
 
@@ -311,14 +325,14 @@ test.describe("DB-06 — Emergency Stop", () => {
     expect(levee.status(), await levee.text()).toBe(200);
   });
 
-  test("26. Emergency Stop actif bloque effectivement le démarrage d'un Run concerné (comportement A32 existant, inchangé)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("26. Emergency Stop actif bloque effectivement le démarrage d'un Run concerné (comportement A32 existant, inchangé)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const activation = await request.post("/api/control-plane/emergency-stops", { data: { scope: "AGENT", targetId: agentId, reason: "Test DB-06." } });
     const { id } = await activation.json();
     try {
       const corps = await creerRunViaApi(request, { agentIdentityId: agentId });
-      await connecter(request, "admin-demo@example.com");
+      request = await connecter("ADMIN");
       const demarre = await (await startRun(request, corps.id)).json();
       expect(demarre.statut).toBe("FAILED");
       expect(demarre.stopReason).toBe("EMERGENCY_STOP");
@@ -329,35 +343,35 @@ test.describe("DB-06 — Emergency Stop", () => {
 });
 
 test.describe("DB-06 — États (valeurs réelles du backend, aucune invention frontend)", () => {
-  test("27. DRAFT à la création", async ({ request }) => {
+  test("27. DRAFT à la création", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     expect((await (await getRun(request, corps.id)).json()).statut).toBe("DRAFT");
   });
 
-  test("28/29. READY puis RUNNING observables via la séquence start (comportement A32, inchangé)", async ({ request }) => {
+  test("28/29. READY puis RUNNING observables via la séquence start (comportement A32, inchangé)", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { maxIterations: 1, declaredAction: "WRITE", declaredScope: "TALENT" });
-    await connecter(request, "admin-demo@example.com");
     const demarre = await (await startRun(request, corps.id)).json();
     // READ/TALENT serait SUCCEEDED immédiat ; WRITE/TALENT s'arrête en WAITING_APPROVAL après RUNNING.
     expect(demarre.statut).toBe("WAITING_APPROVAL");
     expect(demarre.startedAt).toBeTruthy();
   });
 
-  test("30. WAITING_APPROVAL", async ({ request }) => {
+  test("30. WAITING_APPROVAL", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { declaredAction: "WRITE", declaredScope: "TALENT" });
-    await connecter(request, "admin-demo@example.com");
     expect((await (await startRun(request, corps.id)).json()).statut).toBe("WAITING_APPROVAL");
   });
 
-  test("31. PAUSED", async ({ request }) => {
+  test("31. PAUSED", async () => {
     // READ/TALENT (OBSERVATION) avec maxIterations=3 : une itération
     // s'exécute et réussit, mais le Run reste RUNNING (contrat A32,
     // "un Step OBSERVATION réussi ne termine jamais automatiquement le
     // Run") — état RUNNING réellement observable, condition requise par
     // pauserRun (transition WHERE statut=RUNNING).
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { maxIterations: 3 });
-    await connecter(request, "admin-demo@example.com");
     const demarre = await (await startRun(request, corps.id)).json();
     expect(demarre.statut).toBe("RUNNING");
 
@@ -368,30 +382,30 @@ test.describe("DB-06 — États (valeurs réelles du backend, aucune invention f
     expect(apres.pausedAt).toBeTruthy();
   });
 
-  test("32. FAILED", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("32. FAILED", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "PRINCIPAL");
     const corps = await creerRunViaApi(request, { agentIdentityId: agentId });
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     expect((await (await startRun(request, corps.id)).json()).statut).toBe("FAILED");
   });
 
-  test("33. STOPPED", async ({ request }) => {
+  test("33. STOPPED", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     const reponse = await request.post(`/api/agentic-runs/${corps.id}/stop`);
     expect((await reponse.json()).statut).toBe("STOPPED");
   });
 
-  test("34. ESCALATED", async ({ request }) => {
+  test("34. ESCALATED", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const profilId = await profilIngenieurDemo();
     const need = await prisma.clientNeed.create({ data: { clientId: client!.id, correlationId: `db06-esc-${Date.now()}`, texteOriginal: "Besoin DB06 escalade" } });
     const mission = await prisma.mission.create({
       data: { clientId: client!.id, profilId, repere: `Mission DB06 esc ${Date.now()}`, nbJours: 5, tjmVente: 500, margeCible: 0.3, deviseVente: "EUR", statut: "EN_COURS", needVersionId: need.id },
     });
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { missionId: mission.id, needVersionId: need.id });
-    await connecter(request, "admin-demo@example.com");
     await startRun(request, corps.id);
     await request.post(`/api/agentic-runs/${corps.id}/pause`);
     const autreNeed = await prisma.clientNeed.create({ data: { clientId: client!.id, correlationId: `db06-esc2-${Date.now()}`, texteOriginal: "Besoin DB06 escalade 2" } });
@@ -402,10 +416,10 @@ test.describe("DB-06 — États (valeurs réelles du backend, aucune invention f
 });
 
 test.describe("DB-06 — Learning Loop invariants (jamais touché par ce lot)", () => {
-  test("35. aucune création/modification de Learning depuis DB-06 : les routes consommées par cette UI ne touchent jamais la table Learning", async ({ request }) => {
+  test("35. aucune création/modification de Learning depuis DB-06 : les routes consommées par cette UI ne touchent jamais la table Learning", async () => {
     const compteAvant = await prisma.learning.count();
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     await startRun(request, corps.id);
     await getRun(request, corps.id);
     await getSteps(request, corps.id);
@@ -413,8 +427,8 @@ test.describe("DB-06 — Learning Loop invariants (jamais touché par ce lot)", 
     expect(compteApres).toBe(compteAvant);
   });
 
-  test("36. aucune modification du contrat A34 (loopType=LEARNING reste géré exclusivement par le Runtime existant, DB-06 n'en lit que l'état)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("36. aucune modification du contrat A34 (loopType=LEARNING reste géré exclusivement par le Runtime existant, DB-06 n'en lit que l'état)", async () => {
+    let request = await connecter("ADMIN");
     // DB-06 ne crée jamais de Run LEARNING lui-même (hors scope UI) — on
     // vérifie seulement que la route GET liste/détail, nouvellement
     // ajoutée ou déjà existante, ne filtre/n'altère jamais loopType.

@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { StatutMission } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
@@ -11,9 +12,22 @@ import { prisma } from "@/lib/prisma";
 // app/admin/missions/[id]/learning/**, jamais une réimplémentation de
 // a30-learning.spec.ts (déjà exhaustif sur le moteur lui-même, inchangé).
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Réutilise la session déjà authentifiée une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test — élimine la contribution de ce fichier à
+// l'épuisement du rate-limit de connexion partagé par IP en CI
+// (lib/rate-limit.ts), sans changer le rôle/contexte testé.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function clientDemo() {
@@ -69,8 +83,8 @@ async function creerLearning(missionId: string, overrides: CreationLearning = {}
 }
 
 test.describe("DB-04 — Consultation / RBAC", () => {
-  test("1. ADMIN peut consulter les Learnings d'une Mission", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("1. ADMIN peut consulter les Learnings d'une Mission", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     await creerLearning(mission.id);
     const reponse = await request.get(`/api/missions/${mission.id}/learning`);
@@ -78,33 +92,33 @@ test.describe("DB-04 — Consultation / RBAC", () => {
     expect((await reponse.json()).learnings).toHaveLength(1);
   });
 
-  test("2. INGENIEUR respecte les permissions existantes (lecture sur sa propre Mission autorisée)", async ({ request }) => {
+  test("2. INGENIEUR respecte les permissions existantes (lecture sur sa propre Mission autorisée)", async () => {
     const mission = await creerMission(); // profilId = ingenieur-demo
     await creerLearning(mission.id);
-    await connecter(request, "ingenieur-demo@example.com");
+    let request = await connecter("INGENIEUR");
     const reponse = await request.get(`/api/missions/${mission.id}/learning`);
     expect(reponse.status(), await reponse.text()).toBe(200);
     expect((await reponse.json()).learnings).toHaveLength(1);
   });
 
-  test("3. CLIENT n'a aucun accès (403)", async ({ request }) => {
+  test("3. CLIENT n'a aucun accès (403)", async () => {
     const mission = await creerMission();
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const reponse = await request.get(`/api/missions/${mission.id}/learning`);
     expect(reponse.status()).toBe(403);
   });
 
-  test("4. Learning cross-tenant (Ingénieur non autorisé sur cette Mission) -> inaccessible", async ({ request }) => {
+  test("4. Learning cross-tenant (Ingénieur non autorisé sur cette Mission) -> inaccessible", async () => {
     const autreProfil = await creerProfil();
     const mission = await creerMission(StatutMission.TERMINEE, autreProfil.id); // jamais ingenieur-demo
     await creerLearning(mission.id);
-    await connecter(request, "ingenieur-demo@example.com");
+    let request = await connecter("INGENIEUR");
     const reponse = await request.get(`/api/missions/${mission.id}/learning`);
     expect(reponse.status()).toBe(404);
   });
 
-  test("5. Learning inexistant -> 404 (convention existante)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("5. Learning inexistant -> 404 (convention existante)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const reponse = await request.get(`/api/missions/${mission.id}/learning/inexistant-cuid`);
     expect(reponse.status()).toBe(404);
@@ -112,16 +126,16 @@ test.describe("DB-04 — Consultation / RBAC", () => {
 });
 
 test.describe("DB-04 — Données affichées", () => {
-  test("6. statut PROPOSE affiché correctement (valeur par défaut, jamais choisie par l'appelant)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("6. statut PROPOSE affiché correctement (valeur par défaut, jamais choisie par l'appelant)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const learning = await creerLearning(mission.id);
     const reponse = await request.get(`/api/missions/${mission.id}/learning/${learning.id}`);
     expect((await reponse.json()).statut).toBe("PROPOSE");
   });
 
-  test("7. statut VALIDE affiché correctement après validation", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("7. statut VALIDE affiché correctement après validation", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const learning = await creerLearning(mission.id);
     await request.patch(`/api/missions/${mission.id}/learning/${learning.id}`, { data: { action: "valider" } });
@@ -129,8 +143,8 @@ test.describe("DB-04 — Données affichées", () => {
     expect((await reponse.json()).statut).toBe("VALIDE");
   });
 
-  test("8. applicabilite OBSOLETE affichée correctement après marquage", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("8. applicabilite OBSOLETE affichée correctement après marquage", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const learning = await creerLearning(mission.id);
     await request.patch(`/api/missions/${mission.id}/learning/${learning.id}`, { data: { action: "marquer_obsolete" } });
@@ -138,32 +152,32 @@ test.describe("DB-04 — Données affichées", () => {
     expect((await reponse.json()).applicabilite).toBe("OBSOLETE");
   });
 
-  test("9. provenance affichée exactement telle que créée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("9. provenance affichée exactement telle que créée", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const learning = await creerLearning(mission.id, { provenance: "OBSERVED" });
     const reponse = await request.get(`/api/missions/${mission.id}/learning/${learning.id}`);
     expect((await reponse.json()).provenance).toBe("OBSERVED");
   });
 
-  test("10. confidence affichée exactement telle que créée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("10. confidence affichée exactement telle que créée", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const learning = await creerLearning(mission.id, { confidence: "HIGH" });
     const reponse = await request.get(`/api/missions/${mission.id}/learning/${learning.id}`);
     expect((await reponse.json()).confidence).toBe("HIGH");
   });
 
-  test("11. scope affiché exactement tel que créé", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("11. scope affiché exactement tel que créé", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const learning = await creerLearning(mission.id, { scope: "CLIENT" });
     const reponse = await request.get(`/api/missions/${mission.id}/learning/${learning.id}`);
     expect((await reponse.json()).scope).toBe("CLIENT");
   });
 
-  test("12. source affichée : exactement le pointeur structuré réellement présent, jamais reconstruite", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("12. source affichée : exactement le pointeur structuré réellement présent, jamais reconstruite", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const workItem = await prisma.workItem.create({ data: { missionId: mission.id, titre: "WorkItem DB04", createdByEmail: "admin-demo@example.com" } });
     const learning = await creerLearning(mission.id, { sourceWorkItemId: workItem.id });
@@ -176,8 +190,8 @@ test.describe("DB-04 — Données affichées", () => {
 });
 
 test.describe("DB-04 — Validation", () => {
-  test("13. ADMIN peut valider un Learning PROPOSE", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("13. ADMIN peut valider un Learning PROPOSE", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const learning = await creerLearning(mission.id);
     const reponse = await request.patch(`/api/missions/${mission.id}/learning/${learning.id}`, { data: { action: "valider" } });
@@ -185,19 +199,19 @@ test.describe("DB-04 — Validation", () => {
     expect((await reponse.json()).statut).toBe("VALIDE");
   });
 
-  test("14. INGENIEUR ne peut pas valider (403, aucune mutation)", async ({ request }) => {
+  test("14. INGENIEUR ne peut pas valider (403, aucune mutation)", async () => {
     const mission = await creerMission();
     const learning = await creerLearning(mission.id);
-    await connecter(request, "ingenieur-demo@example.com");
+    let request = await connecter("INGENIEUR");
     const reponse = await request.patch(`/api/missions/${mission.id}/learning/${learning.id}`, { data: { action: "valider" } });
     expect(reponse.status()).toBe(403);
     expect((await prisma.learning.findUnique({ where: { id: learning.id } }))?.statut).toBe("PROPOSE");
   });
 
-  test("15. CLIENT ne peut pas valider (403, aucune mutation)", async ({ request }) => {
+  test("15. CLIENT ne peut pas valider (403, aucune mutation)", async () => {
     const mission = await creerMission();
     const learning = await creerLearning(mission.id);
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const reponse = await request.patch(`/api/missions/${mission.id}/learning/${learning.id}`, { data: { action: "valider" } });
     expect(reponse.status()).toBe(403);
     expect((await prisma.learning.findUnique({ where: { id: learning.id } }))?.statut).toBe("PROPOSE");
@@ -205,8 +219,8 @@ test.describe("DB-04 — Validation", () => {
 });
 
 test.describe("DB-04 — Obsolescence", () => {
-  test("16. ADMIN peut marquer obsolète un Learning ACTIVE", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("16. ADMIN peut marquer obsolète un Learning ACTIVE", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const learning = await creerLearning(mission.id);
     const reponse = await request.patch(`/api/missions/${mission.id}/learning/${learning.id}`, { data: { action: "marquer_obsolete" } });
@@ -214,10 +228,10 @@ test.describe("DB-04 — Obsolescence", () => {
     expect((await reponse.json()).applicabilite).toBe("OBSOLETE");
   });
 
-  test("17. INGENIEUR ne peut pas marquer obsolète (403, aucune mutation)", async ({ request }) => {
+  test("17. INGENIEUR ne peut pas marquer obsolète (403, aucune mutation)", async () => {
     const mission = await creerMission();
     const learning = await creerLearning(mission.id);
-    await connecter(request, "ingenieur-demo@example.com");
+    let request = await connecter("INGENIEUR");
     const reponse = await request.patch(`/api/missions/${mission.id}/learning/${learning.id}`, { data: { action: "marquer_obsolete" } });
     expect(reponse.status()).toBe(403);
     expect((await prisma.learning.findUnique({ where: { id: learning.id } }))?.applicabilite).toBe("ACTIVE");
@@ -225,8 +239,8 @@ test.describe("DB-04 — Obsolescence", () => {
 });
 
 test.describe("DB-04 — Immutabilité / provenance", () => {
-  test("18. contenu immuable : aucune route n'autorise l'édition de title/statement/type/provenance/confidence/scope/source", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("18. contenu immuable : aucune route n'autorise l'édition de title/statement/type/provenance/confidence/scope/source", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const learning = await creerLearning(mission.id, { provenance: "DECLARED" });
     const reponse = await request.patch(`/api/missions/${mission.id}/learning/${learning.id}`, {
@@ -239,8 +253,8 @@ test.describe("DB-04 — Immutabilité / provenance", () => {
     expect(enBase?.provenance).toBe("DECLARED");
   });
 
-  test("19. provenance INFERRED reste INFERRED après validation humaine (jamais promue en VERIFIED)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("19. provenance INFERRED reste INFERRED après validation humaine (jamais promue en VERIFIED)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const learning = await creerLearning(mission.id, { provenance: "INFERRED" });
     const reponse = await request.patch(`/api/missions/${mission.id}/learning/${learning.id}`, { data: { action: "valider" } });
@@ -251,8 +265,8 @@ test.describe("DB-04 — Immutabilité / provenance", () => {
 });
 
 test.describe("DB-04 — Supersession", () => {
-  test("20. supersession affichée correctement (supersedesId visible, jamais une mutation de l'ancienne ligne)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("20. supersession affichée correctement (supersedesId visible, jamais une mutation de l'ancienne ligne)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const original = await creerLearning(mission.id);
     const correction = await request.post(`/api/missions/${mission.id}/learning`, {

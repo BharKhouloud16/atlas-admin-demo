@@ -1,6 +1,6 @@
-import { test, expect, APIRequestContext, Page } from "@playwright/test";
+import { test, expect, APIRequestContext, Page, request as pwRequest } from "@playwright/test";
 import { prisma } from "@/lib/prisma";
-import { ADMIN_STATE } from "../setup/storage-state";
+import { ADMIN_STATE, CLIENT_STATE } from "../setup/storage-state";
 
 // COMPANY ATLAS — DB-05 : Decision Context UI (08/10/2026).
 //
@@ -11,15 +11,21 @@ import { ADMIN_STATE } from "../setup/storage-state";
 // directement (setup de données, jamais via la session Admin pré-
 // authentifiée de la page), avant de naviguer avec la session Admin.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+// Réutilise la session CLIENT déjà authentifiée une seule fois pour toute
+// la suite (tests/setup/auth.setup.ts, storageState) au lieu d'un vrai
+// POST /api/auth/login ici — élimine la contribution de ce fichier à
+// l'épuisement du rate-limit de connexion partagé par IP en CI.
+async function connecter(role: "CLIENT"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: role === "CLIENT" ? CLIENT_STATE : ADMIN_STATE,
+  });
 }
 
 test.describe("Admin — Besoin → Solution → Decision Context (DB-05)", () => {
   test.use({ storageState: ADMIN_STATE });
 
-  test("l'Admin ouvre un besoin, voit la Solution et les connaissances consultées par ATLAS, avec provenance/confidence et conflit", async ({ page, request }: { page: Page; request: APIRequestContext }) => {
+  test("l'Admin ouvre un besoin, voit la Solution et les connaissances consultées par ATLAS, avec provenance/confidence et conflit", async ({ page }: { page: Page }) => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     if (!client) throw new Error("Client Démo introuvable");
     const suffixe = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -91,7 +97,7 @@ test.describe("Admin — Besoin → Solution → Decision Context (DB-05)", () =
 
     // Déclenche la génération réelle de la Solution — session CLIENT,
     // jamais la session Admin pré-authentifiée de la page ci-dessous.
-    await connecter(request, "client-demo@example.com");
+    const request = await connecter("CLIENT");
     const generation = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
     expect(generation.recommandation).not.toBeNull();
 

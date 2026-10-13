@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 import { construireContexteDecisionnel } from "@/lib/decision-context";
 
@@ -14,9 +15,22 @@ import { construireContexteDecisionnel } from "@/lib/decision-context";
 // tests/api/b39-client-solution-intelligence-api.spec.ts (déjà
 // exhaustives sur le moteur et la route Client, non modifiées).
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Réutilise la session déjà authentifiée une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test — élimine la contribution de ce fichier à
+// l'épuisement du rate-limit de connexion partagé par IP en CI
+// (lib/rate-limit.ts), sans changer le rôle/contexte testé.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function creerBesoinValide(clientId: string, faits: { cle: string; valeur: string; statut: string }[] = []) {
@@ -101,10 +115,10 @@ async function creerLearningPourTest(
 }
 
 async function obtenirRecommandationAdmin(request: APIRequestContext, needId: string) {
-  await connecter(request, "client-demo@example.com");
-  await request.get(`/api/client/besoins/${needId}/solutions`); // déclenche la génération réelle
-  await connecter(request, "admin-demo@example.com");
-  return (await (await request.get(`/api/talent/besoins/${needId}/solutions`)).json()) as {
+  const client = await connecter("CLIENT");
+  await client.get(`/api/client/besoins/${needId}/solutions`); // déclenche la génération réelle
+  const admin = await connecter("ADMIN");
+  return (await (await admin.get(`/api/talent/besoins/${needId}/solutions`)).json()) as {
     options: { id: string }[];
     recommandations: { id: string }[];
     decisions: { id: string }[];
@@ -160,17 +174,17 @@ test.describe("DB-05 — Decision Context (endpoint Admin)", () => {
     expect(contexte.context.solutionDecisionId).toBeUndefined();
   });
 
-  test("4. une fois une décision prise, le DecisionContext Admin porte sur la décision et conserve solutionDecisionId", async ({ request }) => {
+  test("4. une fois une décision prise, le DecisionContext Admin porte sur la décision et conserve solutionDecisionId", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     await creerProfilCandidatDeTest(`${Date.now()}-4`);
     const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const generation = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
     const recommandationId = generation.recommandation.id;
     const decisionResp = await (await request.post(`/api/client/besoins/${need.id}/solutions/${recommandationId}/decision`)).json();
 
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const body = await (await (await request.get(`/api/talent/besoins/${need.id}/solutions`)).json());
     expect(body.decisionContext.subjectNiveau).toBe("DECISION");
     expect(body.decisionContext.subjectId).toBe(decisionResp.decision.id);
@@ -283,12 +297,12 @@ test.describe("DB-05 — Decision Context (endpoint Admin)", () => {
 });
 
 test.describe("DB-05 — Sécurité / RBAC / isolation", () => {
-  test("16. le decisionContext de la route Client n'expose aucun champ interne additionnel (subjectId/subjectNiveau réservés à l'Admin)", async ({ request }) => {
+  test("16. le decisionContext de la route Client n'expose aucun champ interne additionnel (subjectId/subjectNiveau réservés à l'Admin)", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     await creerProfilCandidatDeTest(`${Date.now()}-16`);
     const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const body = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
     expect(body.decisionContext).not.toBeNull();
     expect(Object.keys(body.decisionContext).sort()).toEqual(["conflicts", "learnings", "status"]);
@@ -296,18 +310,18 @@ test.describe("DB-05 — Sécurité / RBAC / isolation", () => {
     expect(body.decisionContext.subjectNiveau).toBeUndefined();
   });
 
-  test("17. endpoint Solutions Admin reste réservé ADMIN (CLIENT/INGENIEUR -> 403, aucune donnée)", async ({ request }) => {
+  test("17. endpoint Solutions Admin reste réservé ADMIN (CLIENT/INGENIEUR -> 403, aucune donnée)", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const need = await creerBesoinValide(client!.id);
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     expect((await request.get(`/api/talent/besoins/${need.id}/solutions`)).status()).toBe(403);
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     expect((await request.get(`/api/talent/besoins/${need.id}/solutions`)).status()).toBe(403);
   });
 
-  test("18. besoin inexistant -> 404 (comportement existant, inchangé)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("18. besoin inexistant -> 404 (comportement existant, inchangé)", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get(`/api/talent/besoins/inexistant-cuid/solutions`);
     expect(reponse.status()).toBe(404);
   });

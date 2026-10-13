@@ -1,4 +1,4 @@
-import { test, expect, APIRequestContext, Page } from "@playwright/test";
+import { test, expect, APIRequestContext, Page, request as pwRequest } from "@playwright/test";
 import bcrypt from "bcryptjs";
 import { StatutMission } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -13,9 +13,15 @@ import { ADMIN_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 // via le panneau préexistant MissionOutcomePanel.tsx) et pour Client
 // (lecture seule, via la nouvelle section MissionOutcomeSection.tsx).
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+// Réutilise la session Admin déjà authentifiée une seule fois pour toute la
+// suite (tests/setup/auth.setup.ts, storageState) au lieu d'un vrai
+// POST /api/auth/login ici — élimine la contribution de ce fichier à
+// l'épuisement du rate-limit de connexion partagé par IP en CI.
+async function connecter(_role: "ADMIN"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ADMIN_STATE,
+  });
 }
 
 async function profilIngenieurDemo() {
@@ -106,7 +112,7 @@ test.describe("Client — consultation en lecture seule de l'Outcome de sa missi
   // compte (constat direct, voir rapport final §19). Un compte isolé avec
   // une seule Mission réelle teste exactement le même contrat sans jamais
   // dépendre du volume de fixtures des lots précédents.
-  test("le Client voit le résultat de sa mission terminée, sans aucune action de mutation", async ({ page, request }: { page: Page; request: APIRequestContext }) => {
+  test("le Client voit le résultat de sa mission terminée, sans aucune action de mutation", async ({ page }: { page: Page }) => {
     const suffixe = `${Date.now()}-${Math.random()}`;
     const email = `client-db08-e2e-${suffixe}@example.com`;
     const passwordHash = await bcrypt.hash("Demo1234", 12);
@@ -121,7 +127,7 @@ test.describe("Client — consultation en lecture seule de l'Outcome de sa missi
     // Création de l'évaluation via une session Admin réelle (setup de
     // données, jamais via la session Client de ce test — même discipline
     // que tests/e2e/db05-decision-context-ui.spec.ts).
-    await connecter(request, "admin-demo@example.com");
+    const request = await connecter("ADMIN");
     const creation = await request.post(`/api/missions/${mission.id}/outcome`, {
       data: { verdicts: [{ sourceFaitId: faitId, statutPropose: "OBTENU", methodes: ["VERIFIE_HUMAIN"], evidences: [{ source: "Constat ATLAS E2E Client DB08" }] }] },
     });

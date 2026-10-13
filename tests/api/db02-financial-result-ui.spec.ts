@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { StatutMission } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
@@ -12,9 +13,22 @@ import { prisma } from "@/lib/prisma";
 // jamais une réimplémentation de a29-financial-result.spec.ts (déjà
 // exhaustif sur le moteur lui-même, inchangé, non dupliqué ici).
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Réutilise la session déjà authentifiée une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test — élimine la contribution de ce fichier à
+// l'épuisement du rate-limit de connexion partagé par IP en CI
+// (lib/rate-limit.ts), sans changer le rôle/contexte testé.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function clientDemo() {
@@ -32,8 +46,8 @@ async function creerMission(statut: StatutMission = StatutMission.TERMINEE) {
 }
 
 test.describe("DB-02 — Consultation", () => {
-  test("1. ADMIN consulte le FinancialResult d'une Mission autorisée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("1. ADMIN consulte le FinancialResult d'une Mission autorisée", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const creation = await request.post(`/api/missions/${mission.id}/financial-results`, {
       data: { revenueAmount: 10000, revenueProvenance: "DECLARE", revenueJustification: "Facture signée." },
@@ -47,22 +61,22 @@ test.describe("DB-02 — Consultation", () => {
     expect(corps.financialResults).toHaveLength(1);
   });
 
-  test("2. Mission sans FinancialResult -> liste vide, jamais une erreur", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("2. Mission sans FinancialResult -> liste vide, jamais une erreur", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const reponse = await request.get(`/api/missions/${mission.id}/financial-results`);
     expect(reponse.status(), await reponse.text()).toBe(200);
     expect((await reponse.json()).financialResults).toHaveLength(0);
   });
 
-  test("3. Mission inexistante -> 404 (comportement backend existant, inchangé)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("3. Mission inexistante -> 404 (comportement backend existant, inchangé)", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/missions/inexistant-cuid/financial-results");
     expect(reponse.status()).toBe(404);
   });
 
-  test("4. cross-tenant : FinancialResult d'une autre Mission -> 404, jamais une fuite d'existence", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("4. cross-tenant : FinancialResult d'une autre Mission -> 404, jamais une fuite d'existence", async () => {
+    let request = await connecter("ADMIN");
     const missionA = await creerMission();
     const missionB = await creerMission();
     const creation = await request.post(`/api/missions/${missionB.id}/financial-results`, { data: {} });
@@ -74,8 +88,8 @@ test.describe("DB-02 — Consultation", () => {
 });
 
 test.describe("DB-02 — Données affichées", () => {
-  test("5. valeurs financières renvoyées exactement telles que fournies (revenue/cost), jamais arrondies/altérées en plus de la précision serveur", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("5. valeurs financières renvoyées exactement telles que fournies (revenue/cost), jamais arrondies/altérées en plus de la précision serveur", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const creation = await request.post(`/api/missions/${mission.id}/financial-results`, {
       data: {
@@ -93,8 +107,8 @@ test.describe("DB-02 — Données affichées", () => {
     expect(Number(corps.profitAmount)).toBeCloseTo(4345.17, 2);
   });
 
-  test("6. devise affichée correctement (fournie, ou héritée de Mission.deviseVente si absente)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("6. devise affichée correctement (fournie, ou héritée de Mission.deviseVente si absente)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const avecDevise = await request.post(`/api/missions/${mission.id}/financial-results`, { data: { currency: "USD" } });
     expect((await avecDevise.json()).currency).toBe("USD");
@@ -104,8 +118,8 @@ test.describe("DB-02 — Données affichées", () => {
     expect((await sansDevise.json()).currency).toBe(missionEnBase?.deviseVente);
   });
 
-  test("7. dates affichées (calculatedAt, createdAt) renvoyées par le serveur", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("7. dates affichées (calculatedAt, createdAt) renvoyées par le serveur", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const avant = Date.now();
     const creation = await request.post(`/api/missions/${mission.id}/financial-results`, { data: {} });
@@ -114,8 +128,8 @@ test.describe("DB-02 — Données affichées", () => {
     expect(new Date(corps.createdAt).getTime()).toBeGreaterThanOrEqual(avant - 1000);
   });
 
-  test("8. statut affiché correctement (DRAFT à la création, FINALIZED après finalisation)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("8. statut affiché correctement (DRAFT à la création, FINALIZED après finalisation)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const creation = await request.post(`/api/missions/${mission.id}/financial-results`, { data: {} });
     const resultat = await creation.json();
@@ -125,8 +139,8 @@ test.describe("DB-02 — Données affichées", () => {
     expect((await finalisation.json()).statut).toBe("FINALIZED");
   });
 
-  test("9. plusieurs FinancialResult indépendants correctement représentés (le modèle les autorise, contrat A29 §35)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("9. plusieurs FinancialResult indépendants correctement représentés (le modèle les autorise, contrat A29 §35)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     await request.post(`/api/missions/${mission.id}/financial-results`, { data: { revenueAmount: 1000, revenueProvenance: "DECLARE", revenueJustification: "A" } });
     await request.post(`/api/missions/${mission.id}/financial-results`, { data: { revenueAmount: 2000, revenueProvenance: "DECLARE", revenueJustification: "B" } });
@@ -137,16 +151,16 @@ test.describe("DB-02 — Données affichées", () => {
 });
 
 test.describe("DB-02 — RBAC", () => {
-  test("10. CLIENT ne reçoit aucune nouvelle capacité (403, même sur sa propre Mission)", async ({ request }) => {
+  test("10. CLIENT ne reçoit aucune nouvelle capacité (403, même sur sa propre Mission)", async () => {
     const mission = await creerMission();
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const reponse = await request.get(`/api/missions/${mission.id}/financial-results`);
     expect(reponse.status()).toBe(403);
   });
 
-  test("11. INGENIEUR ne reçoit aucune nouvelle permission (403, même sur sa propre Mission)", async ({ request }) => {
+  test("11. INGENIEUR ne reçoit aucune nouvelle permission (403, même sur sa propre Mission)", async () => {
     const mission = await creerMission();
-    await connecter(request, "ingenieur-demo@example.com");
+    let request = await connecter("INGENIEUR");
     const reponse = await request.get(`/api/missions/${mission.id}/financial-results`);
     expect(reponse.status()).toBe(403);
   });
@@ -159,8 +173,8 @@ test.describe("DB-02 — RBAC", () => {
 });
 
 test.describe("DB-02 — Mutations", () => {
-  test("13. action officielle 'finaliser' fonctionne (API existante, inchangée)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("13. action officielle 'finaliser' fonctionne (API existante, inchangée)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const creation = await request.post(`/api/missions/${mission.id}/financial-results`, { data: {} });
     const resultat = await creation.json();
@@ -170,8 +184,8 @@ test.describe("DB-02 — Mutations", () => {
     expect((await reponse.json()).statut).toBe("FINALIZED");
   });
 
-  test("14. append-only : une correction crée une NOUVELLE ligne, jamais un écrasement de la ligne finalisée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("14. append-only : une correction crée une NOUVELLE ligne, jamais un écrasement de la ligne finalisée", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const creation = await request.post(`/api/missions/${mission.id}/financial-results`, {
       data: { revenueAmount: 5000, revenueProvenance: "DECLARE", revenueJustification: "Initial." },
@@ -191,8 +205,8 @@ test.describe("DB-02 — Mutations", () => {
     expect(originalEnBase?.statut).toBe("FINALIZED");
   });
 
-  test("15. aucune mutation financière directe depuis le frontend : profit/margin/resultatGlobal fournis par le client sont ignorés, toujours recalculés serveur", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("15. aucune mutation financière directe depuis le frontend : profit/margin/resultatGlobal fournis par le client sont ignorés, toujours recalculés serveur", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const reponse = await request.post(`/api/missions/${mission.id}/financial-results`, {
       data: {

@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { StatutMission } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
@@ -20,9 +21,22 @@ import { prisma } from "@/lib/prisma";
 // rapport final DB-08 (section 24/25) : aucun fichier n'est ajouté sous
 // app/api/**/outcome/** ni sous lib/outcome/**.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Réutilise la session déjà authentifiée une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test — élimine la contribution de ce fichier à
+// l'épuisement du rate-limit de connexion partagé par IP en CI
+// (lib/rate-limit.ts), sans changer le rôle/contexte testé.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function deconnecter(request: APIRequestContext) {
@@ -97,8 +111,8 @@ async function creerDeliverableAvecQualityGate(missionId: string) {
 }
 
 test.describe("DB-08 — RBAC / tenant isolation", () => {
-  test("1. Admin peut consulter l'Outcome d'une mission autorisée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("1. Admin peut consulter l'Outcome d'une mission autorisée", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const { mission, faitId } = await creerMissionAvecNeed(client.id, profilId, "Critère DB08-1");
@@ -114,42 +128,42 @@ test.describe("DB-08 — RBAC / tenant isolation", () => {
     expect(body.outcome.overallStatus).toBe("OBTENU");
   });
 
-  test("2. Accès cross-tenant rejeté — un Client ne lit jamais l'Outcome de la mission d'un autre client (404)", async ({ request }) => {
+  test("2. Accès cross-tenant rejeté — un Client ne lit jamais l'Outcome de la mission d'un autre client (404)", async () => {
     const autreClient = await prisma.client.create({ data: { nom: `Client Test DB08 IDOR ${Date.now()}` } });
     const profilId = await profilIngenieurDemo();
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const mission = await creerMission(autreClient.id, profilId);
     const creation = await request.post(`/api/missions/${mission.id}/outcome`, { data: { verdicts: [] } });
     expect(creation.status(), await creation.text()).toBe(201);
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const lecture = await request.get(`/api/missions/${mission.id}/outcome`);
     expect(lecture.status()).toBe(404);
   });
 
-  test("3. Engineer respecte son autorisation réelle — aucun accès, ni lecture ni création (403)", async ({ request }) => {
+  test("3. Engineer respecte son autorisation réelle — aucun accès, ni lecture ni création (403)", async () => {
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const mission = await creerMission(client.id, profilId);
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     const lecture = await request.get(`/api/missions/${mission.id}/outcome`);
     expect(lecture.status()).toBe(403);
     const creation = await request.post(`/api/missions/${mission.id}/outcome`, { data: { verdicts: [] } });
     expect(creation.status()).toBe(403);
   });
 
-  test("4. Client respecte son autorisation réelle — lecture de sa propre mission OK, jamais de création (403)", async ({ request }) => {
+  test("4. Client respecte son autorisation réelle — lecture de sa propre mission OK, jamais de création (403)", async () => {
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const { mission, faitId } = await creerMissionAvecNeed(client.id, profilId, "Critère DB08-4");
     await request.post(`/api/missions/${mission.id}/outcome`, {
       data: { verdicts: [{ sourceFaitId: faitId, statutPropose: "OBTENU", methodes: ["VERIFIE_HUMAIN"], evidences: [{ source: "x" }] }] },
     });
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const lecture = await request.get(`/api/missions/${mission.id}/outcome`);
     expect(lecture.status()).toBe(200);
     expect((await lecture.json()).outcome.overallStatus).toBe("OBTENU");
@@ -158,10 +172,10 @@ test.describe("DB-08 — RBAC / tenant isolation", () => {
     expect(creation.status()).toBe(403);
   });
 
-  test("5. Non-authentifié (Agent/visiteur) ne peut ni lire ni muter (403)", async ({ request }) => {
+  test("5. Non-authentifié (Agent/visiteur) ne peut ni lire ni muter (403)", async () => {
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const mission = await creerMission(client.id, profilId);
     await deconnecter(request);
 
@@ -172,13 +186,13 @@ test.describe("DB-08 — RBAC / tenant isolation", () => {
 
     // Reconnexion pour ne jamais laisser le contexte `request` partagé par
     // Playwright sans session pour les tests suivants du même worker.
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
   });
 });
 
 test.describe("DB-08 — Création / transition / immutabilité", () => {
-  test("6. Création autorisée fonctionne — Admin, mission TERMINEE, critère réel + preuve", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("6. Création autorisée fonctionne — Admin, mission TERMINEE, critère réel + preuve", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const { mission, faitId } = await creerMissionAvecNeed(client.id, profilId, "Critère DB08-6");
@@ -198,8 +212,8 @@ test.describe("DB-08 — Création / transition / immutabilité", () => {
   // transition que le backend autorise — le scénario 7 (modification) et 8
   // (transition autorisée) couvrent donc exactement le même mécanisme réel,
   // jamais deux mécanismes distincts inventés pour satisfaire la liste.
-  test("7/8. Modification et transition autorisées — réévaluation crée une nouvelle ligne (supersession), jamais une mutation en place", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("7/8. Modification et transition autorisées — réévaluation crée une nouvelle ligne (supersession), jamais une mutation en place", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const { mission, faitId } = await creerMissionAvecNeed(client.id, profilId, "Critère DB08-7");
@@ -225,8 +239,8 @@ test.describe("DB-08 — Création / transition / immutabilité", () => {
     expect(ancienne?.overallStatus).toBe("OBTENU"); // jamais réécrite en place
   });
 
-  test("9. Transition interdite rejetée — POST refusé (409) tant que la mission n'est pas TERMINEE", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("9. Transition interdite rejetée — POST refusé (409) tant que la mission n'est pas TERMINEE", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const mission = await creerMission(client.id, profilId, StatutMission.EN_COURS);
@@ -235,8 +249,8 @@ test.describe("DB-08 — Création / transition / immutabilité", () => {
     expect(reponse.status()).toBe(409);
   });
 
-  test("10. Données Outcome conservées exactement — criterionText/evidences round-trip sans transformation", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("10. Données Outcome conservées exactement — criterionText/evidences round-trip sans transformation", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const texteCritere = "Couverture de test >= 90% — texte exact DB08-10";
@@ -261,8 +275,8 @@ test.describe("DB-08 — Création / transition / immutabilité", () => {
 });
 
 test.describe("DB-08 — Invariants d'isolation (Quality / FinancialResult / Learning)", () => {
-  test("11. Quality Gate inchangé — créer un Outcome ne modifie jamais un DeliveryQualityGate existant sur la même mission", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("11. Quality Gate inchangé — créer un Outcome ne modifie jamais un DeliveryQualityGate existant sur la même mission", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const { mission, faitId } = await creerMissionAvecNeed(client.id, profilId, "Critère DB08-11");
@@ -277,8 +291,8 @@ test.describe("DB-08 — Invariants d'isolation (Quality / FinancialResult / Lea
     expect(gateApres.statut).toBe(gate.statut);
   });
 
-  test("12. FinancialResult inchangé — créer un Outcome ne crée ni ne modifie de FinancialResult", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("12. FinancialResult inchangé — créer un Outcome ne crée ni ne modifie de FinancialResult", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const { mission, faitId } = await creerMissionAvecNeed(client.id, profilId, "Critère DB08-12");
@@ -291,8 +305,8 @@ test.describe("DB-08 — Invariants d'isolation (Quality / FinancialResult / Lea
     expect(apres).toBe(avant);
   });
 
-  test("13. Learning inchangé — créer un Outcome ne déclenche aucune création automatique de Learning", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("13. Learning inchangé — créer un Outcome ne déclenche aucune création automatique de Learning", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const { mission, faitId } = await creerMissionAvecNeed(client.id, profilId, "Critère DB08-13");
@@ -308,8 +322,8 @@ test.describe("DB-08 — Invariants d'isolation (Quality / FinancialResult / Lea
     expect(learningsReferencant).toBe(0);
   });
 
-  test("14. Audit existant utilisé — la création journalise via le mécanisme EvenementSecurite déjà en place, et un refus RBAC aussi", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("14. Audit existant utilisé — la création journalise via le mécanisme EvenementSecurite déjà en place, et un refus RBAC aussi", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const { mission, faitId } = await creerMissionAvecNeed(client.id, profilId, "Critère DB08-14");
@@ -326,7 +340,7 @@ test.describe("DB-08 — Invariants d'isolation (Quality / FinancialResult / Lea
     expect(evenementCreation).not.toBeNull();
     expect(evenementCreation?.detail).toContain(outcome.overallStatus);
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     await request.post(`/api/missions/${mission.id}/outcome`, { data: { verdicts: [] } });
     const evenementRefus = await prisma.evenementSecurite.findFirst({
       where: { action: "rbac.acces_refuse", ressourceType: "Mission", ressourceId: mission.id },

@@ -10,11 +10,6 @@ import { ADMIN_STATE } from "../setup/storage-state";
 // clairement, approbation réelle via l'API Control Plane existante
 // (jamais simulée), reprise du Run, Steps/ActionExecution affichés.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
-}
-
 async function idAgent(request: APIRequestContext, nom: string): Promise<string> {
   const reponse = await request.get("/api/security/agents");
   const { agents } = await reponse.json();
@@ -28,7 +23,6 @@ test.describe("Admin — Agentic Runtime (DB-06)", () => {
 
   test("l'Admin consulte la liste des Runs, ouvre un Run WAITING_APPROVAL, approuve via l'API existante puis le reprend jusqu'à SUCCEEDED", async ({ page, request }: { page: Page; request: APIRequestContext }) => {
     const agentId = await idAgent(request, "ATLAS_TALENT");
-    await connecter(request, "admin-demo@example.com");
     const creation = await request.post("/api/agentic-runs", {
       data: {
         agentIdentityId: agentId,
@@ -70,7 +64,6 @@ test.describe("Admin — Agentic Runtime (DB-06)", () => {
 
   test("l'Admin voit les Steps d'un Run observé sans jamais confondre proposition et exécution", async ({ page, request }: { page: Page; request: APIRequestContext }) => {
     const agentId = await idAgent(request, "ATLAS_TALENT");
-    await connecter(request, "admin-demo@example.com");
     const creation = await request.post("/api/agentic-runs", {
       data: { agentIdentityId: agentId, declaredAction: "READ", declaredScope: "TALENT", goal: `Observation E2E DB-06 ${Date.now()}`, maxIterations: 2 },
     });

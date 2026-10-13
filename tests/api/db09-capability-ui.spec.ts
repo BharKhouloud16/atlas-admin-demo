@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { StatutMission } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
@@ -15,9 +16,22 @@ import { prisma } from "@/lib/prisma";
 // déjà exhaustivement testées par tests/api/a21-mission-capability-link.
 // spec.ts — jamais réimplémentées ici).
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Réutilise la session déjà authentifiée une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test — élimine la contribution de ce fichier à
+// l'épuisement du rate-limit de connexion partagé par IP en CI
+// (lib/rate-limit.ts), sans changer le rôle/contexte testé.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function deconnecter(request: APIRequestContext) {
@@ -84,16 +98,16 @@ async function creerLien(missionId: string, capabilityRequirementId: string) {
 }
 
 test.describe("DB-09 — Capability list (GET /api/capabilities)", () => {
-  test("1. Admin autorisé → liste accessible", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("1. Admin autorisé → liste accessible", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/capabilities");
     expect(reponse.status(), await reponse.text()).toBe(200);
     const body = await reponse.json();
     expect(Array.isArray(body.capabilities)).toBe(true);
   });
 
-  test("2. la liste reflète exactement les données réelles, aucun champ inventé", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("2. la liste reflète exactement les données réelles, aucun champ inventé", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const need = await creerNeedAvecFait(client.id, "Capacité unique DB09-2");
     const capability = await creerCapabilityRequirement(need.id, "Capacité unique DB09-2");
@@ -110,8 +124,8 @@ test.describe("DB-09 — Capability list (GET /api/capabilities)", () => {
     expect(ligne.nombreMissionsLiees).toBe(0);
   });
 
-  test("3. état vide correctement affiché — filtre sur un statut sans aucune ligne", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("3. état vide correctement affiché — filtre sur un statut sans aucune ligne", async () => {
+    let request = await connecter("ADMIN");
     // Aucune CapabilityRequirement n'est jamais créée avec un statut autre
     // que ACTIVE/SUPERSEDED (enum fermé) — filtrer sur SUPERSEDED alors
     // qu'une capacité fraîchement créée est toujours ACTIVE donne un cas
@@ -126,16 +140,16 @@ test.describe("DB-09 — Capability list (GET /api/capabilities)", () => {
     expect(Array.isArray(body.capabilities)).toBe(true);
   });
 
-  test("4. paramètres invalides gérés sans erreur (limite non numérique → valeur par défaut, jamais un crash)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("4. paramètres invalides gérés sans erreur (limite non numérique → valeur par défaut, jamais un crash)", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/capabilities?limite=abc");
     expect(reponse.status(), await reponse.text()).toBe(200);
   });
 });
 
 test.describe("DB-09 — Capability detail (GET /api/capabilities/[id])", () => {
-  test("5. Capability existante → détail complet", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("5. Capability existante → détail complet", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const need = await creerNeedAvecFait(client.id, "Capacité DB09-5");
     const capability = await creerCapabilityRequirement(need.id, "Capacité DB09-5");
@@ -148,14 +162,14 @@ test.describe("DB-09 — Capability detail (GET /api/capabilities/[id])", () => 
     expect(body.needVersionId).toBe(need.id);
   });
 
-  test("6. Capability inexistante → 404 (comportement contractuel)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("6. Capability inexistante → 404 (comportement contractuel)", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/capabilities/id-inexistant-xyz");
     expect(reponse.status()).toBe(404);
   });
 
-  test("7. Missions associées correctement affichées (MissionCapabilityLink réel, jamais inventé)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("7. Missions associées correctement affichées (MissionCapabilityLink réel, jamais inventé)", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const need = await creerNeedAvecFait(client.id, "Capacité DB09-7");
@@ -170,8 +184,8 @@ test.describe("DB-09 — Capability detail (GET /api/capabilities/[id])", () => 
     expect(body.missionLinks[0].statut).toBe("ACTIVE");
   });
 
-  test("8. Capability sans Mission → missionLinks vide (aucune déduction)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("8. Capability sans Mission → missionLinks vide (aucune déduction)", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const need = await creerNeedAvecFait(client.id, "Capacité DB09-8");
     const capability = await creerCapabilityRequirement(need.id, "Capacité DB09-8");
@@ -183,8 +197,8 @@ test.describe("DB-09 — Capability detail (GET /api/capabilities/[id])", () => 
 });
 
 test.describe("DB-09 — Mission → Capability (réutilise A21 sans modification)", () => {
-  test("9/10. Mission n'affiche que ses propres MissionCapabilityLink, jamais un lien inventé ou d'une autre Mission", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("9/10. Mission n'affiche que ses propres MissionCapabilityLink, jamais un lien inventé ou d'une autre Mission", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const need = await creerNeedAvecFait(client.id, "Capacité DB09-9");
@@ -205,8 +219,8 @@ test.describe("DB-09 — Mission → Capability (réutilise A21 sans modificatio
     expect(bodyB.links[0].missionId).toBe(missionB.id);
   });
 
-  test("11. Capability inexistante référencée dans un lien → 404, aucune création", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("11. Capability inexistante référencée dans un lien → 404, aucune création", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const mission = await creerMission(client.id, profilId);
@@ -219,27 +233,27 @@ test.describe("DB-09 — Mission → Capability (réutilise A21 sans modificatio
 });
 
 test.describe("DB-09 — Tenant isolation / fuite de relation", () => {
-  test("12/13. Aucun accès cross-tenant possible — CLIENT/INGENIEUR n'ont aucun accès, ADMIN reste seul rôle transverse autorisé", async ({ request }) => {
+  test("12/13. Aucun accès cross-tenant possible — CLIENT/INGENIEUR n'ont aucun accès, ADMIN reste seul rôle transverse autorisé", async () => {
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const need = await creerNeedAvecFait(client.id, "Capacité DB09-12");
     const capability = await creerCapabilityRequirement(need.id, "Capacité DB09-12");
     const mission = await creerMission(client.id, profilId, need.id);
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     expect((await request.get("/api/capabilities")).status()).toBe(403);
     expect((await request.get(`/api/capabilities/${capability.id}`)).status()).toBe(403);
     expect((await request.get(`/api/missions/${mission.id}/capability-links`)).status()).toBe(403);
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     expect((await request.get("/api/capabilities")).status()).toBe(403);
     expect((await request.get(`/api/capabilities/${capability.id}`)).status()).toBe(403);
     expect((await request.get(`/api/missions/${mission.id}/capability-links`)).status()).toBe(403);
   });
 
-  test("14. aucune fuite de relation MissionCapabilityLink entre deux Capability distinctes", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("14. aucune fuite de relation MissionCapabilityLink entre deux Capability distinctes", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const need = await creerNeedAvecFait(client.id, "Capacité DB09-14");
@@ -261,10 +275,10 @@ test.describe("DB-09 — Tenant isolation / fuite de relation", () => {
 });
 
 test.describe("DB-09 — RBAC", () => {
-  test("15/16. Rôle non autorisé refusé conformément au backend existant, aucune nouvelle permission introduite", async ({ request }) => {
+  test("15/16. Rôle non autorisé refusé conformément au backend existant, aucune nouvelle permission introduite", async () => {
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const mission = await creerMission(client.id, profilId);
     await deconnecter(request);
 
@@ -275,6 +289,6 @@ test.describe("DB-09 — RBAC", () => {
     expect((await request.get(`/api/capabilities/${mission.id}`)).status()).toBe(403);
     expect((await request.get(`/api/missions/${mission.id}/capability-links`)).status()).toBe(403);
 
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
   });
 });
