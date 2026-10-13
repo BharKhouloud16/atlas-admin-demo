@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 
 // COMPANY ATLAS — B22 : AUTONOMY + DECISION + DELEGATION CONTROL PLANE (API).
@@ -21,9 +22,20 @@ import { prisma } from "@/lib/prisma";
 // laisser fuir un état modifié vers les autres fichiers de la suite (CI
 // exécute la suite entière avec un seul worker, donc de façon séquentielle).
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function idAgent(request: APIRequestContext, nom: string): Promise<string> {
@@ -79,24 +91,24 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     }
   });
 
-  test("RBAC : un CLIENT n'a jamais accès aux routes control-plane (403)", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("RBAC : un CLIENT n'a jamais accès aux routes control-plane (403)", async () => {
+    let request = await connecter("CLIENT");
     for (const route of ROUTES_PROTEGEES) {
       const reponse = await appeler(request, route);
       expect(reponse.status(), `${route.method} ${route.path} en CLIENT`).toBe(403);
     }
   });
 
-  test("RBAC : un INGENIEUR n'a jamais accès aux routes control-plane (403)", async ({ request }) => {
-    await connecter(request, "ingenieur-demo@example.com");
+  test("RBAC : un INGENIEUR n'a jamais accès aux routes control-plane (403)", async () => {
+    let request = await connecter("INGENIEUR");
     for (const route of ROUTES_PROTEGEES) {
       const reponse = await appeler(request, route);
       expect(reponse.status(), `${route.method} ${route.path} en INGENIEUR`).toBe(403);
     }
   });
 
-  test("RBAC : un ADMIN a accès en lecture à toutes les routes GET control-plane", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("RBAC : un ADMIN a accès en lecture à toutes les routes GET control-plane", async () => {
+    let request = await connecter("ADMIN");
     for (const route of ROUTES_PROTEGEES.filter((r) => r.method === "GET")) {
       const reponse = await request.get(route.path);
       expect(reponse.status(), `${route.path} en ADMIN`).not.toBe(403);
@@ -107,8 +119,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
   // IDENTITY (B19 réutilisé) : agentId inexistant refusé (400) sur les 3
   // routes de création, jamais d'objet orphelin créé.
 
-  test("IDENTITY : agentId inexistant refusé (400) sur Decision, Delegation et AuthorizationRequest", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("IDENTITY : agentId inexistant refusé (400) sur Decision, Delegation et AuthorizationRequest", async () => {
+    let request = await connecter("ADMIN");
 
     const decision = await request.post("/api/control-plane/decisions", {
       data: { agentId: "agent-invente", objective: "Objectif de test" },
@@ -139,10 +151,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(autorisation.status()).toBe(400);
   });
 
-  test("IDENTITY : un agent DISABLED est refusé (400) — même garde que estAgentActif (B19), jamais une identité inactive acceptée", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("IDENTITY : un agent DISABLED est refusé (400) — même garde que estAgentActif (B19), jamais une identité inactive acceptée", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "COMPANY_OS");
 
     await prisma.agentIdentity.update({ where: { id: agentId }, data: { statut: "DISABLED" } });
@@ -163,15 +173,15 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
   // discipline que B21.1/M2), dimensions explicites sur DecisionOption
   // (jamais de score), cycle OPEN -> RECOMMENDED jamais réémis.
 
-  test("DECISION : objective requis (400), aucune Decision orpheline créée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("DECISION : objective requis (400), aucune Decision orpheline créée", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const reponse = await request.post("/api/control-plane/decisions", { data: { agentId } });
     expect(reponse.status()).toBe(400);
   });
 
-  test("DECISION : correlationId de 301 caractères refusé (400), jamais tronqué", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("DECISION : correlationId de 301 caractères refusé (400), jamais tronqué", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const reponse = await request.post("/api/control-plane/decisions", {
       data: { agentId, objective: "Objectif de test M2", correlationId: "z".repeat(301) },
@@ -181,8 +191,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(erreur.error).toContain("300");
   });
 
-  test("DECISION : cycle complet Decision -> DecisionOption -> recommend, jamais réémis", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("DECISION : cycle complet Decision -> DecisionOption -> recommend, jamais réémis", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const correlationId = nouveauCorrelationId("b22-decision-cycle");
 
@@ -228,8 +238,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(optionApresRecommandation.status()).toBe(409);
   });
 
-  test("DECISION : evidenceQuality UNKNOWN recommandée -> humanNecessity H3, jamais une preuve suffisante", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("DECISION : evidenceQuality UNKNOWN recommandée -> humanNecessity H3, jamais une preuve suffisante", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const decisionRes = await request.post("/api/control-plane/decisions", {
       data: { agentId, objective: "Décision avec preuve inconnue" },
@@ -248,10 +258,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(corps.humanNecessity).toBe("H3");
   });
 
-  test("DECISION : riskLevel sans riskJustification refusé (400) ; evidenceQuality invalide refusée (400) ; recommendedOptionId d'une autre Decision refusé (400)", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("DECISION : riskLevel sans riskJustification refusé (400) ; evidenceQuality invalide refusée (400) ; recommendedOptionId d'une autre Decision refusé (400)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const decisionRes = await request.post("/api/control-plane/decisions", {
       data: { agentId, objective: "Décision de test validation" },
@@ -283,8 +291,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(recommandationCroisee.status()).toBe(400);
   });
 
-  test("DECISION : confidence hors bornes refusée (400), aucune mutation — le statut reste OPEN", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("DECISION : confidence hors bornes refusée (400), aucune mutation — le statut reste OPEN", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const correlationId = nouveauCorrelationId("b22-confidence-invalide");
     const decisionRes = await request.post("/api/control-plane/decisions", {
@@ -312,8 +320,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
   // existante (B20) ; expiresAt obligatoire et futur ; NULL sur maxAmount/
   // maxRiskLevel = aucune couverture, jamais "illimité" (Phase 3-FIX, pt. 1).
 
-  test("DELEGATION : aucune AgentPermission correspondante -> refus (400), jamais de Delegation orpheline", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("DELEGATION : aucune AgentPermission correspondante -> refus (400), jamais de Delegation orpheline", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT"); // ne possède aucune permission EXECUTE
     const reponse = await request.post("/api/control-plane/delegations", {
       data: {
@@ -329,8 +337,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(erreur.error).toContain("AgentPermission ACTIVE");
   });
 
-  test("DELEGATION : expiresAt manquant ou passé -> refus (400), aucune délégation permanente ou déjà expirée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("DELEGATION : expiresAt manquant ou passé -> refus (400), aucune délégation permanente ou déjà expirée", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
 
     const sansExpiration = await request.post("/api/control-plane/delegations", {
@@ -352,10 +360,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(erreur.error).toContain("futur");
   });
 
-  test("DELEGATION : création valide (READ/TALENT, permission B20 existante) puis révocation ; une Delegation REVOKED n'est jamais révoquée deux fois", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("DELEGATION : création valide (READ/TALENT, permission B20 existante) puis révocation ; une Delegation REVOKED n'est jamais révoquée deux fois", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const correlationId = nouveauCorrelationId("b22-delegation-cycle");
 
@@ -398,10 +404,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
   // Human Necessity priorisée (montant/risque dépassé -> H4, quel que soit
   // actionClass) ; jamais d'auto-approbation.
 
-  test("AUTHORIZATION : requestedAutonomyLevel L5/L6 refusé (400) AVANT toute écriture — B22 ne peut jamais les accorder", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("AUTHORIZATION : requestedAutonomyLevel L5/L6 refusé (400) AVANT toute écriture — B22 ne peut jamais les accorder", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const correlationId = nouveauCorrelationId("b22-autonomy-refusee");
 
@@ -438,8 +442,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(authorizationRequests.length).toBe(0);
   });
 
-  test("AUTHORIZATION : correlationId de 301 caractères refusé (400)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("AUTHORIZATION : correlationId de 301 caractères refusé (400)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const reponse = await request.post("/api/control-plane/authorization-requests", {
       data: {
@@ -455,8 +459,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(reponse.status()).toBe(400);
   });
 
-  test("AUTHORIZATION : action READ/ANALYZE (OBSERVATION) avec permission active -> ALLOW automatique (H0/H1)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("AUTHORIZATION : action READ/ANALYZE (OBSERVATION) avec permission active -> ALLOW automatique (H0/H1)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const reponse = await request.post("/api/control-plane/authorization-requests", {
       data: {
@@ -475,10 +479,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(["H0"]).toContain(corps.humanNecessity);
   });
 
-  test("AUTHORIZATION : action EXECUTE (COMMITMENT) sans aucune AgentPermission -> DENY, jamais une autorisation implicite pour une capacité non exercée", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("AUTHORIZATION : action EXECUTE (COMMITMENT) sans aucune AgentPermission -> DENY, jamais une autorisation implicite pour une capacité non exercée", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const reponse = await request.post("/api/control-plane/authorization-requests", {
       data: {
@@ -496,10 +498,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(corps.status).toBe("RESOLVED");
   });
 
-  test("AUTHORIZATION : montant demandé dépassant Delegation.maxAmount -> H4 -> APPROVAL_REQUIRED, quel que soit actionClass", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("AUTHORIZATION : montant demandé dépassant Delegation.maxAmount -> H4 -> APPROVAL_REQUIRED, quel que soit actionClass", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const delegationRes = await request.post("/api/control-plane/delegations", {
       data: {
@@ -532,10 +532,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(corps.status).toBe("PENDING");
   });
 
-  test("AUTHORIZATION : Delegation.maxAmount NULL ne couvre jamais un montant demandé -> H4 -> APPROVAL_REQUIRED (NULL != illimité)", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("AUTHORIZATION : Delegation.maxAmount NULL ne couvre jamais un montant demandé -> H4 -> APPROVAL_REQUIRED (NULL != illimité)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const delegationRes = await request.post("/api/control-plane/delegations", {
       data: {
@@ -566,8 +564,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(corps.decision).toBe("APPROVAL_REQUIRED");
   });
 
-  test("AUTHORIZATION : risque demandé dépassant Delegation.maxRiskLevel -> H4 -> APPROVAL_REQUIRED", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("AUTHORIZATION : risque demandé dépassant Delegation.maxRiskLevel -> H4 -> APPROVAL_REQUIRED", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const delegationRes = await request.post("/api/control-plane/delegations", {
       data: {
@@ -600,8 +598,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(corps.decision).toBe("APPROVAL_REQUIRED");
   });
 
-  test("AUTHORIZATION : riskLevel sans riskJustification refusé (400) ; amount négatif refusé (400)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("AUTHORIZATION : riskLevel sans riskJustification refusé (400) ; amount négatif refusé (400)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
 
     const sansJustification = await request.post("/api/control-plane/authorization-requests", {
@@ -631,10 +629,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(montantNegatif.status()).toBe(400);
   });
 
-  test("AUTHORIZATION : absence d'auto-approbation — decidedBy/approvedBy sont TOUJOURS la session ADMIN, jamais une valeur du corps de la requête", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("AUTHORIZATION : absence d'auto-approbation — decidedBy/approvedBy sont TOUJOURS la session ADMIN, jamais une valeur du corps de la requête", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const delegationRes = await request.post("/api/control-plane/delegations", {
       data: {
@@ -679,10 +675,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(erreurReapprobation.error).toContain("jamais réémise");
   });
 
-  test("AUTHORIZATION : seules ALLOW/DENY sont acceptées en résolution humaine — APPROVAL_REQUIRED et RESTRICT refusés (400)", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("AUTHORIZATION : seules ALLOW/DENY sont acceptées en résolution humaine — APPROVAL_REQUIRED et RESTRICT refusés (400)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const delegationRes = await request.post("/api/control-plane/delegations", {
       data: {
@@ -720,8 +714,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(restrict.status()).toBe(400);
   });
 
-  test("AUTHORIZATION : approbation d'un id inexistant -> 404 ; révocation d'une demande déjà révoquée -> 409", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("AUTHORIZATION : approbation d'un id inexistant -> 404 ; révocation d'une demande déjà révoquée -> 409", async () => {
+    let request = await connecter("ADMIN");
     const approbationInexistante = await request.patch("/api/control-plane/authorization-requests/inexistant/approve", {
       data: { decision: "ALLOW", decisionReason: "Test" },
     });
@@ -751,10 +745,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(secondeRevocation.status()).toBe(409);
   });
 
-  test("AUTHORIZATION : une demande expirée n'est jamais approuvable, quelle que soit la décision humaine (72h, jamais prolongée)", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("AUTHORIZATION : une demande expirée n'est jamais approuvable, quelle que soit la décision humaine (72h, jamais prolongée)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const demandeRes = await request.post("/api/control-plane/authorization-requests", {
       data: {
@@ -800,10 +792,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
   // worker : un arrêt global non levé bloquerait toute demande suivante,
   // dans ce fichier comme dans les autres).
 
-  test("EMERGENCY STOP : scope non GLOBAL sans targetId refusé (400) ; scope invalide refusé (400) ; reason requise (400)", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("EMERGENCY STOP : scope non GLOBAL sans targetId refusé (400) ; scope invalide refusé (400) ; reason requise (400)", async () => {
+    let request = await connecter("ADMIN");
 
     const sansTargetId = await request.post("/api/control-plane/emergency-stops", {
       data: { scope: "AGENT", reason: "Test" },
@@ -819,8 +809,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(sansReason.status()).toBe(400);
   });
 
-  test("EMERGENCY STOP : un arrêt AGENT bloque uniquement l'agent ciblé, jamais les autres", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("EMERGENCY STOP : un arrêt AGENT bloque uniquement l'agent ciblé, jamais les autres", async () => {
+    let request = await connecter("ADMIN");
     const agentCible = await idAgent(request, "ATLAS_TALENT");
     const agentNonCible = await idAgent(request, "ATLAS_OS_SERVICES");
 
@@ -862,10 +852,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     }
   });
 
-  test("EMERGENCY STOP GLOBAL : bloque toute nouvelle demande ET toute tentative ADMIN d'ALLOW sur une demande déjà PENDING", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("EMERGENCY STOP GLOBAL : bloque toute nouvelle demande ET toute tentative ADMIN d'ALLOW sur une demande déjà PENDING", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
 
     // 1) Une demande PENDING est créée AVANT l'activation de l'arrêt.
@@ -954,8 +942,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(corpsApresLevee.decision).toBe("ALLOW");
   });
 
-  test("EMERGENCY STOP : lever un arrêt inexistant refusé (400) ; lever un arrêt déjà levé refusé (400)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("EMERGENCY STOP : lever un arrêt inexistant refusé (400) ; lever un arrêt déjà levé refusé (400)", async () => {
+    let request = await connecter("ADMIN");
 
     const leveeInexistante = await request.patch("/api/control-plane/emergency-stops/inexistant/lift", { data: {} });
     expect(leveeInexistante.status()).toBe(400);
@@ -978,8 +966,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
   // complet d'un correlationId (Decision, DecisionOption, Delegation,
   // AuthorizationRequest, AuditEvent).
 
-  test("WHY ENGINE : correlationId requis (400) ; correlationId de 301 caractères refusé (400)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("WHY ENGINE : correlationId requis (400) ; correlationId de 301 caractères refusé (400)", async () => {
+    let request = await connecter("ADMIN");
     const sansCorrelationId = await request.get("/api/control-plane/audit");
     expect(sansCorrelationId.status()).toBe(400);
 
@@ -987,10 +975,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(tropLong.status()).toBe(400);
   });
 
-  test("WHY ENGINE : reconstitue l'historique complet d'un correlationId (Decision, DecisionOption, AuthorizationRequest, AuditEvent)", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("WHY ENGINE : reconstitue l'historique complet d'un correlationId (Decision, DecisionOption, AuthorizationRequest, AuditEvent)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const correlationId = nouveauCorrelationId("b22-why-engine");
 
@@ -1024,8 +1010,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(corps.auditEvents.every((e: { correlationId: string }) => e.correlationId === correlationId)).toBe(true);
   });
 
-  test("WHY ENGINE : aucune route de mutation n'existe sur /api/control-plane/audit (404/405)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("WHY ENGINE : aucune route de mutation n'existe sur /api/control-plane/audit (404/405)", async () => {
+    let request = await connecter("ADMIN");
     const post = await request.post("/api/control-plane/audit", { data: {} });
     expect([404, 405]).toContain(post.status());
     const patch = await request.patch("/api/control-plane/audit", { data: {} });
@@ -1037,10 +1023,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
   // ==========================================================================
   // Absence de secrets — même discipline que B20 (Permission Registry).
 
-  test("absence de secrets : aucun champ de Delegation ni d'AuthorizationRequest n'accepte un identifiant de type mot de passe/token", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("absence de secrets : aucun champ de Delegation ni d'AuthorizationRequest n'accepte un identifiant de type mot de passe/token", async () => {
+    let request = await connecter("ADMIN");
     const delegations = await (await request.get("/api/control-plane/delegations?limite=1")).json();
     const autorisations = await (await request.get("/api/control-plane/authorization-requests?limite=1")).json();
     for (const objet of [delegations.delegations[0], autorisations.authorizationRequests[0]]) {
@@ -1059,10 +1043,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
   // Emergency Stop jamais un faux mécanisme de blocage, transition
   // PENDING -> RESOLVED atomique.
 
-  test("B22-FIX P0 (L4) : requestedAutonomyLevel L4_EXECUTE_WITH_APPROVAL exige TOUJOURS une approbation, même pour une action nominale (Human Necessity H0/H1)", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("B22-FIX P0 (L4) : requestedAutonomyLevel L4_EXECUTE_WITH_APPROVAL exige TOUJOURS une approbation, même pour une action nominale (Human Necessity H0/H1)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
 
     // Sans le correctif, cette même requête (action READ, permission
@@ -1085,10 +1067,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(corps.status).toBe("PENDING");
   });
 
-  test("B22-FIX P0 (finance) : un montant déclaré SANS Delegation qui le couvre n'est jamais ALLOW implicite, même pour une action INTERNAL_ACTION (PROPOSE/WRITE)", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("B22-FIX P0 (finance) : un montant déclaré SANS Delegation qui le couvre n'est jamais ALLOW implicite, même pour une action INTERNAL_ACTION (PROPOSE/WRITE)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
 
     // Sans le correctif : aucune delegationId -> montantDepasse restait
@@ -1112,8 +1092,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(corps.status).toBe("PENDING");
   });
 
-  test("B22-FIX P0 (finance) : un risque déclaré SANS Delegation qui le couvre n'est jamais ALLOW implicite", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("B22-FIX P0 (finance) : un risque déclaré SANS Delegation qui le couvre n'est jamais ALLOW implicite", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
 
     const demande = await request.post("/api/control-plane/authorization-requests", {
@@ -1134,10 +1114,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(corps.decision).toBe("APPROVAL_REQUIRED");
   });
 
-  test("B22-FIX P0 (revalidation Permission) : une permission désactivée APRÈS la création de la demande bloque l'approbation ALLOW (jamais l'état enregistré à la création)", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("B22-FIX P0 (revalidation Permission) : une permission désactivée APRÈS la création de la demande bloque l'approbation ALLOW (jamais l'état enregistré à la création)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { permissions } = await (await request.get("/api/security/permissions")).json();
     const permissionProposeTalent = permissions.find(
@@ -1179,10 +1157,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     }
   });
 
-  test("B22-FIX P0 (revalidation Identity) : un agent désactivé APRÈS la création de la demande bloque l'approbation ALLOW", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("B22-FIX P0 (revalidation Identity) : un agent désactivé APRÈS la création de la demande bloque l'approbation ALLOW", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
 
     const demandeRes = await request.post("/api/control-plane/authorization-requests", {
@@ -1212,10 +1188,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     }
   });
 
-  test("B22-FIX P0 (revalidation Delegation) : une Delegation révoquée APRÈS la création de la demande bloque l'approbation ALLOW (jamais l'état de création)", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("B22-FIX P0 (revalidation Delegation) : une Delegation révoquée APRÈS la création de la demande bloque l'approbation ALLOW (jamais l'état de création)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
 
     const delegationRes = await request.post("/api/control-plane/delegations", {
@@ -1272,8 +1246,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
   // B23-FIX1. Les tests ci-dessous correspondent exactement aux scénarios 1
   // à 6 de l'audit.
 
-  test("B24-FIX0 Test 1 — scope correct : ATLAS_TALENT + PROPOSE + TALENT (permission ACTIVE) -> accepté", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("B24-FIX0 Test 1 — scope correct : ATLAS_TALENT + PROPOSE + TALENT (permission ACTIVE) -> accepté", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
 
     const demandeRes = await request.post("/api/control-plane/authorization-requests", {
@@ -1292,8 +1266,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(corps.status).toBe("RESOLVED");
   });
 
-  test("B24-FIX0 Test 2 — scope incorrect : ATLAS_TALENT n'a PROPOSE que sur TALENT, jamais sur SECURITY -> DENY à la création", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("B24-FIX0 Test 2 — scope incorrect : ATLAS_TALENT n'a PROPOSE que sur TALENT, jamais sur SECURITY -> DENY à la création", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
 
     const demandeRes = await request.post("/api/control-plane/authorization-requests", {
@@ -1312,8 +1286,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(corps.status).toBe("RESOLVED");
   });
 
-  test("B24-FIX0 Test 3 — permission DISABLED (même scope exact) -> DENY à la création", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("B24-FIX0 Test 3 — permission DISABLED (même scope exact) -> DENY à la création", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { permissions } = await (await request.get("/api/security/permissions")).json();
     const permissionProposeTalent = permissions.find(
@@ -1341,10 +1315,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     }
   });
 
-  test("B24-FIX0 Test 4 — revalidation à l'approbation : permission désactivée après création d'une demande PENDING -> refus (déjà couvert par B22-FIX, confirmé scope-aware)", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("B24-FIX0 Test 4 — revalidation à l'approbation : permission désactivée après création d'une demande PENDING -> refus (déjà couvert par B22-FIX, confirmé scope-aware)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { permissions } = await (await request.get("/api/security/permissions")).json();
     const permissionProposeTalent = permissions.find(
@@ -1378,10 +1350,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     }
   });
 
-  test("B24-FIX0 Test 5 — revalidation scope-exacte à l'approbation : une permission ACTIVE pour agentId+action mais un AUTRE scope ne doit jamais couvrir la demande", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("B24-FIX0 Test 5 — revalidation scope-exacte à l'approbation : une permission ACTIVE pour agentId+action mais un AUTRE scope ne doit jamais couvrir la demande", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { permissions } = await (await request.get("/api/security/permissions")).json();
     const permissionProposeTalent = permissions.find(
@@ -1433,10 +1403,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     }
   });
 
-  test("B24-FIX0 Test 6 — régression B22-FIX2 : une délégation insuffisante en montant reste APPROVAL_REQUIRED (jamais bloquée par le correctif de scope)", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("B24-FIX0 Test 6 — régression B22-FIX2 : une délégation insuffisante en montant reste APPROVAL_REQUIRED (jamais bloquée par le correctif de scope)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
 
     const delegationRes = await request.post("/api/control-plane/delegations", {
@@ -1473,10 +1441,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(corps.humanNecessity).toBe("H4");
   });
 
-  test("B22-FIX P1 (concurrence) : deux approbations concurrentes sur la même demande PENDING — une seule réussit, jamais deux décisions incohérentes", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("B22-FIX P1 (concurrence) : deux approbations concurrentes sur la même demande PENDING — une seule réussit, jamais deux décisions incohérentes", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
 
     const demandeRes = await request.post("/api/control-plane/authorization-requests", {
@@ -1513,10 +1479,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(resolues.length).toBe(1);
   });
 
-  test("B22-FIX P0 (Emergency Stop) : CAPABILITY/INTEGRATION/MISSION refusés à la création — jamais un faux mécanisme de blocage", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("B22-FIX P0 (Emergency Stop) : CAPABILITY/INTEGRATION/MISSION refusés à la création — jamais un faux mécanisme de blocage", async () => {
+    let request = await connecter("ADMIN");
     for (const scope of ["CAPABILITY", "INTEGRATION", "MISSION"]) {
       const reponse = await request.post("/api/control-plane/emergency-stops", {
         data: { scope, targetId: "cible-de-test", reason: "Test B22-FIX scopes non évalués" },
@@ -1527,10 +1491,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     }
   });
 
-  test("B22-FIX (Emergency Stop) : ACTION_CLASS et DELEGATION restent acceptés — ce sont des scopes réellement évalués par estArreteUrgenceActif", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("B22-FIX (Emergency Stop) : ACTION_CLASS et DELEGATION restent acceptés — ce sont des scopes réellement évalués par estArreteUrgenceActif", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const delegationRes = await request.post("/api/control-plane/delegations", {
       data: {
@@ -1575,10 +1537,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
   // manquait. Voir aussi l'amélioration P1 (fenêtre Emergency Stop) dans
   // lib/control-plane/authorization.ts::approuverDemande.
 
-  test("B22-FIX2 (Delegation/montant) : montant couvert par la Delegation -> comportement normal (ALLOW automatique)", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("B22-FIX2 (Delegation/montant) : montant couvert par la Delegation -> comportement normal (ALLOW automatique)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const delegationRes = await request.post("/api/control-plane/delegations", {
       data: {
@@ -1610,10 +1570,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(corps.status).toBe("RESOLVED");
   });
 
-  test("B22-FIX2 (Delegation/montant) : montant dépassant la Delegation -> pas d'ALLOW automatique, PUIS une décision humaine ALLOW explicite reste possible", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("B22-FIX2 (Delegation/montant) : montant dépassant la Delegation -> pas d'ALLOW automatique, PUIS une décision humaine ALLOW explicite reste possible", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const delegationRes = await request.post("/api/control-plane/delegations", {
       data: {
@@ -1658,10 +1616,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(corpsApprobation.decidedBy).toBe("admin-demo@example.com");
   });
 
-  test("B22-FIX2 (Delegation/risque) : risque couvert par la Delegation -> comportement normal (ALLOW automatique)", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("B22-FIX2 (Delegation/risque) : risque couvert par la Delegation -> comportement normal (ALLOW automatique)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const delegationRes = await request.post("/api/control-plane/delegations", {
       data: {
@@ -1694,10 +1650,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(corps.status).toBe("RESOLVED");
   });
 
-  test("B22-FIX2 (Delegation/risque) : risque dépassant la Delegation -> pas d'ALLOW automatique, PUIS une décision humaine ALLOW explicite reste possible", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("B22-FIX2 (Delegation/risque) : risque dépassant la Delegation -> pas d'ALLOW automatique, PUIS une décision humaine ALLOW explicite reste possible", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const delegationRes = await request.post("/api/control-plane/delegations", {
       data: {
@@ -1737,10 +1691,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(corpsApprobation.decision).toBe("ALLOW");
   });
 
-  test("B22-FIX2 (sécurité inchangée) : permission désactivée, agent désactivé, delegation révoquée — l'ADMIN ALLOW reste refusé même après ce correctif", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("B22-FIX2 (sécurité inchangée) : permission désactivée, agent désactivé, delegation révoquée — l'ADMIN ALLOW reste refusé même après ce correctif", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
 
     // Permission désactivée.
@@ -1825,10 +1777,8 @@ test.describe("COMPANY ATLAS B22 — Control Plane (API)", () => {
     expect(tentativeDelegation.status()).toBe(409);
   });
 
-  test("B22-FIX2 P1 (Emergency Stop, fenêtre de course) : l'invariant tient sous concurrence — jamais un ALLOW résolu si un arrêt d'urgence a gagné la course", async ({
-    request,
-  }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("B22-FIX2 P1 (Emergency Stop, fenêtre de course) : l'invariant tient sous concurrence — jamais un ALLOW résolu si un arrêt d'urgence a gagné la course", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
 
     const demandeRes = await request.post("/api/control-plane/authorization-requests", {

@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { StatutMission, DeliverableStatut } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { creerEvidenceAvecRetry } from "@/lib/delivery-evidence/evidence";
@@ -33,9 +34,20 @@ import { creerEvidenceAvecRetry } from "@/lib/delivery-evidence/evidence";
 // combinaisons PASS+NOT_DETERMINABLE / FAIL+ACHIEVED légitimes, RBAC
 // (ADMIN/INGENIEUR/CLIENT, aucun Agent), IDOR, concurrence, journal.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function clientDemo() {
@@ -118,7 +130,6 @@ async function deleteLien(request: APIRequestContext, missionId: string, quality
 }
 
 async function creerQualityViaApi(request: APIRequestContext, missionId: string, versionId: string, overrides: Record<string, unknown> = {}) {
-  await connecter(request, "admin-demo@example.com");
   const reponse = await postQuality(request, missionId, {
     deliverableVersionId: versionId,
     criteresEvalues: "Vérification manuelle des critères.",
@@ -130,8 +141,8 @@ async function creerQualityViaApi(request: APIRequestContext, missionId: string,
 }
 
 test.describe("A27 — Création", () => {
-  test("1. création minimale -> 201, statut DRAFT", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("1. création minimale -> 201, statut DRAFT", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
 
@@ -146,31 +157,31 @@ test.describe("A27 — Création", () => {
     expect(corps.deliverableVersionId).toBe(version.id);
   });
 
-  test("2. criteresEvalues manquant -> 400", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("2. criteresEvalues manquant -> 400", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     const reponse = await postQuality(request, mission.id, { deliverableVersionId: version.id, resultat: "PASS" });
     expect(reponse.status()).toBe(400);
   });
 
-  test("3. criteresEvalues vide -> 400", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("3. criteresEvalues vide -> 400", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     const reponse = await postQuality(request, mission.id, { deliverableVersionId: version.id, criteresEvalues: "   ", resultat: "PASS" });
     expect(reponse.status()).toBe(400);
   });
 
-  test("4. deliverableVersionId manquant -> 400", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("4. deliverableVersionId manquant -> 400", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const reponse = await postQuality(request, mission.id, { criteresEvalues: "x", resultat: "PASS" });
     expect(reponse.status()).toBe(400);
   });
 
-  test("5. evaluatedByEmail/evaluatedByRole renseignés depuis la session, jamais fournis par le client", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("5. evaluatedByEmail/evaluatedByRole renseignés depuis la session, jamais fournis par le client", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     const reponse = await postQuality(request, mission.id, {
@@ -185,8 +196,8 @@ test.describe("A27 — Création", () => {
     expect(corps.evaluatedByRole).toBe("ADMIN");
   });
 
-  test("6. plusieurs DeliveryQualityGate indépendantes sur la même DeliverableVersion -> toutes créées, jamais fusionnées", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("6. plusieurs DeliveryQualityGate indépendantes sur la même DeliverableVersion -> toutes créées, jamais fusionnées", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
 
@@ -201,8 +212,8 @@ test.describe("A27 — Création", () => {
 
 test.describe("A27 — Résultats", () => {
   for (const resultat of ["PASS", "FAIL", "NOT_DETERMINABLE"]) {
-    test(`7-9. resultat ${resultat} accepté`, async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test(`7-9. resultat ${resultat} accepté`, async () => {
+      let request = await connecter("ADMIN");
       const mission = await creerMission();
       const { version } = await creerDeliverableDirect(mission.id);
       const reponse = await postQuality(request, mission.id, { deliverableVersionId: version.id, criteresEvalues: "x", resultat });
@@ -212,8 +223,8 @@ test.describe("A27 — Résultats", () => {
   }
 
   for (const resultat of ["ACHIEVED", "NOT_ACHIEVED", "OBTENU", "NON_OBTENU", "PARTIELLEMENT_OBTENU", "INDETERMINABLE"]) {
-    test(`10/11. vocabulaire Outcome (${resultat}) explicitement rejeté — jamais réutilisé`, async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test(`10/11. vocabulaire Outcome (${resultat}) explicitement rejeté — jamais réutilisé`, async () => {
+      let request = await connecter("ADMIN");
       const mission = await creerMission();
       const { version } = await creerDeliverableDirect(mission.id);
       const reponse = await postQuality(request, mission.id, { deliverableVersionId: version.id, criteresEvalues: "x", resultat });
@@ -224,8 +235,8 @@ test.describe("A27 — Résultats", () => {
 
 test.describe("A27 — Ciblage DeliverableVersion", () => {
   for (const statut of ["DRAFT", "REVIEW", "APPROVED", "FINALIZED", "REJECTED"] as DeliverableStatut[]) {
-    test(`12-15. Quality créée sur une DeliverableVersion ${statut} -> 201 (aucune précondition de statut)`, async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test(`12-15. Quality créée sur une DeliverableVersion ${statut} -> 201 (aucune précondition de statut)`, async () => {
+      let request = await connecter("ADMIN");
       const mission = await creerMission();
       const { version } = await creerDeliverableDirect(mission.id);
       await mettreVersionEnStatut(version.id, statut);
@@ -235,15 +246,15 @@ test.describe("A27 — Ciblage DeliverableVersion", () => {
     });
   }
 
-  test("14. deliverableVersionId inexistant -> 404", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("14. deliverableVersionId inexistant -> 404", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const reponse = await postQuality(request, mission.id, { deliverableVersionId: "inexistant-123", criteresEvalues: "x", resultat: "PASS" });
     expect(reponse.status()).toBe(404);
   });
 
-  test("15. deliverableVersionId d'une autre Mission -> 404", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("15. deliverableVersionId d'une autre Mission -> 404", async () => {
+    let request = await connecter("ADMIN");
     const missionA = await creerMission();
     const missionB = await creerMission();
     const { version: versionB } = await creerDeliverableDirect(missionB.id);
@@ -254,8 +265,8 @@ test.describe("A27 — Ciblage DeliverableVersion", () => {
 });
 
 test.describe("A27 — Liaison Evidence", () => {
-  test("16. lien Quality<->Evidence (même cible) -> 201", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("16. lien Quality<->Evidence (même cible) -> 201", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     const evidence = await creerEvidenceSurVersion(version.id, mission.id);
@@ -268,8 +279,8 @@ test.describe("A27 — Liaison Evidence", () => {
     expect(corps.qualityGateId).toBe(gate.id);
   });
 
-  test("17. doublon exact du même lien -> 409", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("17. doublon exact du même lien -> 409", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     const evidence = await creerEvidenceSurVersion(version.id, mission.id);
@@ -281,8 +292,8 @@ test.describe("A27 — Liaison Evidence", () => {
     expect(r2.status()).toBe(409);
   });
 
-  test("18. Evidence d'une autre Mission -> 404 (IDOR uniforme)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("18. Evidence d'une autre Mission -> 404 (IDOR uniforme)", async () => {
+    let request = await connecter("ADMIN");
     const missionA = await creerMission();
     const missionB = await creerMission();
     const { version: versionA } = await creerDeliverableDirect(missionA.id);
@@ -294,8 +305,8 @@ test.describe("A27 — Liaison Evidence", () => {
     expect(reponse.status()).toBe(404);
   });
 
-  test("19. Evidence introuvable -> 404", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("19. Evidence introuvable -> 404", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     const gate = await creerQualityViaApi(request, mission.id, version.id);
@@ -304,8 +315,8 @@ test.describe("A27 — Liaison Evidence", () => {
     expect(reponse.status()).toBe(404);
   });
 
-  test("20. Evidence supersédée reste légalement référençable par une Quality historique", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("20. Evidence supersédée reste légalement référençable par une Quality historique", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     const e1 = await creerEvidenceSurVersion(version.id, mission.id, "v1");
@@ -324,8 +335,8 @@ test.describe("A27 — Liaison Evidence", () => {
     expect(reponse.status(), await reponse.text()).toBe(201);
   });
 
-  test("21. retrait d'un lien (DRAFT) -> 204, ne détruit ni la Quality ni l'Evidence", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("21. retrait d'un lien (DRAFT) -> 204, ne détruit ni la Quality ni l'Evidence", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     const evidence = await creerEvidenceSurVersion(version.id, mission.id);
@@ -343,8 +354,8 @@ test.describe("A27 — Liaison Evidence", () => {
 });
 
 test.describe("A27 — Critères / snapshot acceptanceCriteria", () => {
-  test("22. snapshot copié depuis Deliverable.acceptanceCriteria à la création", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("22. snapshot copié depuis Deliverable.acceptanceCriteria à la création", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id, "Critère initial strict.");
 
@@ -352,8 +363,8 @@ test.describe("A27 — Critères / snapshot acceptanceCriteria", () => {
     expect(gate.acceptanceCriteriaSnapshot).toBe("Critère initial strict.");
   });
 
-  test("23. Deliverable.acceptanceCriteria null -> snapshot null, jamais une valeur inventée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("23. Deliverable.acceptanceCriteria null -> snapshot null, jamais une valeur inventée", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id, null);
 
@@ -361,8 +372,8 @@ test.describe("A27 — Critères / snapshot acceptanceCriteria", () => {
     expect(gate.acceptanceCriteriaSnapshot).toBeNull();
   });
 
-  test("24/25. acceptanceCriteria modifié APRÈS la création de la Quality -> le snapshot historique reste inchangé", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("24/25. acceptanceCriteria modifié APRÈS la création de la Quality -> le snapshot historique reste inchangé", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { deliverable, version } = await creerDeliverableDirect(mission.id, "Version 1 du critère.");
     const gate = await creerQualityViaApi(request, mission.id, version.id);
@@ -373,8 +384,8 @@ test.describe("A27 — Critères / snapshot acceptanceCriteria", () => {
     expect(gateApres?.acceptanceCriteriaSnapshot).toBe("Version 1 du critère.");
   });
 
-  test("26. criteresEvalues (déclaration de l'évaluateur) et acceptanceCriteriaSnapshot restent deux champs distincts", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("26. criteresEvalues (déclaration de l'évaluateur) et acceptanceCriteriaSnapshot restent deux champs distincts", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id, "Contrat d'acceptation.");
 
@@ -384,8 +395,8 @@ test.describe("A27 — Critères / snapshot acceptanceCriteria", () => {
 });
 
 test.describe("A27 — Immutabilité", () => {
-  test("27. finalisation DRAFT -> FINALIZED -> 200", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("27. finalisation DRAFT -> FINALIZED -> 200", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     const gate = await creerQualityViaApi(request, mission.id, version.id);
@@ -395,8 +406,8 @@ test.describe("A27 — Immutabilité", () => {
     expect((await reponse.json()).statut).toBe("FINALIZED");
   });
 
-  test("28. édition du contenu après FINALIZED -> 409, contenu inchangé", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("28. édition du contenu après FINALIZED -> 409, contenu inchangé", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     const gate = await creerQualityViaApi(request, mission.id, version.id, { resultat: "PASS" });
@@ -409,8 +420,8 @@ test.describe("A27 — Immutabilité", () => {
     expect(apres?.resultat).toBe("PASS");
   });
 
-  test("29. lien Evidence après FINALIZED -> 409", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("29. lien Evidence après FINALIZED -> 409", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     const evidence = await creerEvidenceSurVersion(version.id, mission.id);
@@ -421,8 +432,8 @@ test.describe("A27 — Immutabilité", () => {
     expect(reponse.status()).toBe(409);
   });
 
-  test("30. correction après FINALIZED = une NOUVELLE DeliveryQualityGate indépendante, jamais une réécriture", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("30. correction après FINALIZED = une NOUVELLE DeliveryQualityGate indépendante, jamais une réécriture", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     const gate1 = await creerQualityViaApi(request, mission.id, version.id, { resultat: "FAIL" });
@@ -438,8 +449,8 @@ test.describe("A27 — Immutabilité", () => {
 });
 
 test.describe("A27 — Mission (TERMINEE/ANNULEE, aucune réouverture)", () => {
-  test("31. Quality créée après Mission TERMINEE -> 201, Mission reste TERMINEE", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("31. Quality créée après Mission TERMINEE -> 201, Mission reste TERMINEE", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.TERMINEE);
     const { version } = await creerDeliverableDirect(mission.id);
 
@@ -450,8 +461,8 @@ test.describe("A27 — Mission (TERMINEE/ANNULEE, aucune réouverture)", () => {
     expect(missionApres?.statut).toBe("TERMINEE");
   });
 
-  test("32. Quality créée après Mission ANNULEE -> 201, Mission reste ANNULEE", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("32. Quality créée après Mission ANNULEE -> 201, Mission reste ANNULEE", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.ANNULEE);
     const { version } = await creerDeliverableDirect(mission.id);
 
@@ -462,8 +473,8 @@ test.describe("A27 — Mission (TERMINEE/ANNULEE, aucune réouverture)", () => {
     expect(missionApres?.statut).toBe("ANNULEE");
   });
 
-  test("33. finalisation possible sur Mission TERMINEE/ANNULEE", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("33. finalisation possible sur Mission TERMINEE/ANNULEE", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.TERMINEE);
     const { version } = await creerDeliverableDirect(mission.id);
     const gate = await creerQualityViaApi(request, mission.id, version.id);
@@ -472,16 +483,16 @@ test.describe("A27 — Mission (TERMINEE/ANNULEE, aucune réouverture)", () => {
     expect(reponse.status(), await reponse.text()).toBe(200);
   });
 
-  test("34. Quality d'une Mission introuvable -> 404", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("34. Quality d'une Mission introuvable -> 404", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await postQuality(request, "mission-inexistante-123", { deliverableVersionId: "x", criteresEvalues: "x", resultat: "PASS" });
     expect(reponse.status()).toBe(404);
   });
 });
 
 test.describe("A27 — Indépendance Deliverable/WorkItem", () => {
-  test("35. création/finalisation d'une Quality ne modifie jamais DeliverableVersion.statut", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("35. création/finalisation d'une Quality ne modifie jamais DeliverableVersion.statut", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     await mettreVersionEnStatut(version.id, "APPROVED");
@@ -493,8 +504,8 @@ test.describe("A27 — Indépendance Deliverable/WorkItem", () => {
     expect(versionApres?.statut).toBe("APPROVED");
   });
 
-  test("36. Quality FAIL ne rejette jamais automatiquement la DeliverableVersion", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("36. Quality FAIL ne rejette jamais automatiquement la DeliverableVersion", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     await mettreVersionEnStatut(version.id, "APPROVED");
@@ -506,8 +517,8 @@ test.describe("A27 — Indépendance Deliverable/WorkItem", () => {
     expect(versionApres?.statut).toBe("APPROVED");
   });
 
-  test("37. aucune relation/écriture vers WorkItem (architecture Option A, DeliverableVersion uniquement)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("37. aucune relation/écriture vers WorkItem (architecture Option A, DeliverableVersion uniquement)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const workItem = await creerWorkItem(mission.id);
     const { version } = await creerDeliverableDirect(mission.id);
@@ -521,8 +532,8 @@ test.describe("A27 — Indépendance Deliverable/WorkItem", () => {
 });
 
 test.describe("A27 — Non-mutation Evidence", () => {
-  test("38/39. création et retrait d'un lien ne modifient jamais le contenu de la DeliveryEvidence référencée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("38/39. création et retrait d'un lien ne modifient jamais le contenu de la DeliveryEvidence référencée", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     const evidence = await creerEvidenceSurVersion(version.id, mission.id, "Contenu original.");
@@ -539,8 +550,8 @@ test.describe("A27 — Non-mutation Evidence", () => {
 });
 
 test.describe("A27 — Indépendance Outcome", () => {
-  test("40/41. création d'une Quality ne crée jamais d'OutcomeAssessment", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("40/41. création d'une Quality ne crée jamais d'OutcomeAssessment", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
 
@@ -550,8 +561,8 @@ test.describe("A27 — Indépendance Outcome", () => {
     expect(outcomes).toBe(0);
   });
 
-  test("42/43. finalisation Quality (PASS ou FAIL) ne crée/modifie jamais d'OutcomeAssessment", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("42/43. finalisation Quality (PASS ou FAIL) ne crée/modifie jamais d'OutcomeAssessment", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     const gate = await creerQualityViaApi(request, mission.id, version.id, { resultat: "PASS" });
@@ -561,8 +572,8 @@ test.describe("A27 — Indépendance Outcome", () => {
     expect(outcomes).toBe(0);
   });
 
-  test("44. combinaison légitime Quality PASS + Outcome NOT_DETERMINABLE/INDETERMINABLE -> jamais bloquée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("44. combinaison légitime Quality PASS + Outcome NOT_DETERMINABLE/INDETERMINABLE -> jamais bloquée", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.TERMINEE);
     const { version } = await creerDeliverableDirect(mission.id);
     const gate = await creerQualityViaApi(request, mission.id, version.id, { resultat: "PASS" });
@@ -574,8 +585,8 @@ test.describe("A27 — Indépendance Outcome", () => {
     expect(outcome.overallStatus).toBe("INDETERMINABLE");
   });
 
-  test("45/46. combinaison légitime Quality FAIL + Outcome OBTENU -> jamais bloquée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("45/46. combinaison légitime Quality FAIL + Outcome OBTENU -> jamais bloquée", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.TERMINEE);
     const { version } = await creerDeliverableDirect(mission.id);
     const gate = await creerQualityViaApi(request, mission.id, version.id, { resultat: "FAIL" });
@@ -589,8 +600,8 @@ test.describe("A27 — Indépendance Outcome", () => {
 });
 
 test.describe("A27 — RBAC", () => {
-  test("47. ADMIN : créer et finaliser -> OK", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("47. ADMIN : créer et finaliser -> OK", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     const gate = await creerQualityViaApi(request, mission.id, version.id);
@@ -598,12 +609,12 @@ test.describe("A27 — RBAC", () => {
     expect(reponse.status()).toBe(200);
   });
 
-  test("48. INGENIEUR (autorisé sur la Mission) : créer -> OK ; finaliser -> 403 (jamais d'auto-finalisation)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("48. INGENIEUR (autorisé sur la Mission) : créer -> OK ; finaliser -> 403 (jamais d'auto-finalisation)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     const creation = await postQuality(request, mission.id, { deliverableVersionId: version.id, criteresEvalues: "Préparation Ingénieur.", resultat: "PASS" });
     expect(creation.status(), await creation.text()).toBe(201);
     const gate = await creation.json();
@@ -612,24 +623,24 @@ test.describe("A27 — RBAC", () => {
     expect(finalisation.status()).toBe(403);
   });
 
-  test("49. INGENIEUR : ne peut pas éditer la DRAFT préparée par un autre acteur (404 IDOR, jamais 403)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("49. INGENIEUR : ne peut pas éditer la DRAFT préparée par un autre acteur (404 IDOR, jamais 403)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     const gate = await creerQualityViaApi(request, mission.id, version.id);
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     const reponse = await patchQuality(request, mission.id, gate.id, { resultat: "FAIL" });
     expect(reponse.status()).toBe(404);
   });
 
-  test("50. CLIENT : ne peut jamais créer une Quality (403) ; lecture autorisée sur sa propre Mission ; aucun rôle Agent inventé", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("50. CLIENT : ne peut jamais créer une Quality (403) ; lecture autorisée sur sa propre Mission ; aucun rôle Agent inventé", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     const gate = await creerQualityViaApi(request, mission.id, version.id);
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const creation = await postQuality(request, mission.id, { deliverableVersionId: version.id, criteresEvalues: "x", resultat: "PASS" });
     expect(creation.status()).toBe(403);
 
@@ -646,8 +657,8 @@ test.describe("A27 — RBAC", () => {
 });
 
 test.describe("A27 — IDOR", () => {
-  test("51. GET d'une Quality d'une autre Mission -> 404", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("51. GET d'une Quality d'une autre Mission -> 404", async () => {
+    let request = await connecter("ADMIN");
     const missionA = await creerMission();
     const missionB = await creerMission();
     const { version: versionB } = await creerDeliverableDirect(missionB.id);
@@ -657,8 +668,8 @@ test.describe("A27 — IDOR", () => {
     expect(reponse.status()).toBe(404);
   });
 
-  test("52. PATCH d'une Quality d'une autre Mission -> 404", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("52. PATCH d'une Quality d'une autre Mission -> 404", async () => {
+    let request = await connecter("ADMIN");
     const missionA = await creerMission();
     const missionB = await creerMission();
     const { version: versionB } = await creerDeliverableDirect(missionB.id);
@@ -668,8 +679,8 @@ test.describe("A27 — IDOR", () => {
     expect(reponse.status()).toBe(404);
   });
 
-  test("53. evidence-links d'une Quality d'une autre Mission -> 404", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("53. evidence-links d'une Quality d'une autre Mission -> 404", async () => {
+    let request = await connecter("ADMIN");
     const missionA = await creerMission();
     const missionB = await creerMission();
     const { version: versionB } = await creerDeliverableDirect(missionB.id);
@@ -680,8 +691,8 @@ test.describe("A27 — IDOR", () => {
     expect(reponse.status()).toBe(404);
   });
 
-  test("54. INGENIEUR non autorisé sur la Mission (profil étranger) -> 404 (jamais 403, aucune fuite d'existence)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("54. INGENIEUR non autorisé sur la Mission (profil étranger) -> 404 (jamais 403, aucune fuite d'existence)", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const autreProfil = await prisma.profil.create({ data: { nom: `Autre Profil A27 ${Date.now()}` } });
     const missionEtrangere = await prisma.mission.create({
@@ -689,15 +700,15 @@ test.describe("A27 — IDOR", () => {
     });
     const { version } = await creerDeliverableDirect(missionEtrangere.id);
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     const reponse = await postQuality(request, missionEtrangere.id, { deliverableVersionId: version.id, criteresEvalues: "x", resultat: "PASS" });
     expect(reponse.status()).toBe(404);
   });
 });
 
 test.describe("A27 — Concurrence", () => {
-  test("55/56. deux finalisations simultanées -> une seule gagne, jamais un état impossible", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("55/56. deux finalisations simultanées -> une seule gagne, jamais un état impossible", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     const gate = await creerQualityViaApi(request, mission.id, version.id);
@@ -713,8 +724,8 @@ test.describe("A27 — Concurrence", () => {
     expect(apres?.statut).toBe("FINALIZED");
   });
 
-  test("57. créations simultanées sur la même cible -> toutes réussissent, indépendantes (aucun invariant croisé)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("57. créations simultanées sur la même cible -> toutes réussissent, indépendantes (aucun invariant croisé)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
 
@@ -731,8 +742,8 @@ test.describe("A27 — Concurrence", () => {
 });
 
 test.describe("A27 — Journalisation", () => {
-  test("58. création -> journal quality.created", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("58. création -> journal quality.created", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     const gate = await creerQualityViaApi(request, mission.id, version.id);
@@ -742,8 +753,8 @@ test.describe("A27 — Journalisation", () => {
     expect(entree!.detail).toContain(gate.id);
   });
 
-  test("59. finalisation -> journal quality.finalized", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("59. finalisation -> journal quality.finalized", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     const gate = await creerQualityViaApi(request, mission.id, version.id);
@@ -753,8 +764,8 @@ test.describe("A27 — Journalisation", () => {
     expect(entree).toBeTruthy();
   });
 
-  test("60. création d'un lien Evidence -> journal quality.evidence_link.created", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("60. création d'un lien Evidence -> journal quality.evidence_link.created", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     const evidence = await creerEvidenceSurVersion(version.id, mission.id);
@@ -765,8 +776,8 @@ test.describe("A27 — Journalisation", () => {
     expect(entree).toBeTruthy();
   });
 
-  test("61. retrait d'un lien Evidence -> journal quality.evidence_link.removed", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("61. retrait d'un lien Evidence -> journal quality.evidence_link.removed", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const { version } = await creerDeliverableDirect(mission.id);
     const evidence = await creerEvidenceSurVersion(version.id, mission.id);

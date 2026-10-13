@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { StatutMission } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { executerIteration } from "@/lib/agentic/runtime";
@@ -19,9 +20,20 @@ import { executerIteration } from "@/lib/agentic/runtime";
 // que les tests unitaires directs d'autres lots (ex. A20 backfill, A5.2
 // fork core) sur une fonction de service non exposée telle quelle.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function idAgent(request: APIRequestContext, nom: string): Promise<string> {
@@ -108,8 +120,8 @@ async function payloadValide(request: APIRequestContext, overrides: Record<strin
 }
 
 async function creerRunViaApi(request: APIRequestContext, overrides: Record<string, unknown> = {}) {
-  await connecter(request, "admin-demo@example.com");
-  const reponse = await postRun(request, await payloadValide(request, overrides));
+  const admin = await connecter("ADMIN");
+  const reponse = await postRun(admin, await payloadValide(admin, overrides));
   expect(reponse.status(), await reponse.text()).toBe(201);
   return reponse.json();
 }
@@ -123,9 +135,9 @@ test.describe("A32 — Run lifecycle", () => {
     expect(enBase.statut).toBe("DRAFT");
   });
 
-  test("DRAFT -> READY -> RUNNING via start (observation sans permission manquante)", async ({ request }) => {
+  test("DRAFT -> READY -> RUNNING via start (observation sans permission manquante)", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     const reponse = await startRun(request, corps.id);
     expect(reponse.status(), await reponse.text()).toBe(200);
     const apres = await reponse.json();
@@ -142,9 +154,9 @@ test.describe("A32 — Run lifecycle", () => {
     expect(steps[0].actionExecution?.statut).toBe("SUCCEEDED");
   });
 
-  test("pause puis resume (RUNNING -> PAUSED -> RUNNING)", async ({ request }) => {
+  test("pause puis resume (RUNNING -> PAUSED -> RUNNING)", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     await startRun(request, corps.id);
 
     const pause = await pauseRun(request, corps.id);
@@ -156,9 +168,9 @@ test.describe("A32 — Run lifecycle", () => {
     expect((await resume.json()).statut).toBe("RUNNING");
   });
 
-  test("stop humain explicite (HUMAN_STOP)", async ({ request }) => {
+  test("stop humain explicite (HUMAN_STOP)", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     await startRun(request, corps.id);
     const reponse = await stopRun(request, corps.id);
     expect(reponse.status(), await reponse.text()).toBe(200);
@@ -167,9 +179,9 @@ test.describe("A32 — Run lifecycle", () => {
     expect(apres.stopReason).toBe("HUMAN_STOP");
   });
 
-  test("success : WAITING_APPROVAL -> ALLOW -> SUCCEEDED", async ({ request }) => {
+  test("success : WAITING_APPROVAL -> ALLOW -> SUCCEEDED", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { declaredAction: "WRITE", declaredScope: "TALENT" });
-    await connecter(request, "admin-demo@example.com");
     const demarre = await (await startRun(request, corps.id)).json();
     expect(demarre.statut).toBe("WAITING_APPROVAL");
     expect(demarre.currentAuthorizationRequestId).toBeTruthy();
@@ -182,21 +194,21 @@ test.describe("A32 — Run lifecycle", () => {
     expect(repris.stopReason).toBe("GOAL_REACHED");
   });
 
-  test("failure : permission manquante -> FAILED/PERMISSION_DENIED", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("failure : permission manquante -> FAILED/PERMISSION_DENIED", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "PRINCIPAL");
     const corps = await creerRunViaApi(request, { agentIdentityId: agentId });
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const demarre = await (await startRun(request, corps.id)).json();
     expect(demarre.statut).toBe("FAILED");
     expect(demarre.stopReason).toBe("PERMISSION_DENIED");
   });
 
-  test("escalation : contexte incohérent au moment de la reprise", async ({ request }) => {
+  test("escalation : contexte incohérent au moment de la reprise", async () => {
     const need = await creerNeedVersion();
     const mission = await creerMission({ needVersionId: need.id });
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { missionId: mission.id, needVersionId: need.id });
-    await connecter(request, "admin-demo@example.com");
     await startRun(request, corps.id);
     await pauseRun(request, corps.id);
 
@@ -215,9 +227,9 @@ test.describe("A32 — Run lifecycle", () => {
     expect(apres.stopReason).toBe("ESCALATION_REQUIRED");
   });
 
-  test("terminal immutability : un Run SUCCEEDED ne peut plus transitionner", async ({ request }) => {
+  test("terminal immutability : un Run SUCCEEDED ne peut plus transitionner", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { declaredAction: "WRITE", declaredScope: "TALENT" });
-    await connecter(request, "admin-demo@example.com");
     const demarre = await (await startRun(request, corps.id)).json();
     await approuverDemande(request, demarre.currentAuthorizationRequestId, "ALLOW");
     await resumeRun(request, corps.id);
@@ -233,9 +245,9 @@ test.describe("A32 — Run lifecycle", () => {
 });
 
 test.describe("A32 — Iterations", () => {
-  test("première Step créée avec stepIndex=1, compteur incrémenté", async ({ request }) => {
+  test("première Step créée avec stepIndex=1, compteur incrémenté", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     await startRun(request, corps.id);
     const steps = (await (await getSteps(request, corps.id)).json()).steps;
     expect(steps[0].stepIndex).toBe(1);
@@ -243,9 +255,9 @@ test.describe("A32 — Iterations", () => {
     expect(run.iterationCount).toBe(1);
   });
 
-  test("increment : une itération supplémentaire crée stepIndex=2", async ({ request }) => {
+  test("increment : une itération supplémentaire crée stepIndex=2", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { maxIterations: 3 });
-    await connecter(request, "admin-demo@example.com");
     await startRun(request, corps.id); // consomme l'itération 1
 
     await executerIteration(corps.id);
@@ -255,9 +267,9 @@ test.describe("A32 — Iterations", () => {
     expect(steps.map((s) => s.stepIndex)).toEqual([1, 2]);
   });
 
-  test("max iterations : dépassement -> FAILED/MAX_ITERATIONS_REACHED", async ({ request }) => {
+  test("max iterations : dépassement -> FAILED/MAX_ITERATIONS_REACHED", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { maxIterations: 1 });
-    await connecter(request, "admin-demo@example.com");
     await startRun(request, corps.id); // consomme l'unique itération autorisée, Run reste RUNNING
 
     await executerIteration(corps.id); // tentative au-delà de la limite
@@ -266,9 +278,9 @@ test.describe("A32 — Iterations", () => {
     expect(run.stopReason).toBe("MAX_ITERATIONS_REACHED");
   });
 
-  test("concurrent iteration : deux itérations concurrentes avec budget suffisant réussissent toutes les deux sans collision", async ({ request }) => {
+  test("concurrent iteration : deux itérations concurrentes avec budget suffisant réussissent toutes les deux sans collision", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { maxIterations: 5 });
-    await connecter(request, "admin-demo@example.com");
     await startRun(request, corps.id); // itération 1
 
     await Promise.all([executerIteration(corps.id), executerIteration(corps.id)]);
@@ -280,9 +292,9 @@ test.describe("A32 — Iterations", () => {
     expect(run.iterationCount).toBe(3);
   });
 
-  test("max iteration race : deux itérations concurrentes pour UN seul créneau restant -> une seule gagne", async ({ request }) => {
+  test("max iteration race : deux itérations concurrentes pour UN seul créneau restant -> une seule gagne", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { maxIterations: 2 });
-    await connecter(request, "admin-demo@example.com");
     await startRun(request, corps.id); // itération 1, 1 créneau restant
 
     await Promise.all([executerIteration(corps.id), executerIteration(corps.id)]);
@@ -304,33 +316,33 @@ test.describe("A32 — Context", () => {
     expect(corps.needVersionId).toBe(need.id);
   });
 
-  test("Mission inexistante -> 404", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("Mission inexistante -> 404", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await postRun(request, await payloadValide(request, { missionId: "mission-inexistante" }));
     expect(reponse.status()).toBe(404);
   });
 
-  test("needVersionId incohérent avec le pin de la Mission -> 400", async ({ request }) => {
+  test("needVersionId incohérent avec le pin de la Mission -> 400", async () => {
     const need = await creerNeedVersion();
     const autreNeed = await creerNeedVersion();
     const mission = await creerMission({ needVersionId: need.id });
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const reponse = await postRun(request, await payloadValide(request, { missionId: mission.id, needVersionId: autreNeed.id }));
     expect(reponse.status()).toBe(400);
   });
 
-  test("needVersionId sans missionId -> 400 (contexte incohérent)", async ({ request }) => {
+  test("needVersionId sans missionId -> 400 (contexte incohérent)", async () => {
     const need = await creerNeedVersion();
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const reponse = await postRun(request, await payloadValide(request, { needVersionId: need.id }));
     expect(reponse.status()).toBe(400);
   });
 
-  test("contexte immuable : missionId/needVersionId inchangés après start/pause/resume/stop", async ({ request }) => {
+  test("contexte immuable : missionId/needVersionId inchangés après start/pause/resume/stop", async () => {
     const need = await creerNeedVersion();
     const mission = await creerMission({ needVersionId: need.id });
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { missionId: mission.id, needVersionId: need.id });
-    await connecter(request, "admin-demo@example.com");
     await startRun(request, corps.id);
     await pauseRun(request, corps.id);
     await resumeRun(request, corps.id);
@@ -347,12 +359,12 @@ test.describe("A32 — Agent identity", () => {
     expect(corps.agentIdentityId).toBeTruthy();
   });
 
-  test("identité désactivée -> 400, restaurée après coup", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("identité désactivée -> 400, restaurée après coup", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     await prisma.agentIdentity.update({ where: { id: agentId }, data: { statut: "DISABLED" } });
     try {
-      await connecter(request, "admin-demo@example.com");
+      request = await connecter("ADMIN");
       const reponse = await postRun(request, await payloadValide(request, { agentIdentityId: agentId }));
       expect(reponse.status()).toBe(400);
     } finally {
@@ -360,36 +372,36 @@ test.describe("A32 — Agent identity", () => {
     }
   });
 
-  test("identité inconnue -> 404", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("identité inconnue -> 404", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await postRun(request, await payloadValide(request, { agentIdentityId: "agent-inexistant" }));
     expect(reponse.status()).toBe(404);
   });
 });
 
 test.describe("A32 — Permission", () => {
-  test("permission accordée (READ/TALENT, ATLAS_TALENT) -> Step réussie", async ({ request }) => {
+  test("permission accordée (READ/TALENT, ATLAS_TALENT) -> Step réussie", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     const demarre = await (await startRun(request, corps.id)).json();
     expect(demarre.statut).toBe("RUNNING");
   });
 
-  test("permission manquante (PRINCIPAL, aucune permission seedée) -> FAILED/PERMISSION_DENIED", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("permission manquante (PRINCIPAL, aucune permission seedée) -> FAILED/PERMISSION_DENIED", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "PRINCIPAL");
     const corps = await creerRunViaApi(request, { agentIdentityId: agentId });
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const demarre = await (await startRun(request, corps.id)).json();
     expect(demarre.statut).toBe("FAILED");
     expect(demarre.stopReason).toBe("PERMISSION_DENIED");
   });
 
-  test("mauvais scope (ATLAS_OS_SERVICES n'a pas READ/TALENT) -> FAILED/PERMISSION_DENIED", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("mauvais scope (ATLAS_OS_SERVICES n'a pas READ/TALENT) -> FAILED/PERMISSION_DENIED", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_OS_SERVICES");
     const corps = await creerRunViaApi(request, { agentIdentityId: agentId });
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const demarre = await (await startRun(request, corps.id)).json();
     expect(demarre.statut).toBe("FAILED");
     expect(demarre.stopReason).toBe("PERMISSION_DENIED");
@@ -397,9 +409,9 @@ test.describe("A32 — Permission", () => {
 });
 
 test.describe("A32 — Authorization", () => {
-  test("approval required pour une classe non-OBSERVATION (WRITE)", async ({ request }) => {
+  test("approval required pour une classe non-OBSERVATION (WRITE)", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { declaredAction: "WRITE", declaredScope: "TALENT" });
-    await connecter(request, "admin-demo@example.com");
     const demarre = await (await startRun(request, corps.id)).json();
     expect(demarre.statut).toBe("WAITING_APPROVAL");
     const demande = await prisma.authorizationRequest.findUniqueOrThrow({ where: { id: demarre.currentAuthorizationRequestId } });
@@ -407,18 +419,18 @@ test.describe("A32 — Authorization", () => {
     expect(demande.decision).toBe("APPROVAL_REQUIRED");
   });
 
-  test("ALLOW -> RUNNING puis SUCCEEDED", async ({ request }) => {
+  test("ALLOW -> RUNNING puis SUCCEEDED", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { declaredAction: "WRITE", declaredScope: "TALENT" });
-    await connecter(request, "admin-demo@example.com");
     const demarre = await (await startRun(request, corps.id)).json();
     await approuverDemande(request, demarre.currentAuthorizationRequestId, "ALLOW");
     const repris = await (await resumeRun(request, corps.id)).json();
     expect(repris.statut).toBe("SUCCEEDED");
   });
 
-  test("DENY -> STOPPED/APPROVAL_REJECTED", async ({ request }) => {
+  test("DENY -> STOPPED/APPROVAL_REJECTED", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { declaredAction: "WRITE", declaredScope: "TALENT" });
-    await connecter(request, "admin-demo@example.com");
     const demarre = await (await startRun(request, corps.id)).json();
     await approuverDemande(request, demarre.currentAuthorizationRequestId, "DENY");
     const repris = await (await resumeRun(request, corps.id)).json();
@@ -426,9 +438,9 @@ test.describe("A32 — Authorization", () => {
     expect(repris.stopReason).toBe("APPROVAL_REJECTED");
   });
 
-  test("expiration -> TIMEOUT à la reprise", async ({ request }) => {
+  test("expiration -> TIMEOUT à la reprise", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { declaredAction: "WRITE", declaredScope: "TALENT" });
-    await connecter(request, "admin-demo@example.com");
     const demarre = await (await startRun(request, corps.id)).json();
     // Setup de test uniquement (expiration jamais atteignable par l'API,
     // 72h fixes, B22) — jamais une assertion de résultat sans repasser par
@@ -439,18 +451,18 @@ test.describe("A32 — Authorization", () => {
     expect(repris.stopReason).toBe("TIMEOUT");
   });
 
-  test("l'agent ne peut jamais s'auto-approuver (aucune route agent, structurellement impossible)", async ({ request }) => {
+  test("l'agent ne peut jamais s'auto-approuver (aucune route agent, structurellement impossible)", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { declaredAction: "WRITE", declaredScope: "TALENT" });
-    await connecter(request, "admin-demo@example.com");
     const demarre = await (await startRun(request, corps.id)).json();
     const demande = await prisma.authorizationRequest.findUniqueOrThrow({ where: { id: demarre.currentAuthorizationRequestId } });
     expect(demande.decidedBy).toBe("system");
     expect(demande.approvedBy).toBeNull();
   });
 
-  test("concurrent approval : deux approbations concurrentes -> une seule gagne (409)", async ({ request }) => {
+  test("concurrent approval : deux approbations concurrentes -> une seule gagne (409)", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { declaredAction: "WRITE", declaredScope: "TALENT" });
-    await connecter(request, "admin-demo@example.com");
     const demarre = await (await startRun(request, corps.id)).json();
     const [r1, r2] = await Promise.all([
       approuverDemande(request, demarre.currentAuthorizationRequestId, "ALLOW"),
@@ -463,7 +475,6 @@ test.describe("A32 — Authorization", () => {
 
 test.describe("A32 — Emergency Stop", () => {
   async function activerStopGlobal(request: APIRequestContext) {
-    await connecter(request, "admin-demo@example.com");
     const reponse = await request.post("/api/control-plane/emergency-stops", {
       data: { correlationId: `A32-stop-${Date.now()}`, scope: "GLOBAL", reason: "Test A32 Emergency Stop." },
     });
@@ -474,11 +485,11 @@ test.describe("A32 — Emergency Stop", () => {
     await request.patch(`/api/control-plane/emergency-stops/${id}/lift`);
   }
 
-  test("blocked start : EmergencyStop GLOBAL actif -> start échoue immédiatement (FAILED/EMERGENCY_STOP)", async ({ request }) => {
+  test("blocked start : EmergencyStop GLOBAL actif -> start échoue immédiatement (FAILED/EMERGENCY_STOP)", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
     const stopId = await activerStopGlobal(request);
     try {
-      await connecter(request, "admin-demo@example.com");
       const demarre = await (await startRun(request, corps.id)).json();
       expect(demarre.statut).toBe("FAILED");
       expect(demarre.stopReason).toBe("EMERGENCY_STOP");
@@ -487,11 +498,11 @@ test.describe("A32 — Emergency Stop", () => {
     }
   });
 
-  test("blocked action : EmergencyStop activé entre create et start -> action jamais exécutée", async ({ request }) => {
+  test("blocked action : EmergencyStop activé entre create et start -> action jamais exécutée", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
     const stopId = await activerStopGlobal(request);
     try {
-      await connecter(request, "admin-demo@example.com");
       await startRun(request, corps.id);
       const steps = await prisma.agenticStep.findMany({ where: { runId: corps.id } });
       expect(steps).toHaveLength(0);
@@ -500,9 +511,9 @@ test.describe("A32 — Emergency Stop", () => {
     }
   });
 
-  test("blocked resume : EmergencyStop actif au moment de la reprise depuis PAUSED", async ({ request }) => {
+  test("blocked resume : EmergencyStop actif au moment de la reprise depuis PAUSED", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     await startRun(request, corps.id);
     await pauseRun(request, corps.id);
 
@@ -528,36 +539,36 @@ test.describe("A32 — Security", () => {
     expect((await getSteps(request, "x")).status()).toBe(403);
   });
 
-  test("CLIENT -> 403 (aucun accès accordé par le contrat A31/A32)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("CLIENT -> 403 (aucun accès accordé par le contrat A31/A32)", async () => {
+    let request = await connecter("ADMIN");
     const payload = await payloadValide(request);
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     expect((await postRun(request, payload)).status()).toBe(403);
   });
 
-  test("INGENIEUR -> 403 (décision documentée, non accordé par ce lot)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("INGENIEUR -> 403 (décision documentée, non accordé par ce lot)", async () => {
+    let request = await connecter("ADMIN");
     const payload = await payloadValide(request);
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     expect((await postRun(request, payload)).status()).toBe(403);
   });
 });
 
 test.describe("A32 — IDOR", () => {
-  test("GET d'un Run inexistant -> 404", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("GET d'un Run inexistant -> 404", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await getRun(request, "run-inexistant");
     expect(reponse.status()).toBe(404);
   });
 
-  test("steps d'un Run inexistant -> 404", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("steps d'un Run inexistant -> 404", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await getSteps(request, "run-inexistant");
     expect(reponse.status()).toBe(404);
   });
 
-  test("start/pause/resume/stop sur un Run inexistant -> 404", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("start/pause/resume/stop sur un Run inexistant -> 404", async () => {
+    let request = await connecter("ADMIN");
     expect((await startRun(request, "run-inexistant")).status()).toBe(404);
     expect((await pauseRun(request, "run-inexistant")).status()).toBe(404);
     expect((await resumeRun(request, "run-inexistant")).status()).toBe(404);
@@ -566,26 +577,26 @@ test.describe("A32 — IDOR", () => {
 });
 
 test.describe("A32 — Concurrency", () => {
-  test("double start : un seul gagne (200), l'autre reçoit 409", async ({ request }) => {
+  test("double start : un seul gagne (200), l'autre reçoit 409", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     const [r1, r2] = await Promise.all([startRun(request, corps.id), startRun(request, corps.id)]);
     const statuts = [r1.status(), r2.status()].sort();
     expect(statuts).toEqual([200, 409]);
   });
 
-  test("double pause : un seul gagne", async ({ request }) => {
+  test("double pause : un seul gagne", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     await startRun(request, corps.id);
     const [r1, r2] = await Promise.all([pauseRun(request, corps.id), pauseRun(request, corps.id)]);
     const statuts = [r1.status(), r2.status()].sort();
     expect(statuts).toEqual([200, 409]);
   });
 
-  test("double stop : un seul gagne", async ({ request }) => {
+  test("double stop : un seul gagne", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     await startRun(request, corps.id);
     const [r1, r2] = await Promise.all([stopRun(request, corps.id), stopRun(request, corps.id)]);
     const statuts = [r1.status(), r2.status()].sort();
@@ -594,9 +605,9 @@ test.describe("A32 — Concurrency", () => {
 });
 
 test.describe("A32 — Audit", () => {
-  test("Run lifecycle trace : created/started journalisés", async ({ request }) => {
+  test("Run lifecycle trace : created/started journalisés", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     await startRun(request, corps.id);
 
     const created = await prisma.journalActivite.findFirst({ where: { action: "agentic.run.created", correlationId: corps.correlationId } });
@@ -605,17 +616,17 @@ test.describe("A32 — Audit", () => {
     expect(started.length).toBeGreaterThanOrEqual(1);
   });
 
-  test("Step trace : agentic.step.started journalisé", async ({ request }) => {
+  test("Step trace : agentic.step.started journalisé", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     await startRun(request, corps.id);
     const entree = await prisma.journalActivite.findFirst({ where: { action: "agentic.step.started", correlationId: corps.correlationId } });
     expect(entree).not.toBeNull();
   });
 
-  test("Approval trace : requested/granted journalisés", async ({ request }) => {
+  test("Approval trace : requested/granted journalisés", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { declaredAction: "WRITE", declaredScope: "TALENT" });
-    await connecter(request, "admin-demo@example.com");
     const demarre = await (await startRun(request, corps.id)).json();
     await approuverDemande(request, demarre.currentAuthorizationRequestId, "ALLOW");
     await resumeRun(request, corps.id);
@@ -626,17 +637,17 @@ test.describe("A32 — Audit", () => {
     expect(granted).not.toBeNull();
   });
 
-  test("Action trace : agentic.action.executed journalisé pour un Tool réellement invoqué", async ({ request }) => {
+  test("Action trace : agentic.action.executed journalisé pour un Tool réellement invoqué", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     await startRun(request, corps.id);
     const entree = await prisma.journalActivite.findFirst({ where: { action: "agentic.action.executed", correlationId: corps.correlationId } });
     expect(entree).not.toBeNull();
   });
 
-  test("correlationId chaîne Run -> toutes les entrées de journal associées", async ({ request }) => {
+  test("correlationId chaîne Run -> toutes les entrées de journal associées", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     await startRun(request, corps.id);
     await stopRun(request, corps.id);
     const entrees = await prisma.journalActivite.findMany({ where: { correlationId: corps.correlationId } });
@@ -651,18 +662,18 @@ test.describe("A32 — Audit", () => {
 // loop, A34) introduit une distinction OBSERVE_ONLY/PROPOSE_AND_ACT (voir
 // tests/api/a34-learning-loop.spec.ts, "A35 F1").
 test.describe("A32 — F1 (AgenticStep.stepType, contrat A35)", () => {
-  test("réservation d'un Step FOUNDATION -> DB contient stepType=PROPOSE_AND_ACT (comportement inchangé)", async ({ request }) => {
+  test("réservation d'un Step FOUNDATION -> DB contient stepType=PROPOSE_AND_ACT (comportement inchangé)", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     await startRun(request, corps.id);
 
     const step = await prisma.agenticStep.findFirstOrThrow({ where: { runId: corps.id, stepIndex: 1 } });
     expect(step.stepType).toBe("PROPOSE_AND_ACT");
   });
 
-  test("GET steps expose le stepType FOUNDATION réellement persisté", async ({ request }) => {
+  test("GET steps expose le stepType FOUNDATION réellement persisté", async () => {
+    let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request);
-    await connecter(request, "admin-demo@example.com");
     await startRun(request, corps.id);
 
     const steps = (await (await getSteps(request, corps.id)).json()).steps;
