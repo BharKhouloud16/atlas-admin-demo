@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 
 // COMPANY ATLAS — B20 : Permission Registry (GET /api/security/permissions).
 // Couvre la checklist de tests de la directive B20 (section "TESTS
@@ -8,9 +9,20 @@ import { test, expect, APIRequestContext } from "@playwright/test";
 // protection API (RBAC), absence de mutation, isolation du périmètre,
 // déterminisme, absence de secrets.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 const ACTIONS_VALIDES = ["READ", "WRITE", "EXECUTE", "PROPOSE", "REPORT", "ANALYZE"];
@@ -20,7 +32,7 @@ test.describe("COMPANY ATLAS B20 — Permission Registry (API)", () => {
   test("le registre contient exactement les 5 permissions justifiées (2 B20 + 2 PROPOSE B21.1/M1 + 1 WRITE B32-PERM), aucune implicite pour PRINCIPAL ni COMPANY_OS", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const reponse = await request.get("/api/security/permissions");
     expect(reponse.ok(), await reponse.text()).toBeTruthy();
     const { permissions } = await reponse.json();
@@ -94,7 +106,7 @@ test.describe("COMPANY ATLAS B20 — Permission Registry (API)", () => {
   test("chaque permission est associée à un agentId qui existe réellement dans AgentIdentity (jointure vérifiée)", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const { permissions } = await (await request.get("/api/security/permissions")).json();
     const { agents } = await (await request.get("/api/security/agents")).json();
     const idsConnus = new Set(agents.map((a: { id: string }) => a.id));
@@ -104,8 +116,8 @@ test.describe("COMPANY ATLAS B20 — Permission Registry (API)", () => {
     }
   });
 
-  test("chaque permission utilise uniquement des valeurs du vocabulaire fermé (action/scope/statut)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("chaque permission utilise uniquement des valeurs du vocabulaire fermé (action/scope/statut)", async () => {
+    let request = await connecter("ADMIN");
     const { permissions } = await (await request.get("/api/security/permissions")).json();
     for (const p of permissions) {
       expect(ACTIONS_VALIDES).toContain(p.action);
@@ -117,7 +129,7 @@ test.describe("COMPANY ATLAS B20 — Permission Registry (API)", () => {
   test("une entrée client arbitraire (paramètres de requête) ne peut ni choisir une identité agent, ni injecter une permission, ni filtrer le registre", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const brut = await (await request.get("/api/security/permissions")).json();
     const manipule = await request.get(
       "/api/security/permissions?agentId=HACKER&action=EXECUTE&scope=PRINCIPAL&statut=ACTIVE"
@@ -131,7 +143,7 @@ test.describe("COMPANY ATLAS B20 — Permission Registry (API)", () => {
   test("aucune route de mutation n'existe : POST/PATCH/DELETE sont refusés (404/405), jamais de permission créée ni modifiée", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const avant = await (await request.get("/api/security/permissions")).json();
 
     const post = await request.post("/api/security/permissions", {
@@ -149,12 +161,12 @@ test.describe("COMPANY ATLAS B20 — Permission Registry (API)", () => {
     expect(apres.permissions).toEqual(avant.permissions);
   });
 
-  test("SÉCURITÉ : un CLIENT et un INGENIEUR n'ont jamais accès au Permission Registry (403)", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("SÉCURITÉ : un CLIENT et un INGENIEUR n'ont jamais accès au Permission Registry (403)", async () => {
+    let request = await connecter("CLIENT");
     const refusClient = await request.get("/api/security/permissions");
     expect(refusClient.status()).toBe(403);
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     const refusIngenieur = await request.get("/api/security/permissions");
     expect(refusIngenieur.status()).toBe(403);
   });
@@ -164,15 +176,15 @@ test.describe("COMPANY ATLAS B20 — Permission Registry (API)", () => {
     expect(reponse.status()).toBe(403);
   });
 
-  test("déterminisme : deux appels consécutifs renvoient exactement le même registre", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("déterminisme : deux appels consécutifs renvoient exactement le même registre", async () => {
+    let request = await connecter("ADMIN");
     const premier = await (await request.get("/api/security/permissions")).json();
     const second = await (await request.get("/api/security/permissions")).json();
     expect(premier.permissions).toEqual(second.permissions);
   });
 
-  test("absence de secrets : aucun champ du registre n'accepte un identifiant de type mot de passe/token", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("absence de secrets : aucun champ du registre n'accepte un identifiant de type mot de passe/token", async () => {
+    let request = await connecter("ADMIN");
     const { permissions } = await (await request.get("/api/security/permissions")).json();
     const champs = Object.keys(permissions[0]);
     expect(champs.some((c) => /password|motdepasse|token|secret|apikey/i.test(c))).toBe(false);

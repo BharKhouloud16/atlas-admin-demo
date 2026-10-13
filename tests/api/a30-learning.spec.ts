@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { StatutMission } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
@@ -13,9 +14,20 @@ import { prisma } from "@/lib/prisma";
 // prisma.<moteur>.findUnique AVANT/APRÈS), jamais uniquement le code HTTP
 // (contrat A30 §25, dernière ligne).
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function clientDemo() {
@@ -150,7 +162,7 @@ function payloadValide(overrides: Record<string, unknown> = {}) {
 }
 
 async function creerLearningViaApi(request: APIRequestContext, missionId: string, overrides: Record<string, unknown> = {}) {
-  await connecter(request, "admin-demo@example.com");
+  request = await connecter("ADMIN");
   const reponse = await postLearning(request, missionId, payloadValide(overrides));
   expect(reponse.status(), await reponse.text()).toBe(201);
   return reponse.json();
@@ -169,50 +181,50 @@ test.describe("A30 — Création", () => {
     expect(enBase?.createdByEmail).toBe("admin-demo@example.com");
   });
 
-  test("2. Mission inexistante -> 404", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("2. Mission inexistante -> 404", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await postLearning(request, "mission-inexistante", payloadValide());
     expect(reponse.status()).toBe(404);
   });
 
-  test("3. source inexistante -> 404", async ({ request }) => {
+  test("3. source inexistante -> 404", async () => {
     const mission = await missionDemo();
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const reponse = await postLearning(request, mission.id, payloadValide({ sourceOutcomeAssessmentId: "inexistant" }));
     expect(reponse.status()).toBe(404);
   });
 
-  test("4. source d'une autre Mission -> 404", async ({ request }) => {
+  test("4. source d'une autre Mission -> 404", async () => {
     const mission = await missionDemo();
     const autreMission = await missionDemo();
     const outcome = await creerOutcomeAssessment(autreMission.id);
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const reponse = await postLearning(request, mission.id, payloadValide({ sourceOutcomeAssessmentId: outcome.id }));
     expect(reponse.status()).toBe(404);
   });
 
-  test("5. source d'un autre client -> 404 (même erreur uniforme)", async ({ request }) => {
+  test("5. source d'un autre client -> 404 (même erreur uniforme)", async () => {
     const mission = await missionDemo();
     const autreClient = await creerAutreClient();
     const profilId = await profilIngenieurDemo();
     const missionAutreClient = await creerMission(autreClient.id, profilId);
     const financial = await creerFinancialResult(missionAutreClient.id);
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const reponse = await postLearning(request, mission.id, payloadValide({ sourceFinancialResultId: financial.id }));
     expect(reponse.status()).toBe(404);
   });
 
-  test("6. provenance obligatoire -> 400 si absente", async ({ request }) => {
+  test("6. provenance obligatoire -> 400 si absente", async () => {
     const mission = await missionDemo();
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const { provenance, ...sansProvenance } = payloadValide();
     const reponse = await postLearning(request, mission.id, sansProvenance);
     expect(reponse.status()).toBe(400);
   });
 
-  test("7. contenu obligatoire -> 400 si title/statement absent", async ({ request }) => {
+  test("7. contenu obligatoire -> 400 si title/statement absent", async () => {
     const mission = await missionDemo();
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const { title, ...sansTitre } = payloadValide();
     const reponseTitre = await postLearning(request, mission.id, sansTitre);
     expect(reponseTitre.status()).toBe(400);
@@ -222,9 +234,9 @@ test.describe("A30 — Création", () => {
     expect(reponseStatement.status()).toBe(400);
   });
 
-  test("8. scope valide -> 400 si invalide, MISSION par défaut si absent", async ({ request }) => {
+  test("8. scope valide -> 400 si invalide, MISSION par défaut si absent", async () => {
     const mission = await missionDemo();
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const invalide = await postLearning(request, mission.id, payloadValide({ scope: "INVALIDE" }));
     expect(invalide.status()).toBe(400);
 
@@ -335,7 +347,7 @@ test.describe("A30 — Provenance", () => {
   test("18. aucune promotion automatique (valider ne change jamais provenance)", async ({ request }) => {
     const mission = await missionDemo();
     const corps = await creerLearningViaApi(request, mission.id, { provenance: "INFERRED" });
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const reponse = await patchLearning(request, mission.id, corps.id, { action: "valider" });
     expect(reponse.status(), await reponse.text()).toBe(200);
     const valide = await reponse.json();
@@ -365,7 +377,7 @@ test.describe("A30 — Scope", () => {
     const corps = await creerLearningViaApi(request, mission.id, { scope: "CLIENT" });
     expect(corps.scope).toBe("CLIENT");
     const autreMission = await missionDemo();
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const reponse = await getLearning(request, autreMission.id, corps.id);
     expect(reponse.status()).toBe(404);
   });
@@ -373,17 +385,17 @@ test.describe("A30 — Scope", () => {
   test("22. aucune élévation automatique vers ATLAS", async ({ request }) => {
     const mission = await missionDemo();
     const corps = await creerLearningViaApi(request, mission.id);
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     await patchLearning(request, mission.id, corps.id, { action: "valider" });
     const enBase = await prisma.learning.findUniqueOrThrow({ where: { id: corps.id } });
     expect(enBase.scope).toBe("MISSION");
   });
 
-  test("Ingénieur ne peut déclarer qu'un Learning de portée MISSION", async ({ request }) => {
+  test("Ingénieur ne peut déclarer qu'un Learning de portée MISSION", async () => {
     const profilId = await profilIngenieurDemo();
     const client = await clientDemo();
     const mission = await creerMission(client.id, profilId);
-    await connecter(request, "ingenieur-demo@example.com");
+    let request = await connecter("INGENIEUR");
     const reponse = await postLearning(request, mission.id, payloadValide({ scope: "ATLAS" }));
     expect(reponse.status()).toBe(403);
   });
@@ -423,7 +435,7 @@ test.describe("A30 — Immutabilité / Supersession", () => {
     const mission = await missionDemo();
     const autreMission = await missionDemo();
     const ancien = await creerLearningViaApi(request, autreMission.id);
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const reponse = await postLearning(request, mission.id, payloadValide({ supersedesId: ancien.id }));
     expect(reponse.status()).toBe(404);
   });
@@ -432,7 +444,7 @@ test.describe("A30 — Immutabilité / Supersession", () => {
     const mission = await missionDemo();
     const ancien = await creerLearningViaApi(request, mission.id);
     await creerLearningViaApi(request, mission.id, { supersedesId: ancien.id });
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const reponse = await postLearning(request, mission.id, payloadValide({ supersedesId: ancien.id }));
     expect(reponse.status()).toBe(409);
   });
@@ -482,7 +494,7 @@ test.describe("A30 — RBAC", () => {
   test("33. ADMIN : créer, lire, valider, marquer_obsolete, superséder", async ({ request }) => {
     const mission = await missionDemo();
     const corps = await creerLearningViaApi(request, mission.id);
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     expect((await getLearning(request, mission.id, corps.id)).status()).toBe(200);
     expect((await patchLearning(request, mission.id, corps.id, { action: "valider" })).status()).toBe(200);
     expect((await patchLearning(request, mission.id, corps.id, { action: "marquer_obsolete" })).status()).toBe(200);
@@ -490,11 +502,11 @@ test.describe("A30 — RBAC", () => {
     expect(succ.status()).toBe(201);
   });
 
-  test("34. INGENIEUR : créer/lire sur sa Mission autorisée, jamais valider/marquer_obsolete/superséder", async ({ request }) => {
+  test("34. INGENIEUR : créer/lire sur sa Mission autorisée, jamais valider/marquer_obsolete/superséder", async () => {
     const profilId = await profilIngenieurDemo();
     const client = await clientDemo();
     const mission = await creerMission(client.id, profilId);
-    await connecter(request, "ingenieur-demo@example.com");
+    let request = await connecter("INGENIEUR");
     const creation = await postLearning(request, mission.id, payloadValide());
     expect(creation.status(), await creation.text()).toBe(201);
     const corps = await creation.json();
@@ -503,11 +515,11 @@ test.describe("A30 — RBAC", () => {
     expect((await patchLearning(request, mission.id, corps.id, { action: "marquer_obsolete" })).status()).toBe(403);
   });
 
-  test("INGENIEUR non autorisé sur une Mission -> création/lecture refusées (404 IDOR)", async ({ request }) => {
+  test("INGENIEUR non autorisé sur une Mission -> création/lecture refusées (404 IDOR)", async () => {
     const autreProfil = await creerAutreProfil();
     const client = await clientDemo();
     const missionAutrui = await creerMission(client.id, autreProfil.id);
-    await connecter(request, "ingenieur-demo@example.com");
+    let request = await connecter("INGENIEUR");
     const creation = await postLearning(request, missionAutrui.id, payloadValide());
     expect(creation.status()).toBe(404);
   });
@@ -515,7 +527,7 @@ test.describe("A30 — RBAC", () => {
   test("35. CLIENT : aucun accès (403) — règle de permission client non définie par le contrat, défaut refus", async ({ request }) => {
     const mission = await missionDemo();
     const corps = await creerLearningViaApi(request, mission.id);
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     expect((await listLearnings(request, mission.id)).status()).toBe(403);
     expect((await getLearning(request, mission.id, corps.id)).status()).toBe(403);
     expect((await postLearning(request, mission.id, payloadValide())).status()).toBe(403);
@@ -534,7 +546,7 @@ test.describe("A30 — IDOR", () => {
     const mission = await missionDemo();
     const autreMission = await missionDemo();
     const corps = await creerLearningViaApi(request, mission.id);
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const reponse = await getLearning(request, autreMission.id, corps.id);
     expect(reponse.status()).toBe(404);
   });
@@ -545,18 +557,18 @@ test.describe("A30 — IDOR", () => {
     const profilId = await profilIngenieurDemo();
     const missionAutreClient = await creerMission(autreClient.id, profilId);
     const corps = await creerLearningViaApi(request, mission.id);
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const reponse = await getLearning(request, missionAutreClient.id, corps.id);
     expect(reponse.status()).toBe(404);
   });
 
-  test("39. source cross-Mission via un Ingénieur autorisé -> 404 (jamais une fuite d'existence)", async ({ request }) => {
+  test("39. source cross-Mission via un Ingénieur autorisé -> 404 (jamais une fuite d'existence)", async () => {
     const profilId = await profilIngenieurDemo();
     const client = await clientDemo();
     const missionAutorisee = await creerMission(client.id, profilId);
     const missionNonAutorisee = await missionDemo();
     const outcome = await creerOutcomeAssessment(missionNonAutorisee.id);
-    await connecter(request, "ingenieur-demo@example.com");
+    let request = await connecter("INGENIEUR");
     const reponse = await postLearning(request, missionAutorisee.id, payloadValide({ sourceOutcomeAssessmentId: outcome.id }));
     expect(reponse.status()).toBe(404);
   });
@@ -566,7 +578,7 @@ test.describe("A30 — Concurrence", () => {
   test("40a. deux 'valider' concurrents sur le même Learning -> un seul gagne", async ({ request }) => {
     const mission = await missionDemo();
     const corps = await creerLearningViaApi(request, mission.id);
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const [r1, r2] = await Promise.all([
       patchLearning(request, mission.id, corps.id, { action: "valider" }),
       patchLearning(request, mission.id, corps.id, { action: "valider" }),
@@ -580,7 +592,7 @@ test.describe("A30 — Concurrence", () => {
   test("40b. deux supersessions concurrentes vers le même ancien -> une seule gagne", async ({ request }) => {
     const mission = await missionDemo();
     const ancien = await creerLearningViaApi(request, mission.id);
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const [r1, r2] = await Promise.all([
       postLearning(request, mission.id, payloadValide({ supersedesId: ancien.id })),
       postLearning(request, mission.id, payloadValide({ supersedesId: ancien.id })),
@@ -604,7 +616,7 @@ test.describe("A30 — Journal", () => {
   test("42. learning.validated journalisé", async ({ request }) => {
     const mission = await missionDemo();
     const corps = await creerLearningViaApi(request, mission.id);
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     await patchLearning(request, mission.id, corps.id, { action: "valider" });
     const entree = await prisma.journalActivite.findFirst({ where: { action: "learning.validated", detail: { contains: corps.id } } });
     expect(entree).not.toBeNull();

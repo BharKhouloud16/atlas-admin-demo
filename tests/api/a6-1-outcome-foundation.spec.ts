@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 
 // COMPANY ATLAS — A6.1 : Outcome Foundation (01/10/2026).
@@ -9,9 +10,20 @@ import { prisma } from "@/lib/prisma";
 // (point-in-time truth A5.2), sécurité (RBAC/IDOR/immutabilité), données
 // manquantes/historiques, idempotence/concurrence.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function creerProfil() {
@@ -58,8 +70,8 @@ async function terminer(request: APIRequestContext, missionId: string) {
 }
 
 test.describe("COMPANY ATLAS A6.1 — Need readiness (RESULTAT_ATTENDU / CRITERE_REUSSITE)", () => {
-  test("RESULTAT_ATTENDU est accessible via le parcours réel : absent -> clarification MANQUANT -> CORRIGER -> présent", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("RESULTAT_ATTENDU est accessible via le parcours réel : absent -> clarification MANQUANT -> CORRIGER -> présent", async () => {
+    let request = await connecter("CLIENT");
     const creation = await request.post("/api/client/besoins", { data: { texteOriginal: "Nous cherchons un développeur QA pour notre équipe." } });
     expect(creation.status(), await creation.text()).toBe(201);
     const besoin = (await creation.json()).besoin;
@@ -86,8 +98,8 @@ test.describe("COMPANY ATLAS A6.1 — Need readiness (RESULTAT_ATTENDU / CRITERE
     expect(derniere?.statut).toBe("VERIFIE");
   });
 
-  test("CRITERE_REUSSITE répétable reste accessible dès l'extraction initiale, plusieurs instances distinctes jamais collapsées", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("CRITERE_REUSSITE répétable reste accessible dès l'extraction initiale, plusieurs instances distinctes jamais collapsées", async () => {
+    let request = await connecter("CLIENT");
     const creation = await request.post("/api/client/besoins", {
       data: { texteOriginal: "Critères de réussite : couverture de tests supérieure à 90% et aucun défaut critique ouvert." },
     });
@@ -97,8 +109,8 @@ test.describe("COMPANY ATLAS A6.1 — Need readiness (RESULTAT_ATTENDU / CRITERE
     expect(criteres.length).toBeGreaterThanOrEqual(2);
   });
 
-  test("CORRIGER sur une clé répétable (CRITERE_REUSSITE) reste refusé (400) — le périmètre LOT 3 n'est pas réouvert par A6.1", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("CORRIGER sur une clé répétable (CRITERE_REUSSITE) reste refusé (400) — le périmètre LOT 3 n'est pas réouvert par A6.1", async () => {
+    let request = await connecter("CLIENT");
     const creation = await request.post("/api/client/besoins", { data: { texteOriginal: "Nous cherchons un développeur QA." } });
     const besoin = (await creation.json()).besoin;
     const reponse = await request.post(`/api/client/besoins/${besoin.id}/faits`, {
@@ -109,8 +121,8 @@ test.describe("COMPANY ATLAS A6.1 — Need readiness (RESULTAT_ATTENDU / CRITERE
 });
 
 test.describe("COMPANY ATLAS A6.1 — OutcomeAssessment : statuts et règle absolue", () => {
-  test("aucun CRITERE_REUSSITE disponible -> overallStatus INDETERMINABLE, jamais inventé", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("aucun CRITERE_REUSSITE disponible -> overallStatus INDETERMINABLE, jamais inventé", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const need = await creerNeedAvecFaits(client!.id, [{ cle: "OBJECTIF", valeur: "x" }]);
     const { missionId } = await creerDemandeEtMission(request, client!.id, need.id);
@@ -123,8 +135,8 @@ test.describe("COMPANY ATLAS A6.1 — OutcomeAssessment : statuts et règle abso
     expect(outcome.criteria).toHaveLength(0);
   });
 
-  test("critère proposé OBTENU sans aucune preuve -> forcé à INDETERMINABLE (règle absolue, jamais une invention)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("critère proposé OBTENU sans aucune preuve -> forcé à INDETERMINABLE (règle absolue, jamais une invention)", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const need = await creerNeedAvecFaits(client!.id, [{ cle: "CRITERE_REUSSITE", valeur: "Couverture >= 90%" }]);
     const faitId = need.faits[0].id;
@@ -140,8 +152,8 @@ test.describe("COMPANY ATLAS A6.1 — OutcomeAssessment : statuts et règle abso
     expect(outcome.criteria[0].status).toBe("INDETERMINABLE");
   });
 
-  test("critère vérifié humainement avec preuve -> OBTENU réellement retenu", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("critère vérifié humainement avec preuve -> OBTENU réellement retenu", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const need = await creerNeedAvecFaits(client!.id, [{ cle: "CRITERE_REUSSITE", valeur: "Livraison avant fin de mois" }]);
     const faitId = need.faits[0].id;
@@ -161,8 +173,8 @@ test.describe("COMPANY ATLAS A6.1 — OutcomeAssessment : statuts et règle abso
     expect(outcome.criteria[0].confidence).toBe("VERIFIE");
   });
 
-  test("verdict référençant un critère n'appartenant pas à la version du Need évaluée -> 400", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("verdict référençant un critère n'appartenant pas à la version du Need évaluée -> 400", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const need = await creerNeedAvecFaits(client!.id, [{ cle: "CRITERE_REUSSITE", valeur: "Critère réel" }]);
     const { missionId } = await creerDemandeEtMission(request, client!.id, need.id);
@@ -176,8 +188,8 @@ test.describe("COMPANY ATLAS A6.1 — OutcomeAssessment : statuts et règle abso
 });
 
 test.describe("COMPANY ATLAS A6.1 — Séparation Mission.TERMINEE / Evaluation / Outcome", () => {
-  test("Mission.TERMINEE n'implique jamais Outcome=OBTENU — précondition, jamais une conséquence automatique", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("Mission.TERMINEE n'implique jamais Outcome=OBTENU — précondition, jamais une conséquence automatique", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const { missionId } = await creerDemandeEtMission(request, client!.id, null);
     await terminer(request, missionId);
@@ -188,8 +200,8 @@ test.describe("COMPANY ATLAS A6.1 — Séparation Mission.TERMINEE / Evaluation 
     expect(outcome).toBeNull();
   });
 
-  test("POST /outcome refusé (409) tant que la mission n'est pas TERMINEE", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("POST /outcome refusé (409) tant que la mission n'est pas TERMINEE", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const { missionId } = await creerDemandeEtMission(request, client!.id, null);
 
@@ -197,19 +209,19 @@ test.describe("COMPANY ATLAS A6.1 — Séparation Mission.TERMINEE / Evaluation 
     expect(reponse.status()).toBe(409);
   });
 
-  test("Evaluation 5/5 + Outcome NON_OBTENU sont tous les deux valides simultanément (satisfaction ≠ résultat objectif)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("Evaluation 5/5 + Outcome NON_OBTENU sont tous les deux valides simultanément (satisfaction ≠ résultat objectif)", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const need = await creerNeedAvecFaits(client!.id, [{ cle: "CRITERE_REUSSITE", valeur: "Zero défaut critique" }]);
     const faitId = need.faits[0].id;
     const { missionId } = await creerDemandeEtMission(request, client!.id, need.id);
     await terminer(request, missionId);
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const evaluation = await request.post("/api/evaluations", { data: { missionId, note: 5 } });
     expect(evaluation.status(), await evaluation.text()).toBe(201);
 
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const outcomeReponse = await request.post(`/api/missions/${missionId}/outcome`, {
       data: { verdicts: [{ sourceFaitId: faitId, statutPropose: "NON_OBTENU", methodes: ["VERIFIE_HUMAIN"], evidences: [{ source: "Défaut critique trouvé en prod" }] }] },
     });
@@ -221,19 +233,19 @@ test.describe("COMPANY ATLAS A6.1 — Séparation Mission.TERMINEE / Evaluation 
     expect(evalEnBase?.note).toBe(5);
   });
 
-  test("Evaluation 3/5 + Outcome OBTENU sont tous les deux valides simultanément", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("Evaluation 3/5 + Outcome OBTENU sont tous les deux valides simultanément", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const need = await creerNeedAvecFaits(client!.id, [{ cle: "CRITERE_REUSSITE", valeur: "Livré à temps" }]);
     const faitId = need.faits[0].id;
     const { missionId } = await creerDemandeEtMission(request, client!.id, need.id);
     await terminer(request, missionId);
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const evaluation = await request.post("/api/evaluations", { data: { missionId, note: 3 } });
     expect(evaluation.status(), await evaluation.text()).toBe(201);
 
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const outcomeReponse = await request.post(`/api/missions/${missionId}/outcome`, {
       data: { verdicts: [{ sourceFaitId: faitId, statutPropose: "OBTENU", methodes: ["VERIFIE_HUMAIN"], evidences: [{ source: "Livré dans les temps, constaté" }] }] },
     });
@@ -244,8 +256,8 @@ test.describe("COMPANY ATLAS A6.1 — Séparation Mission.TERMINEE / Evaluation 
 });
 
 test.describe("COMPANY ATLAS A6.1 — Versioning (point-in-time truth, A5.2)", () => {
-  test("Outcome créé sur Need V1 reste attaché à V1 après un fork vers V2 — jamais réinterprété selon V2", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("Outcome créé sur Need V1 reste attaché à V1 après un fork vers V2 — jamais réinterprété selon V2", async () => {
+    let request = await connecter("CLIENT");
     const creation = await request.post("/api/client/besoins", { data: { texteOriginal: "Besoin de test versioning A6.1." } });
     const besoinV1 = (await creation.json()).besoin;
     await request.fetch(`/api/client/besoins/${besoinV1.id}`, { method: "PATCH", data: { statut: "VALIDE" } });
@@ -255,7 +267,7 @@ test.describe("COMPANY ATLAS A6.1 — Versioning (point-in-time truth, A5.2)", (
     });
     const faitV1 = await prisma.clientNeedFait.findFirst({ where: { needId: besoinV1.id, cle: "CRITERE_REUSSITE" } });
 
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const { missionId } = await creerDemandeEtMission(request, client!.id, besoinV1.id);
     await terminer(request, missionId);
@@ -268,7 +280,7 @@ test.describe("COMPANY ATLAS A6.1 — Versioning (point-in-time truth, A5.2)", (
     expect(outcomeInitial.needVersionId).toBe(besoinV1.id);
 
     // Fork V1 -> V2 (titre modifié sur un besoin VALIDATED courant, A5.2).
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const fork = await request.fetch(`/api/client/besoins/${besoinV1.id}`, { method: "PATCH", data: { titre: "Titre modifié post-validation" } });
     expect(fork.status(), await fork.text()).toBe(200);
     const v2 = (await fork.json()).besoin;
@@ -281,8 +293,8 @@ test.describe("COMPANY ATLAS A6.1 — Versioning (point-in-time truth, A5.2)", (
 });
 
 test.describe("COMPANY ATLAS A6.1 — Données manquantes / Missions historiques", () => {
-  test("Mission sans aucune chaîne de traçabilité (pas de sourceDemandeId) -> needVersionId null, INDETERMINABLE, jamais une erreur", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("Mission sans aucune chaîne de traçabilité (pas de sourceDemandeId) -> needVersionId null, INDETERMINABLE, jamais une erreur", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const { missionId } = await creerDemandeEtMission(request, client!.id, null);
     await terminer(request, missionId);
@@ -294,8 +306,8 @@ test.describe("COMPANY ATLAS A6.1 — Données manquantes / Missions historiques
     expect(outcome.overallStatus).toBe("INDETERMINABLE");
   });
 
-  test("absence de toute évaluation jamais tentée (pas de ligne) se distingue d'une ligne INDETERMINABLE existante", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("absence de toute évaluation jamais tentée (pas de ligne) se distingue d'une ligne INDETERMINABLE existante", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const need = await creerNeedAvecFaits(client!.id, []);
     const { missionId } = await creerDemandeEtMission(request, client!.id, need.id);
@@ -314,50 +326,50 @@ test.describe("COMPANY ATLAS A6.1 — Données manquantes / Missions historiques
 });
 
 test.describe("COMPANY ATLAS A6.1 — Sécurité (RBAC / IDOR / immutabilité)", () => {
-  test("CLIENT ne peut jamais créer d'Outcome, même sur sa propre mission (403)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("CLIENT ne peut jamais créer d'Outcome, même sur sa propre mission (403)", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const { missionId } = await creerDemandeEtMission(request, client!.id, null);
     await terminer(request, missionId);
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const reponse = await request.post(`/api/missions/${missionId}/outcome`, { data: { verdicts: [] } });
     expect(reponse.status()).toBe(403);
   });
 
-  test("INGENIEUR ne peut ni créer ni lire un Outcome (403)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("INGENIEUR ne peut ni créer ni lire un Outcome (403)", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const { missionId } = await creerDemandeEtMission(request, client!.id, null);
     await terminer(request, missionId);
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     const lecture = await request.get(`/api/missions/${missionId}/outcome`);
     expect(lecture.status()).toBe(403);
     const creation = await request.post(`/api/missions/${missionId}/outcome`, { data: { verdicts: [] } });
     expect(creation.status()).toBe(403);
   });
 
-  test("IDOR — un Client ne peut jamais lire l'Outcome de la mission d'un autre client (404, jamais une fuite)", async ({ request }) => {
+  test("IDOR — un Client ne peut jamais lire l'Outcome de la mission d'un autre client (404, jamais une fuite)", async () => {
     // Même patron que tests/api/b39-client-solution-intelligence-api.spec.ts :
     // un second Client est créé directement via Prisma (aucun User/login
     // associé n'est nécessaire — seul client-demo authentifié tente d'y
     // accéder, jamais le second client lui-même).
     const autreClient = await prisma.client.create({ data: { nom: `Client Test A6.1 IDOR ${Date.now()}` } });
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const { missionId } = await creerDemandeEtMission(request, autreClient.id, null);
     await terminer(request, missionId);
 
     const outcomeReponse = await request.post(`/api/missions/${missionId}/outcome`, { data: { verdicts: [] } });
     expect(outcomeReponse.status(), await outcomeReponse.text()).toBe(201);
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const lecture = await request.get(`/api/missions/${missionId}/outcome`);
     expect(lecture.status()).toBe(404);
   });
 
-  test("Outcome finalisé immuable — un second POST crée une NOUVELLE ligne (supersession), jamais une modification en place de l'ancienne", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("Outcome finalisé immuable — un second POST crée une NOUVELLE ligne (supersession), jamais une modification en place de l'ancienne", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const need = await creerNeedAvecFaits(client!.id, [{ cle: "CRITERE_REUSSITE", valeur: "Critère réévaluable" }]);
     const faitId = need.faits[0].id;
@@ -389,8 +401,8 @@ test.describe("COMPANY ATLAS A6.1 — Sécurité (RBAC / IDOR / immutabilité)",
     expect((await courant.json()).outcome.id).toBe(outcome2.id);
   });
 
-  test("idempotence/concurrence — deux créations concurrentes ne laissent jamais deux lignes courantes simultanées", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("idempotence/concurrence — deux créations concurrentes ne laissent jamais deux lignes courantes simultanées", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const need = await creerNeedAvecFaits(client!.id, [{ cle: "CRITERE_REUSSITE", valeur: "Critère concurrence" }]);
     const faitId = need.faits[0].id;
@@ -418,8 +430,8 @@ test.describe("COMPANY ATLAS A6.1 — Sécurité (RBAC / IDOR / immutabilité)",
 // l'ancienne. Les tests ci-dessous couvrent exactement les 8 invariants
 // mandatés par A15 §5/§7.
 test.describe("A15 — OutcomeAssessment : supersession corrigée (supersedesId sur le successeur)", () => {
-  test("création initiale — supersedesId=null, aucune supersession", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("création initiale — supersedesId=null, aucune supersession", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const need = await creerNeedAvecFaits(client!.id, [{ cle: "CRITERE_REUSSITE", valeur: "Critère A15-1" }]);
     const { missionId } = await creerDemandeEtMission(request, client!.id, need.id);
@@ -432,8 +444,8 @@ test.describe("A15 — OutcomeAssessment : supersession corrigée (supersedesId 
     expect(o1.supersedesId).toBeNull();
   });
 
-  test("chaîne O1 ← O2 ← O3 — current correct à chaque étape, aucune mutation des prédécesseurs, aucune branche", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("chaîne O1 ← O2 ← O3 — current correct à chaque étape, aucune mutation des prédécesseurs, aucune branche", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const need = await creerNeedAvecFaits(client!.id, [{ cle: "CRITERE_REUSSITE", valeur: "Critère A15-chaîne" }]);
     const faitId = need.faits[0].id;
@@ -493,8 +505,8 @@ test.describe("A15 — OutcomeAssessment : supersession corrigée (supersedesId 
     expect([o1.missionId, o2.missionId, o3.missionId]).toEqual([missionId, missionId, missionId]);
   });
 
-  test("branchement interdit — deux lignes ne peuvent jamais superséder la même ligne (contrainte unique)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("branchement interdit — deux lignes ne peuvent jamais superséder la même ligne (contrainte unique)", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const need = await creerNeedAvecFaits(client!.id, [{ cle: "CRITERE_REUSSITE", valeur: "Critère A15-branche" }]);
     const { missionId } = await creerDemandeEtMission(request, client!.id, need.id);

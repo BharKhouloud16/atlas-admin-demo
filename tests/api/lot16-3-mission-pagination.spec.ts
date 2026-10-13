@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 import { contexteConnecte } from "../setup/session-token";
 
@@ -22,9 +23,20 @@ import { contexteConnecte } from "../setup/session-token";
 // "Ingénieur Démo", dont le volume de missions accumulées est imprévisible)
 // pour garder un total exact et connu.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function creerMissionsTest(n: number, prefix: string) {
@@ -42,8 +54,8 @@ async function creerMissionsTest(n: number, prefix: string) {
 }
 
 test.describe("ATLAS LOT 16.3 — GET /api/missions — pagination (structure & tri)", () => {
-  test("1. page 1 par défaut (aucun paramètre) : forme {items,total,page,pageSize,totalPages}, pageSize=20", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("1. page 1 par défaut (aucun paramètre) : forme {items,total,page,pageSize,totalPages}, pageSize=20", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/missions");
     expect(reponse.ok(), await reponse.text()).toBeTruthy();
     const corps = await reponse.json();
@@ -56,8 +68,8 @@ test.describe("ATLAS LOT 16.3 — GET /api/missions — pagination (structure & 
     expect(corps.totalPages).toBe(Math.max(1, Math.ceil(corps.total / corps.pageSize)));
   });
 
-  test("2. page suivante (page=2) : contenu distinct de la page 1, aligné sur un skip direct en base", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("2. page suivante (page=2) : contenu distinct de la page 1, aligné sur un skip direct en base", async () => {
+    let request = await connecter("ADMIN");
     const pageSize = 5;
     const p1 = await (await request.get(`/api/missions?page=1&pageSize=${pageSize}`)).json();
     const p2 = await (await request.get(`/api/missions?page=2&pageSize=${pageSize}`)).json();
@@ -76,8 +88,8 @@ test.describe("ATLAS LOT 16.3 — GET /api/missions — pagination (structure & 
     for (const id of idsAttendus) expect(idsP1.has(id)).toBeFalsy();
   });
 
-  test("3. dernière page : jamais vide quand total > 0, jamais plus de pageSize éléments", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("3. dernière page : jamais vide quand total > 0, jamais plus de pageSize éléments", async () => {
+    let request = await connecter("ADMIN");
     const pageSize = 7;
     const premiere = await (await request.get(`/api/missions?page=1&pageSize=${pageSize}`)).json();
     const derniere = await (await request.get(`/api/missions?page=${premiere.totalPages}&pageSize=${pageSize}`)).json();
@@ -85,8 +97,8 @@ test.describe("ATLAS LOT 16.3 — GET /api/missions — pagination (structure & 
     expect(derniere.items.length).toBeLessThanOrEqual(pageSize);
   });
 
-  test("4. page hors limites (au-delà de la dernière page) : 200, items vide, jamais une erreur", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("4. page hors limites (au-delà de la dernière page) : 200, items vide, jamais une erreur", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/missions?page=999999&pageSize=20");
     expect(reponse.status()).toBe(200);
     const corps = await reponse.json();
@@ -95,8 +107,8 @@ test.describe("ATLAS LOT 16.3 — GET /api/missions — pagination (structure & 
     expect(corps.total).toBeGreaterThan(0);
   });
 
-  test("5. pageSize invalide (non numérique, zéro, négatif) : retombe silencieusement sur la valeur par défaut (20), jamais une erreur 400", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("5. pageSize invalide (non numérique, zéro, négatif) : retombe silencieusement sur la valeur par défaut (20), jamais une erreur 400", async () => {
+    let request = await connecter("ADMIN");
     for (const valeur of ["abc", "0", "-5", ""]) {
       const reponse = await request.get(`/api/missions?pageSize=${encodeURIComponent(valeur)}`);
       expect(reponse.status(), `pageSize=${valeur}`).toBe(200);
@@ -105,8 +117,8 @@ test.describe("ATLAS LOT 16.3 — GET /api/missions — pagination (structure & 
     }
   });
 
-  test("6. pageSize excessif : plafonné à 100, jamais le volume brut demandé", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("6. pageSize excessif : plafonné à 100, jamais le volume brut demandé", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/missions?pageSize=999999");
     expect(reponse.ok()).toBeTruthy();
     const corps = await reponse.json();
@@ -114,23 +126,23 @@ test.describe("ATLAS LOT 16.3 — GET /api/missions — pagination (structure & 
     expect(corps.items.length).toBeLessThanOrEqual(100);
   });
 
-  test("7. total correspond exactement au compte réel en base (Admin voit toutes les missions, sans filtre)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("7. total correspond exactement au compte réel en base (Admin voit toutes les missions, sans filtre)", async () => {
+    let request = await connecter("ADMIN");
     const corps = await (await request.get("/api/missions?pageSize=1")).json();
     const totalReel = await prisma.mission.count();
     expect(corps.total).toBe(totalReel);
   });
 
-  test("8. totalPages = ceil(total / pageSize), vérifié pour plusieurs tailles de page", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("8. totalPages = ceil(total / pageSize), vérifié pour plusieurs tailles de page", async () => {
+    let request = await connecter("ADMIN");
     for (const pageSize of [10, 33, 100]) {
       const corps = await (await request.get(`/api/missions?pageSize=${pageSize}`)).json();
       expect(corps.totalPages).toBe(Math.max(1, Math.ceil(corps.total / pageSize)));
     }
   });
 
-  test("9. aucune duplication entre pages consécutives (départageur id garantit un tri strictement unique)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("9. aucune duplication entre pages consécutives (départageur id garantit un tri strictement unique)", async () => {
+    let request = await connecter("ADMIN");
     const pageSize = 4;
     const p1 = await (await request.get(`/api/missions?page=1&pageSize=${pageSize}`)).json();
     const p2 = await (await request.get(`/api/missions?page=2&pageSize=${pageSize}`)).json();
@@ -139,8 +151,8 @@ test.describe("ATLAS LOT 16.3 — GET /api/missions — pagination (structure & 
     expect(new Set(tousLesIds).size).toBe(tousLesIds.length);
   });
 
-  test("10. tri strictement déterministe : deux appels identiques renvoient exactement le même ordre", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("10. tri strictement déterministe : deux appels identiques renvoient exactement le même ordre", async () => {
+    let request = await connecter("ADMIN");
     const a = await (await request.get("/api/missions?page=1&pageSize=15")).json();
     const b = await (await request.get("/api/missions?page=1&pageSize=15")).json();
     expect(a.items.map((m: { id: string }) => m.id)).toEqual(b.items.map((m: { id: string }) => m.id));
@@ -148,8 +160,8 @@ test.describe("ATLAS LOT 16.3 — GET /api/missions — pagination (structure & 
 });
 
 test.describe("ATLAS LOT 16.3 — GET /api/missions — permissions & isolation (pagination ne les modifie jamais)", () => {
-  test("11. CLIENT reste refusé (403) quels que soient page/pageSize fournis — la pagination ne contourne jamais le RBAC en amont", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("11. CLIENT reste refusé (403) quels que soient page/pageSize fournis — la pagination ne contourne jamais le RBAC en amont", async () => {
+    let request = await connecter("CLIENT");
     for (const qs of ["", "?page=1&pageSize=5", "?page=999&pageSize=100"]) {
       const reponse = await request.get(`/api/missions${qs}`);
       expect(reponse.status(), qs).toBe(403);

@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 
 // COMPANY ATLAS — A18 : Mission Need Pinning + Solution Decision (05/10/2026).
@@ -9,9 +10,20 @@ import { prisma } from "@/lib/prisma";
 // chemin legacy (sourceDemande -> sourceNeed) dans la résolution Outcome
 // (lib/outcome/service.ts::resoudreNeedPinne).
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function creerProfil() {
@@ -73,8 +85,8 @@ async function creerLigneNiveau(clientId: string, needId: string, niveau: "HYPOT
 }
 
 test.describe("A18 — POST /api/missions : pins Need/SolutionDecision", () => {
-  test("1. Mission sans Need -> création valide, needVersionId/solutionDecisionId null", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("1. Mission sans Need -> création valide, needVersionId/solutionDecisionId null", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const profil = await creerProfil();
     const reponse = await request.post("/api/missions", {
@@ -86,8 +98,8 @@ test.describe("A18 — POST /api/missions : pins Need/SolutionDecision", () => {
     expect(mission.solutionDecisionId).toBeNull();
   });
 
-  test("2. Mission avec needVersionId=V1 -> pin posé exactement", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("2. Mission avec needVersionId=V1 -> pin posé exactement", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const need = await creerNeedAvecFaits(client!.id);
     const profil = await creerProfil();
@@ -99,11 +111,11 @@ test.describe("A18 — POST /api/missions : pins Need/SolutionDecision", () => {
     expect(mission.needVersionId).toBe(need.id);
   });
 
-  test("3. Need fork V1 -> V2 : la Mission reste pinnée sur V1, jamais réécrite", async ({ request }) => {
+  test("3. Need fork V1 -> V2 : la Mission reste pinnée sur V1, jamais réécrite", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const v1 = await creerNeedAvecFaits(client!.id, [{ cle: "CRITERE_REUSSITE", valeur: "Critère V1" }]);
 
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const profil = await creerProfil();
     const creation = await request.post("/api/missions", {
       data: { clientId: client!.id, profilId: profil.id, nbJours: 5, tjmVente: 400, needVersionId: v1.id },
@@ -114,7 +126,7 @@ test.describe("A18 — POST /api/missions : pins Need/SolutionDecision", () => {
     // Fork déclenché via le parcours réel (PATCH titre sur une version
     // VALIDATED) — même mécanisme que A5.2, jamais une manipulation directe
     // de la DB qui contournerait la logique applicative testée.
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const patch = await request.patch(`/api/client/besoins/${v1.id}`, { data: { titre: "Titre modifié — déclenche fork A5.2" } });
     expect(patch.status(), await patch.text()).toBe(200);
     const v1Rechargee = await prisma.clientNeed.findUnique({ where: { id: v1.id } });
@@ -127,8 +139,8 @@ test.describe("A18 — POST /api/missions : pins Need/SolutionDecision", () => {
     expect(missionRechargee?.needVersionId).not.toBe(v2Id);
   });
 
-  test("4. Mission avec needVersionId=V1 et solutionDecisionId=S1 (même Need) -> pins posés exactement", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("4. Mission avec needVersionId=V1 et solutionDecisionId=S1 (même Need) -> pins posés exactement", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const need = await creerNeedAvecFaits(client!.id);
     const decision = await creerDecision(client!.id, need.id);
@@ -142,8 +154,8 @@ test.describe("A18 — POST /api/missions : pins Need/SolutionDecision", () => {
     expect(mission.solutionDecisionId).toBe(decision.id);
   });
 
-  test("5. solutionDecisionId rattachée à un autre Need que needVersionId -> refus 400, aucune correction silencieuse", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("5. solutionDecisionId rattachée à un autre Need que needVersionId -> refus 400, aucune correction silencieuse", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const needA = await creerNeedAvecFaits(client!.id);
     const needB = await creerNeedAvecFaits(client!.id);
@@ -164,8 +176,8 @@ test.describe("A18 — POST /api/missions : pins Need/SolutionDecision", () => {
   // une OPTION ou une HYPOTHESE ne doivent jamais être acceptées, même si
   // c'est techniquement la ligne la plus avancée disponible pour ce Need.
   for (const niveau of ["RECOMMANDATION", "OPTION", "HYPOTHESE"] as const) {
-    test(`5b. solutionDecisionId référence une ligne niveau=${niveau} (jamais DECISION) -> refus 400`, async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test(`5b. solutionDecisionId référence une ligne niveau=${niveau} (jamais DECISION) -> refus 400`, async () => {
+      let request = await connecter("ADMIN");
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const need = await creerNeedAvecFaits(client!.id);
       const ligne = await creerLigneNiveau(client!.id, need.id, niveau);
@@ -180,8 +192,8 @@ test.describe("A18 — POST /api/missions : pins Need/SolutionDecision", () => {
     });
   }
 
-  test("6a. needVersionId inexistant -> 404, jamais une substitution par le Need courant", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("6a. needVersionId inexistant -> 404, jamais une substitution par le Need courant", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const profil = await creerProfil();
     const reponse = await request.post("/api/missions", {
@@ -190,8 +202,8 @@ test.describe("A18 — POST /api/missions : pins Need/SolutionDecision", () => {
     expect(reponse.status(), await reponse.text()).toBe(404);
   });
 
-  test("6b. needVersionId appartenant à un autre tenant -> 404 identique (IDOR), aucune fuite d'existence", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("6b. needVersionId appartenant à un autre tenant -> 404 identique (IDOR), aucune fuite d'existence", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const autreClient = await creerClientDeTest(`${Date.now()}-${Math.random()}`);
     const needAutreClient = await creerNeedAvecFaits(autreClient.id);
@@ -206,8 +218,8 @@ test.describe("A18 — POST /api/missions : pins Need/SolutionDecision", () => {
     expect(corps.error).toBe("Need introuvable");
   });
 
-  test("7. Immutabilité : needVersionId injecté dans /transition est ignoré, jamais réécrit", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("7. Immutabilité : needVersionId injecté dans /transition est ignoré, jamais réécrit", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const v1 = await creerNeedAvecFaits(client!.id);
     const v2 = await creerNeedAvecFaits(client!.id);
@@ -229,7 +241,7 @@ test.describe("A18 — POST /api/missions : pins Need/SolutionDecision", () => {
 });
 
 test.describe("A18 — Outcome : priorité au pin Mission.needVersionId vs fallback legacy", () => {
-  test("8. needVersionId=V1 ET sourceDemande.sourceNeedId=V2 (divergents) -> Outcome utilise V1, jamais V2", async ({ request }) => {
+  test("8. needVersionId=V1 ET sourceDemande.sourceNeedId=V2 (divergents) -> Outcome utilise V1, jamais V2", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const v1 = await creerNeedAvecFaits(client!.id, [{ cle: "CRITERE_REUSSITE", valeur: "Critère V1 — ne doit jamais être supplanté" }]);
     const v2 = await creerNeedAvecFaits(client!.id, [{ cle: "CRITERE_REUSSITE", valeur: "Critère V2 — ne doit jamais apparaître" }]);
@@ -237,7 +249,7 @@ test.describe("A18 — Outcome : priorité au pin Mission.needVersionId vs fallb
       data: { clientId: client!.id, description: `Demande A18 divergente ${Date.now()}`, sourceNeedId: v2.id },
     });
 
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const profil = await creerProfil();
     const creation = await request.post("/api/missions", {
       data: { sourceDemandeId: demande.id, profilId: profil.id, nbJours: 5, tjmVente: 400, needVersionId: v1.id },
@@ -254,14 +266,14 @@ test.describe("A18 — Outcome : priorité au pin Mission.needVersionId vs fallb
     expect(valeurs).not.toContain("Critère V2 — ne doit jamais apparaître");
   });
 
-  test("9. needVersionId absent, sourceDemande.sourceNeedId=V1 -> fallback legacy fonctionne comme avant A18", async ({ request }) => {
+  test("9. needVersionId absent, sourceDemande.sourceNeedId=V1 -> fallback legacy fonctionne comme avant A18", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const v1 = await creerNeedAvecFaits(client!.id, [{ cle: "CRITERE_REUSSITE", valeur: "Critère legacy" }]);
     const demande = await prisma.demandeTalent.create({
       data: { clientId: client!.id, description: `Demande A18 legacy ${Date.now()}`, sourceNeedId: v1.id },
     });
 
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const profil = await creerProfil();
     const creation = await request.post("/api/missions", {
       data: { sourceDemandeId: demande.id, profilId: profil.id, nbJours: 5, tjmVente: 400 },
@@ -278,9 +290,9 @@ test.describe("A18 — Outcome : priorité au pin Mission.needVersionId vs fallb
     expect(corps.criteresDisponibles.map((c: { valeur: string }) => c.valeur)).toContain("Critère legacy");
   });
 
-  test("10. Aucun pin, aucune sourceDemande -> NOT_DETERMINABLE inchangé (needVersionId null, criteresDisponibles vide)", async ({ request }) => {
+  test("10. Aucun pin, aucune sourceDemande -> NOT_DETERMINABLE inchangé (needVersionId null, criteresDisponibles vide)", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const profil = await creerProfil();
     const creation = await request.post("/api/missions", {
       data: { clientId: client!.id, profilId: profil.id, nbJours: 5, tjmVente: 400 },

@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { StatutMission } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
@@ -14,9 +15,20 @@ import { prisma } from "@/lib/prisma";
 // ProfilCompetence/Evaluation.create (seul son PRÉCONDITION mission.statut
 // === "Terminée" devient enfin atteignable).
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function clientDemo() {
@@ -41,8 +53,8 @@ async function creerMission(statut: StatutMission = StatutMission.EN_COURS) {
 }
 
 test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/transition)", () => {
-  test("1. Admin peut terminer une mission En cours -> Terminée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("1. Admin peut terminer une mission En cours -> Terminée", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
 
     const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "terminer" } });
@@ -54,8 +66,8 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
     expect(enBase?.statut).toBe("TERMINEE");
   });
 
-  test("2. Admin peut annuler une mission En cours -> Annulée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("2. Admin peut annuler une mission En cours -> Annulée", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
 
     // A22 — un motif est désormais obligatoire pour toute annulation
@@ -66,8 +78,8 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
     expect(apres.statut).toBe("ANNULEE");
   });
 
-  test("3. Terminée -> En cours (via action invalide 'reouvrir') : impossible, 400", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("3. Terminée -> En cours (via action invalide 'reouvrir') : impossible, 400", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.TERMINEE);
 
     const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "reouvrir" } });
@@ -76,8 +88,8 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
     expect(enBase?.statut).toBe("TERMINEE");
   });
 
-  test("4. Terminée -> Annulée : impossible, 409 (état terminal)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("4. Terminée -> Annulée : impossible, 409 (état terminal)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.TERMINEE);
 
     const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "annuler" } });
@@ -86,8 +98,8 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
     expect(enBase?.statut).toBe("TERMINEE");
   });
 
-  test("5. Annulée -> En cours (via action invalide 'reouvrir') : impossible, 400", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("5. Annulée -> En cours (via action invalide 'reouvrir') : impossible, 400", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.ANNULEE);
 
     const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "reouvrir" } });
@@ -96,8 +108,8 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
     expect(enBase?.statut).toBe("ANNULEE");
   });
 
-  test("6. Annulée -> Terminée : impossible, 409 (état terminal)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("6. Annulée -> Terminée : impossible, 409 (état terminal)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.ANNULEE);
 
     const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "terminer" } });
@@ -106,8 +118,8 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
     expect(enBase?.statut).toBe("ANNULEE");
   });
 
-  test("7. Ingénieur ne peut pas terminer une mission (même la sienne) -> 403, aucune mutation", async ({ request }) => {
-    await connecter(request, "ingenieur-demo@example.com");
+  test("7. Ingénieur ne peut pas terminer une mission (même la sienne) -> 403, aucune mutation", async () => {
+    let request = await connecter("INGENIEUR");
     const mission = await creerMission(StatutMission.EN_COURS); // appartient bien au profil ingenieur-demo
 
     const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "terminer" } });
@@ -116,8 +128,8 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
     expect(enBase?.statut).toBe("EN_COURS");
   });
 
-  test("8. Ingénieur ne peut pas annuler une mission (même la sienne) -> 403, aucune mutation", async ({ request }) => {
-    await connecter(request, "ingenieur-demo@example.com");
+  test("8. Ingénieur ne peut pas annuler une mission (même la sienne) -> 403, aucune mutation", async () => {
+    let request = await connecter("INGENIEUR");
     const mission = await creerMission(StatutMission.EN_COURS);
 
     const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "annuler" } });
@@ -126,8 +138,8 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
     expect(enBase?.statut).toBe("EN_COURS");
   });
 
-  test("9. Client ne peut pas terminer une mission (même la sienne) -> 403, aucune mutation", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("9. Client ne peut pas terminer une mission (même la sienne) -> 403, aucune mutation", async () => {
+    let request = await connecter("CLIENT");
     const mission = await creerMission(StatutMission.EN_COURS); // appartient bien au client-demo
 
     const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "terminer" } });
@@ -136,8 +148,8 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
     expect(enBase?.statut).toBe("EN_COURS");
   });
 
-  test("10. Client ne peut pas annuler une mission (même la sienne) -> 403, aucune mutation", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("10. Client ne peut pas annuler une mission (même la sienne) -> 403, aucune mutation", async () => {
+    let request = await connecter("CLIENT");
     const mission = await creerMission(StatutMission.EN_COURS);
 
     const reponse = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "annuler" } });
@@ -146,14 +158,14 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
     expect(enBase?.statut).toBe("EN_COURS");
   });
 
-  test("11. Mission inexistante -> 404", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("11. Mission inexistante -> 404", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.patch("/api/missions/inexistante-xyz/transition", { data: { action: "terminer" } });
     expect(reponse.status()).toBe(404);
   });
 
-  test("12. Action invalide/absente -> 400, aucune mutation", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("12. Action invalide/absente -> 400, aucune mutation", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
 
     const invalide = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "n'importe quoi" } });
@@ -168,8 +180,8 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
     expect(enBase?.statut).toBe("EN_COURS");
   });
 
-  test("13. Aucune mutation en cas de transition refusée (récapitulatif toutes causes de refus confondues)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("13. Aucune mutation en cas de transition refusée (récapitulatif toutes causes de refus confondues)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.TERMINEE);
     const avant = await prisma.mission.findUnique({ where: { id: mission.id } });
 
@@ -181,8 +193,8 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
     expect(apres?.updatedAt.getTime()).toBe(avant?.updatedAt.getTime());
   });
 
-  test("14. Transition Terminée journalisée (journaliser())", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("14. Transition Terminée journalisée (journaliser())", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const avant = Date.now();
 
@@ -200,8 +212,8 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
     expect(entree!.createdAt.getTime()).toBeGreaterThanOrEqual(avant - 1000);
   });
 
-  test("15. Transition Annulée journalisée (journaliser())", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("15. Transition Annulée journalisée (journaliser())", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
 
     // A22 — motif désormais obligatoire pour toute annulation.
@@ -216,8 +228,8 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
     expect(entree!.detail).toContain("ANNULEE");
   });
 
-  test("16. L'audit contient au minimum l'acteur, la mission et la transition (avant -> après)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("16. L'audit contient au minimum l'acteur, la mission et la transition (avant -> après)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
 
     await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "terminer" } });
@@ -234,13 +246,13 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
     expect(entree!.detail).toContain("TERMINEE");
   });
 
-  test("17. Mission Terminée débloque POST /api/evaluations (précondition existante, non modifiée)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("17. Mission Terminée débloque POST /api/evaluations (précondition existante, non modifiée)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const transition = await request.patch(`/api/missions/${mission.id}/transition`, { data: { action: "terminer" } });
     expect(transition.ok()).toBeTruthy();
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const evaluation = await request.post("/api/evaluations", { data: { missionId: mission.id, note: 5, commentaire: "Test B46" } });
     // Ne doit plus être bloquée par le contrôle "Seule une mission terminée
     // peut être évaluée" (app/api/evaluations/route.ts, jamais modifié par
@@ -257,8 +269,8 @@ test.describe("ATLAS PHASE 2B-0 — Mission Lifecycle (PATCH /api/missions/[id]/
     }
   });
 
-  test("18. Skill Graph / ProfilCompetence intacts après une transition Mission (aucun effet de bord)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("18. Skill Graph / ProfilCompetence intacts après une transition Mission (aucun effet de bord)", async () => {
+    let request = await connecter("ADMIN");
     const profilId = await profilIngenieurDemo();
     const avant = await prisma.profilCompetence.count({ where: { profilId } });
 

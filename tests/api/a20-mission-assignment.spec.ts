@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 import { executerBackfillAssignments } from "@/lib/mission/assignment-backfill";
 
@@ -9,9 +10,20 @@ import { executerBackfillAssignments } from "@/lib/mission/assignment-backfill";
 // Talent/Mission, immutabilité des champs, dates, RBAC, et backfill
 // historique (mapping, idempotence, anomalies, aucune date inventée).
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function creerProfil(suffixe = `${Date.now()}-${Math.random()}`) {
@@ -36,8 +48,8 @@ async function clientDemo() {
 }
 
 test.describe("A20 — POST /api/missions/[id]/assignments : création", () => {
-  test("1/2/3/4. Admin crée une Assignment valide, rôle/statut initial corrects, allocation NULL acceptée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("1/2/3/4. Admin crée une Assignment valide, rôle/statut initial corrects, allocation NULL acceptée", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilMission = await creerProfil();
     const talent = await creerProfil();
@@ -55,8 +67,8 @@ test.describe("A20 — POST /api/missions/[id]/assignments : création", () => {
     expect(assignment.missionId).toBe(mission.id);
   });
 
-  test("5/6. allocation 0 et 100 acceptées", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("5/6. allocation 0 et 100 acceptées", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilMission = await creerProfil();
     const mission = await creerMission(client.id, profilMission.id);
@@ -76,8 +88,8 @@ test.describe("A20 — POST /api/missions/[id]/assignments : création", () => {
     expect((await repB.json()).allocationPct).toBe(100);
   });
 
-  test("7/8. allocation >100 et négative rejetées", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("7/8. allocation >100 et négative rejetées", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilMission = await creerProfil();
     const mission = await creerMission(client.id, profilMission.id);
@@ -97,8 +109,8 @@ test.describe("A20 — POST /api/missions/[id]/assignments : création", () => {
 });
 
 test.describe("A20 — Identité (Mission/Talent inexistants, IDOR)", () => {
-  test("9. Mission inexistante -> 404, aucune Assignment créée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("9. Mission inexistante -> 404, aucune Assignment créée", async () => {
+    let request = await connecter("ADMIN");
     const talent = await creerProfil();
     const reponse = await request.post(`/api/missions/inexistante-cuid/assignments`, {
       data: { talentId: talent.id, role: "CONTRIBUTEUR", dateDebut: new Date().toISOString() },
@@ -106,8 +118,8 @@ test.describe("A20 — Identité (Mission/Talent inexistants, IDOR)", () => {
     expect(reponse.status()).toBe(404);
   });
 
-  test("10. Talent inexistant -> 404, aucune Assignment créée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("10. Talent inexistant -> 404, aucune Assignment créée", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilMission = await creerProfil();
     const mission = await creerMission(client.id, profilMission.id);
@@ -121,8 +133,8 @@ test.describe("A20 — Identité (Mission/Talent inexistants, IDOR)", () => {
 });
 
 test.describe("A20 — Responsable principal (unicité transactionnelle)", () => {
-  test("13/14. une première Assignment principale ACTIF OK, une deuxième sur la même Mission rejetée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("13/14. une première Assignment principale ACTIF OK, une deuxième sur la même Mission rejetée", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilMission = await creerProfil();
     const mission = await creerMission(client.id, profilMission.id);
@@ -140,8 +152,8 @@ test.describe("A20 — Responsable principal (unicité transactionnelle)", () =>
     expect(repB.status()).toBe(409);
   });
 
-  test("15. concurrence transactionnelle : deux créations simultanées avec estResponsablePrincipal=true -> une seule réussit", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("15. concurrence transactionnelle : deux créations simultanées avec estResponsablePrincipal=true -> une seule réussit", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilMission = await creerProfil();
     const mission = await creerMission(client.id, profilMission.id);
@@ -168,8 +180,8 @@ test.describe("A20 — Responsable principal (unicité transactionnelle)", () =>
 });
 
 test.describe("A20 — Même Talent / même Mission", () => {
-  test("16. même Talent, Assignment historique TERMINE -> nouvelle Assignment ACTIF autorisée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("16. même Talent, Assignment historique TERMINE -> nouvelle Assignment ACTIF autorisée", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilMission = await creerProfil();
     const mission = await creerMission(client.id, profilMission.id);
@@ -190,8 +202,8 @@ test.describe("A20 — Même Talent / même Mission", () => {
     expect(nouvelle.status(), await nouvelle.text()).toBe(201);
   });
 
-  test("17. même Talent, Assignment ACTIF déjà existante -> deuxième ACTIF rejetée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("17. même Talent, Assignment ACTIF déjà existante -> deuxième ACTIF rejetée", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilMission = await creerProfil();
     const mission = await creerMission(client.id, profilMission.id);
@@ -210,8 +222,8 @@ test.describe("A20 — Même Talent / même Mission", () => {
 });
 
 test.describe("A20 — Immutabilité", () => {
-  test("18/19/20/21. missionId/talentId/role/createdByEmail injectés dans le PATCH sont ignorés", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("18/19/20/21. missionId/talentId/role/createdByEmail injectés dans le PATCH sont ignorés", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilMission = await creerProfil();
     const missionA = await creerMission(client.id, profilMission.id);
@@ -243,8 +255,8 @@ test.describe("A20 — Immutabilité", () => {
     expect(relue?.allocationPct).toBe(50);
   });
 
-  test("22/23. allocationPct et estResponsablePrincipal modifiables tant que ACTIF", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("22/23. allocationPct et estResponsablePrincipal modifiables tant que ACTIF", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilMission = await creerProfil();
     const mission = await creerMission(client.id, profilMission.id);
@@ -276,8 +288,8 @@ test.describe("A20 — Immutabilité", () => {
 });
 
 test.describe("A20 — Dates", () => {
-  test("24. dateDebut obligatoire -> 400 si absente", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("24. dateDebut obligatoire -> 400 si absente", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilMission = await creerProfil();
     const mission = await creerMission(client.id, profilMission.id);
@@ -289,8 +301,8 @@ test.describe("A20 — Dates", () => {
     expect(reponse.status()).toBe(400);
   });
 
-  test("25/26. dateFin < dateDebut rejetée (terminer/annuler)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("25/26. dateFin < dateDebut rejetée (terminer/annuler)", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilMission = await creerProfil();
     const mission = await creerMission(client.id, profilMission.id);
@@ -326,8 +338,8 @@ test.describe("A20 — Dates", () => {
 });
 
 test.describe("A20 — RBAC", () => {
-  test("27. CLIENT ne peut pas créer", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("27. CLIENT ne peut pas créer", async () => {
+    let request = await connecter("CLIENT");
     const client = await clientDemo();
     const profilMission = await creerProfil();
     const mission = await creerMission(client.id, profilMission.id);
@@ -338,8 +350,8 @@ test.describe("A20 — RBAC", () => {
     expect(reponse.status()).toBe(403);
   });
 
-  test("28. INGENIEUR ne peut pas créer", async ({ request }) => {
-    await connecter(request, "ingenieur-demo@example.com");
+  test("28. INGENIEUR ne peut pas créer", async () => {
+    let request = await connecter("INGENIEUR");
     const client = await clientDemo();
     const profilMission = await creerProfil();
     const mission = await creerMission(client.id, profilMission.id);
@@ -350,8 +362,8 @@ test.describe("A20 — RBAC", () => {
     expect(reponse.status()).toBe(403);
   });
 
-  test("29. ADMIN peut créer", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("29. ADMIN peut créer", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilMission = await creerProfil();
     const mission = await creerMission(client.id, profilMission.id);
@@ -423,8 +435,8 @@ test.describe("A20 — Backfill historique", () => {
     expect(assignment?.dateFinProvenance).toBe("PROXY_DERNIERE_ECRITURE_MISSION");
   });
 
-  test("38. création vivante via l'API -> dateDebutProvenance=CONNUE, jamais PROXY (fait réellement fourni par l'Admin)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("38. création vivante via l'API -> dateDebutProvenance=CONNUE, jamais PROXY (fait réellement fourni par l'Admin)", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilMission = await creerProfil();
     const mission = await creerMission(client.id, profilMission.id);
@@ -438,8 +450,8 @@ test.describe("A20 — Backfill historique", () => {
     expect(assignment.dateDebutProvenance).toBe("CONNUE");
   });
 
-  test("39. transition vivante (terminer/annuler) -> dateFinProvenance=CONNUE, jamais PROXY", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("39. transition vivante (terminer/annuler) -> dateFinProvenance=CONNUE, jamais PROXY", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilMission = await creerProfil();
     const mission = await creerMission(client.id, profilMission.id);

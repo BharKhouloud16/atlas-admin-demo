@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 
 // COMPANY ATLAS — A21 : MissionCapabilityLink (05/10/2026).
@@ -8,9 +9,20 @@ import { prisma } from "@/lib/prisma";
 // SolutionDecision, immutabilité/historique, doublons (logique +
 // concurrence réelle), RBAC, IDOR, Missions legacy/manuelles, audit.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function creerProfil() {
@@ -77,8 +89,8 @@ async function creerProfilMission() {
 }
 
 test.describe("A21 — POST /api/missions/[id]/capability-links : création", () => {
-  test("5/9. Mission V1 + Requirement V1 (même Need) -> 201, lien ACTIVE", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("5/9. Mission V1 + Requirement V1 (même Need) -> 201, lien ACTIVE", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const need = await creerNeedAvecFaits(client.id);
     const requirement = await creerCapabilityRequirement(need.id);
@@ -100,8 +112,8 @@ test.describe("A21 — POST /api/missions/[id]/capability-links : création", ()
     expect(link.capabilityRequirementId).toBe(requirement.id);
   });
 
-  test("6/7/8. snapshot capability correct, createdByEmail correct, statut initial ACTIVE", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("6/7/8. snapshot capability correct, createdByEmail correct, statut initial ACTIVE", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const need = await creerNeedAvecFaits(client.id);
     const requirement = await creerCapabilityRequirement(need.id, { requiredCapability: "Kubernetes avancé" });
@@ -124,12 +136,12 @@ test.describe("A21 — POST /api/missions/[id]/capability-links : création", ()
 });
 
 test.describe("A21 — Cohérence Need version", () => {
-  test("10. Mission V1 + Requirement V2 (fork survenu) -> 409, aucune correction silencieuse", async ({ request }) => {
+  test("10. Mission V1 + Requirement V2 (fork survenu) -> 409, aucune correction silencieuse", async () => {
     const client = await clientDemo();
     const needV1 = await creerNeedAvecFaits(client.id);
     const requirementV1 = await creerCapabilityRequirement(needV1.id);
 
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const profilMission = await creerProfilMission();
     const creationMission = await request.post("/api/missions", {
       data: { clientId: client.id, profilId: profilMission.id, nbJours: 5, tjmVente: 400, needVersionId: needV1.id },
@@ -137,14 +149,14 @@ test.describe("A21 — Cohérence Need version", () => {
     const mission = await creationMission.json();
 
     // Fork V1 -> V2 via le parcours réel (PATCH titre, A5.2).
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const patch = await request.patch(`/api/client/besoins/${needV1.id}`, { data: { titre: "Titre modifié — fork A5.2" } });
     expect(patch.status(), await patch.text()).toBe(200);
     const needV1Rechargee = await prisma.clientNeed.findUnique({ where: { id: needV1.id } });
     const needV2Id = needV1Rechargee!.needSuivantId!;
     const requirementV2 = await creerCapabilityRequirement(needV2Id);
 
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     // Mission reste pinnée sur V1 (A18) ; Requirement V2 provient de V2 -> incohérence.
     const reponse = await request.post(`/api/missions/${mission.id}/capability-links`, {
       data: { capabilityRequirementId: requirementV2.id },
@@ -158,8 +170,8 @@ test.describe("A21 — Cohérence Need version", () => {
     expect(reponseV1.status(), await reponseV1.text()).toBe(201);
   });
 
-  test("11/26. Mission sans Need + lien manuel -> 201 autorisé (contrat A21 §6/§11)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("11/26. Mission sans Need + lien manuel -> 201 autorisé (contrat A21 §6/§11)", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilMission = await creerProfilMission();
     const creationMission = await request.post("/api/missions", {
@@ -176,8 +188,8 @@ test.describe("A21 — Cohérence Need version", () => {
     expect(link.capability).toBe("Gestion de projet agile");
   });
 
-  test("Mission sans Need + tentative de lien RÉEL (capabilityRequirementId fourni) -> 409, jamais une CapabilityRequirement flottante", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("Mission sans Need + tentative de lien RÉEL (capabilityRequirementId fourni) -> 409, jamais une CapabilityRequirement flottante", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const need = await creerNeedAvecFaits(client.id);
     const requirement = await creerCapabilityRequirement(need.id);
@@ -194,8 +206,8 @@ test.describe("A21 — Cohérence Need version", () => {
     expect(reponse.status()).toBe(409);
   });
 
-  test("12/25. CapabilityRequirement d'un autre client -> 404, jamais une fuite d'existence (IDOR)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("12/25. CapabilityRequirement d'un autre client -> 404, jamais une fuite d'existence (IDOR)", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const autreClient = await creerClientDeTest(`${Date.now()}-${Math.random()}`);
     const needAutreClient = await creerNeedAvecFaits(autreClient.id);
@@ -214,8 +226,8 @@ test.describe("A21 — Cohérence Need version", () => {
     expect(reponse.status()).toBe(404);
   });
 
-  test("24. Mission inexistante -> 404, aucun lien créé", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("24. Mission inexistante -> 404, aucun lien créé", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const need = await creerNeedAvecFaits(client.id);
     const requirement = await creerCapabilityRequirement(need.id);
@@ -228,8 +240,8 @@ test.describe("A21 — Cohérence Need version", () => {
 });
 
 test.describe("A21 — Cohérence SolutionDecision", () => {
-  test("13. Decision cohérente (Mission.solutionDecisionId === Requirement.solutionDecisionId) -> 201", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("13. Decision cohérente (Mission.solutionDecisionId === Requirement.solutionDecisionId) -> 201", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const need = await creerNeedAvecFaits(client.id);
     const decision = await creerDecision(client.id, need.id);
@@ -248,8 +260,8 @@ test.describe("A21 — Cohérence SolutionDecision", () => {
     expect(reponse.status(), await reponse.text()).toBe(201);
   });
 
-  test("14. Decision incohérente (Requirement provient d'une autre SolutionDecision) -> 409", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("14. Decision incohérente (Requirement provient d'une autre SolutionDecision) -> 409", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const need = await creerNeedAvecFaits(client.id);
     const decisionMission = await creerDecision(client.id, need.id);
@@ -268,8 +280,8 @@ test.describe("A21 — Cohérence SolutionDecision", () => {
     expect(reponse.status()).toBe(409);
   });
 
-  test("27. Mission sans SolutionDecision + Requirement sans SolutionDecision -> 201, aucun conflit (rien à comparer)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("27. Mission sans SolutionDecision + Requirement sans SolutionDecision -> 201, aucun conflit (rien à comparer)", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const need = await creerNeedAvecFaits(client.id);
     const requirement = await creerCapabilityRequirement(need.id);
@@ -288,8 +300,8 @@ test.describe("A21 — Cohérence SolutionDecision", () => {
 });
 
 test.describe("A21 — Immutabilité / historique", () => {
-  test("15/17. Requirement devenue SUPERSEDED après coup -> Link inchangé (capability et statut), aucune cascade automatique", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("15/17. Requirement devenue SUPERSEDED après coup -> Link inchangé (capability et statut), aucune cascade automatique", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const need = await creerNeedAvecFaits(client.id);
     const requirement = await creerCapabilityRequirement(need.id, { requiredCapability: "Terraform" });
@@ -315,12 +327,12 @@ test.describe("A21 — Immutabilité / historique", () => {
     expect(lienRelu?.capability).toBe("Terraform");
   });
 
-  test("16/17. Fork Need V1 -> V2 après création du Link -> Link historique totalement inchangé", async ({ request }) => {
+  test("16/17. Fork Need V1 -> V2 après création du Link -> Link historique totalement inchangé", async () => {
     const client = await clientDemo();
     const needV1 = await creerNeedAvecFaits(client.id);
     const requirement = await creerCapabilityRequirement(needV1.id, { requiredCapability: "Playwright" });
 
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const profilMission = await creerProfilMission();
     const creationMission = await request.post("/api/missions", {
       data: { clientId: client.id, profilId: profilMission.id, nbJours: 5, tjmVente: 400, needVersionId: needV1.id },
@@ -332,7 +344,7 @@ test.describe("A21 — Immutabilité / historique", () => {
     });
     const link = await creationLien.json();
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const patch = await request.patch(`/api/client/besoins/${needV1.id}`, { data: { titre: "Nouveau titre — fork" } });
     expect(patch.status(), await patch.text()).toBe(200);
 
@@ -346,8 +358,8 @@ test.describe("A21 — Immutabilité / historique", () => {
 });
 
 test.describe("A21 — Doublons / idempotence", () => {
-  test("18. doublon logique (même Mission + même CapabilityRequirement, lien déjà ACTIF) -> 409", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("18. doublon logique (même Mission + même CapabilityRequirement, lien déjà ACTIF) -> 409", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const need = await creerNeedAvecFaits(client.id);
     const requirement = await creerCapabilityRequirement(need.id);
@@ -365,8 +377,8 @@ test.describe("A21 — Doublons / idempotence", () => {
     expect(doublon.status()).toBe(409);
   });
 
-  test("doublon manuel (même texte normalisé déjà ACTIF) -> 409", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("doublon manuel (même texte normalisé déjà ACTIF) -> 409", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilMission = await creerProfilMission();
     const creationMission = await request.post("/api/missions", {
@@ -381,8 +393,8 @@ test.describe("A21 — Doublons / idempotence", () => {
     expect(doublon.status()).toBe(409);
   });
 
-  test("19. concurrence réelle : deux créations simultanées pour le même (Mission, CapabilityRequirement) -> une seule réussit", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("19. concurrence réelle : deux créations simultanées pour le même (Mission, CapabilityRequirement) -> une seule réussit", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const need = await creerNeedAvecFaits(client.id);
     const requirement = await creerCapabilityRequirement(need.id);
@@ -407,8 +419,8 @@ test.describe("A21 — Doublons / idempotence", () => {
     expect(liensActifs).toBe(1);
   });
 
-  test("retrait (SUPERSEDED) puis nouvelle création pour la même paire -> autorisée (un seul lien ACTIF, pas un seul pour toujours)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("retrait (SUPERSEDED) puis nouvelle création pour la même paire -> autorisée (un seul lien ACTIF, pas un seul pour toujours)", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const need = await creerNeedAvecFaits(client.id);
     const requirement = await creerCapabilityRequirement(need.id);
@@ -435,8 +447,8 @@ test.describe("A21 — Doublons / idempotence", () => {
 });
 
 test.describe("A21 — RBAC", () => {
-  test("21. CLIENT ne peut pas créer", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("21. CLIENT ne peut pas créer", async () => {
+    let request = await connecter("CLIENT");
     const client = await clientDemo();
     const profilMission = await creerProfilMission();
     const creationMission = await prisma.mission.create({ data: { clientId: client.id, profilId: profilMission.id, nbJours: 5, tjmVente: 400 } });
@@ -445,8 +457,8 @@ test.describe("A21 — RBAC", () => {
     expect(reponse.status()).toBe(403);
   });
 
-  test("22. INGENIEUR ne peut pas créer", async ({ request }) => {
-    await connecter(request, "ingenieur-demo@example.com");
+  test("22. INGENIEUR ne peut pas créer", async () => {
+    let request = await connecter("INGENIEUR");
     const client = await clientDemo();
     const profilMission = await creerProfilMission();
     const creationMission = await prisma.mission.create({ data: { clientId: client.id, profilId: profilMission.id, nbJours: 5, tjmVente: 400 } });
@@ -455,8 +467,8 @@ test.describe("A21 — RBAC", () => {
     expect(reponse.status()).toBe(403);
   });
 
-  test("20. ADMIN peut créer et consulter", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("20. ADMIN peut créer et consulter", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilMission = await creerProfilMission();
     const creationMission = await request.post("/api/missions", {
@@ -475,8 +487,8 @@ test.describe("A21 — RBAC", () => {
 });
 
 test.describe("A21 — Audit", () => {
-  test("28. journal créé correctement à la création", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("28. journal créé correctement à la création", async () => {
+    let request = await connecter("ADMIN");
     const client = await clientDemo();
     const profilMission = await creerProfilMission();
     const creationMission = await request.post("/api/missions", {

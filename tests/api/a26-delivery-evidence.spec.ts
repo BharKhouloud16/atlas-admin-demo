@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { StatutMission, WorkItemStatut, DeliverableStatut, MissionAssignmentRole, MissionAssignmentStatut, WorkItemAssignmentStatut } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { creerEvidenceAvecRetry, CibleIncoherenteError } from "@/lib/delivery-evidence/evidence";
@@ -16,9 +17,20 @@ import { creerEvidenceAvecRetry, CibleIncoherenteError } from "@/lib/delivery-ev
 // WorkItem/Outcome/Quality, RBAC (ADMIN/INGENIEUR/CLIENT, aucun Agent),
 // IDOR, journalisation.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function clientDemo() {
@@ -104,8 +116,8 @@ async function postEvidenceVersion(
 }
 
 test.describe("A26 — Cible", () => {
-  test("1. Evidence sur WorkItem -> 201", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("1. Evidence sur WorkItem -> 201", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const workItem = await creerWorkItem(mission.id);
     const reponse = await postEvidenceWorkItem(request, mission.id, workItem.id, { methode: "DECLARATION_TALENT", contenu: "12 tests exécutés." });
@@ -115,8 +127,8 @@ test.describe("A26 — Cible", () => {
     expect(corps.deliverableVersionId).toBeNull();
   });
 
-  test("2. Evidence sur DeliverableVersion -> 201", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("2. Evidence sur DeliverableVersion -> 201", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const { deliverable, version } = await creerDeliverableDirect(mission.id);
     const reponse = await postEvidenceVersion(request, mission.id, deliverable.id, version.id, { methode: "VALIDATION_ADMIN", contenu: "Rapport validé." });
@@ -126,8 +138,8 @@ test.describe("A26 — Cible", () => {
     expect(corps.workItemId).toBeNull();
   });
 
-  test("3/4. aucun target ou deux targets (via corruption directe du body) -> 409", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("3/4. aucun target ou deux targets (via corruption directe du body) -> 409", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const workItem = await creerWorkItem(mission.id);
     // La route WorkItem fixe toujours workItemId depuis l'URL ; mais le
@@ -149,8 +161,8 @@ test.describe("A26 — Cible", () => {
     ).rejects.toBeInstanceOf(CibleIncoherenteError);
   });
 
-  test("5. target d'une Mission incohérente -> 404", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("5. target d'une Mission incohérente -> 404", async () => {
+    let request = await connecter("ADMIN");
     const missionA = await creerMission(StatutMission.EN_COURS);
     const missionB = await creerMission(StatutMission.EN_COURS);
     const workItemB = await creerWorkItem(missionB.id);
@@ -170,8 +182,8 @@ test.describe("A26 — Méthodes", () => {
     { methode: "INFERENCE_IA", confiance: "INFERE" },
   ];
   for (const { methode, confiance } of cas) {
-    test(`6-11. méthode ${methode} acceptée`, async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test(`6-11. méthode ${methode} acceptée`, async () => {
+      let request = await connecter("ADMIN");
       const mission = await creerMission(StatutMission.EN_COURS);
       const workItem = await creerWorkItem(mission.id);
       const reponse = await postEvidenceWorkItem(request, mission.id, workItem.id, { methode, confiance, contenu: "Assertion de test." });
@@ -183,7 +195,7 @@ test.describe("A26 — Méthodes", () => {
 
 test.describe("A26 — Matrice confiance", () => {
   async function tenterCombinaison(request: APIRequestContext, methode: string, confiance: string) {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const workItem = await creerWorkItem(mission.id);
     return postEvidenceWorkItem(request, mission.id, workItem.id, { methode, confiance, contenu: "x" });
@@ -243,8 +255,8 @@ test.describe("A26 — Défauts", () => {
     { methode: "INFERENCE_IA", defaut: "INFERE" },
   ];
   for (const { methode, defaut } of defauts) {
-    test(`26-31. défaut ${methode} -> ${defaut}`, async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test(`26-31. défaut ${methode} -> ${defaut}`, async () => {
+      let request = await connecter("ADMIN");
       const mission = await creerMission(StatutMission.EN_COURS);
       const workItem = await creerWorkItem(mission.id);
       const reponse = await postEvidenceWorkItem(request, mission.id, workItem.id, { methode, contenu: "x" });
@@ -255,8 +267,8 @@ test.describe("A26 — Défauts", () => {
 });
 
 test.describe("A26 — Immutabilité", () => {
-  test("32/38/45. Evidence immuable : E1 reste inchangée après supersession par E2", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("32/38/45. Evidence immuable : E1 reste inchangée après supersession par E2", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const workItem = await creerWorkItem(mission.id);
     const r1 = await postEvidenceWorkItem(request, mission.id, workItem.id, { methode: "INFERENCE_IA", contenu: "IA : 12 tests passés." });
@@ -274,16 +286,16 @@ test.describe("A26 — Immutabilité", () => {
     expect(e1Apres?.contenu).toBe("IA : 12 tests passés.");
   });
 
-  test("33/35. aucune route de modification n'existe (PATCH refusé)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("33/35. aucune route de modification n'existe (PATCH refusé)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const workItem = await creerWorkItem(mission.id);
     const reponse = await request.patch(`/api/missions/${mission.id}/work-items/${workItem.id}/evidence`, { data: {} });
     expect(reponse.status()).toBe(405);
   });
 
-  test("34. createdByEmail serveur — jamais fourni par le client", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("34. createdByEmail serveur — jamais fourni par le client", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const workItem = await creerWorkItem(mission.id);
     const reponse = await postEvidenceWorkItem(request, mission.id, workItem.id, {
@@ -296,8 +308,8 @@ test.describe("A26 — Immutabilité", () => {
 });
 
 test.describe("A26 — Succession", () => {
-  test("36/37. E1 -> E2 -> E3, chaîne linéaire", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("36/37. E1 -> E2 -> E3, chaîne linéaire", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const workItem = await creerWorkItem(mission.id);
     const r1 = await postEvidenceWorkItem(request, mission.id, workItem.id, { methode: "INFERENCE_IA", contenu: "v1" });
@@ -310,8 +322,8 @@ test.describe("A26 — Succession", () => {
     expect(e3.supersedesId).toBe(e2.id);
   });
 
-  test("39. pas de branche : un deuxième successeur de E1 est refusé", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("39. pas de branche : un deuxième successeur de E1 est refusé", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const workItem = await creerWorkItem(mission.id);
     const r1 = await postEvidenceWorkItem(request, mission.id, workItem.id, { methode: "INFERENCE_IA", contenu: "v1" });
@@ -323,8 +335,8 @@ test.describe("A26 — Succession", () => {
     expect(r3.status()).toBe(409);
   });
 
-  test("40/42. cross-target (même Mission, cible différente) -> 409", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("40/42. cross-target (même Mission, cible différente) -> 409", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const workItem = await creerWorkItem(mission.id);
     const { deliverable, version } = await creerDeliverableDirect(mission.id);
@@ -340,8 +352,8 @@ test.describe("A26 — Succession", () => {
     expect(r2.status()).toBe(409);
   });
 
-  test("41/65. cross-Mission -> 404 uniforme, jamais une fuite d'existence", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("41/65. cross-Mission -> 404 uniforme, jamais une fuite d'existence", async () => {
+    let request = await connecter("ADMIN");
     const missionA = await creerMission(StatutMission.EN_COURS);
     const missionB = await creerMission(StatutMission.EN_COURS);
     const workItemA = await creerWorkItem(missionA.id);
@@ -354,8 +366,8 @@ test.describe("A26 — Succession", () => {
     expect(r2.status()).toBe(404);
   });
 
-  test("44. concurrence : deux créations simultanées de successeur -> un seul gagnant", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("44. concurrence : deux créations simultanées de successeur -> un seul gagnant", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const workItem = await creerWorkItem(mission.id);
     const r1 = await postEvidenceWorkItem(request, mission.id, workItem.id, { methode: "INFERENCE_IA", contenu: "v1" });
@@ -374,8 +386,8 @@ test.describe("A26 — Succession", () => {
 });
 
 test.describe("A26 — Règle critique IA", () => {
-  test("43/44/45/46. IA crée INFERE, Admin crée E2 VERIFIE, E1 reste INFERE, aucune auto-promotion", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("43/44/45/46. IA crée INFERE, Admin crée E2 VERIFIE, E1 reste INFERE, aucune auto-promotion", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const workItem = await creerWorkItem(mission.id);
 
@@ -403,8 +415,8 @@ test.describe("A26 — Règle critique IA", () => {
 });
 
 test.describe("A26 — Mission (TERMINEE/ANNULEE, aucune réouverture)", () => {
-  test("47/49/50. Evidence après Mission TERMINEE -> OK, Mission reste TERMINEE", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("47/49/50. Evidence après Mission TERMINEE -> OK, Mission reste TERMINEE", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.TERMINEE);
     const workItem = await prisma.workItem.create({ data: { missionId: mission.id, titre: "Historique", statut: "TERMINE", createdByEmail: "admin-demo@example.com" } });
 
@@ -415,8 +427,8 @@ test.describe("A26 — Mission (TERMINEE/ANNULEE, aucune réouverture)", () => {
     expect(missionApres?.statut).toBe("TERMINEE");
   });
 
-  test("48/49/50. Evidence après Mission ANNULEE -> OK, Mission reste ANNULEE", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("48/49/50. Evidence après Mission ANNULEE -> OK, Mission reste ANNULEE", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.ANNULEE);
     const workItem = await prisma.workItem.create({ data: { missionId: mission.id, titre: "Annulé", statut: "ANNULE", createdByEmail: "admin-demo@example.com" } });
 
@@ -432,16 +444,16 @@ test.describe("A26 — Mission (TERMINEE/ANNULEE, aucune réouverture)", () => {
 });
 
 test.describe("A26 — WorkItem (états terminaux)", () => {
-  test("51. Evidence sur WorkItem TERMINE -> OK", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("51. Evidence sur WorkItem TERMINE -> OK", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const workItem = await creerWorkItem(mission.id, WorkItemStatut.TERMINE);
     const reponse = await postEvidenceWorkItem(request, mission.id, workItem.id, { methode: "DECLARATION_TALENT", contenu: "x" });
     expect(reponse.status(), await reponse.text()).toBe(201);
   });
 
-  test("52. Evidence sur WorkItem ANNULE -> OK", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("52. Evidence sur WorkItem ANNULE -> OK", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const workItem = await creerWorkItem(mission.id, WorkItemStatut.ANNULE);
     const reponse = await postEvidenceWorkItem(request, mission.id, workItem.id, { methode: "DECLARATION_TALENT", contenu: "x" });
@@ -451,8 +463,8 @@ test.describe("A26 — WorkItem (états terminaux)", () => {
 
 test.describe("A26 — Deliverable (toutes les versions, toutes les étapes)", () => {
   for (const statut of ["DRAFT", "REVIEW", "APPROVED", "FINALIZED", "REJECTED"] as const) {
-    test(`53-57. Evidence sur version ${statut} -> OK`, async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test(`53-57. Evidence sur version ${statut} -> OK`, async () => {
+      let request = await connecter("ADMIN");
       const mission = await creerMission(StatutMission.EN_COURS);
       const { deliverable, version } = await creerDeliverableDirect(mission.id);
       await mettreVersionEnStatut(version.id, statut);
@@ -461,8 +473,8 @@ test.describe("A26 — Deliverable (toutes les versions, toutes les étapes)", (
     });
   }
 
-  test("58. Evidence reste attachée à V2 même lorsque V3 devient la version courante", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("58. Evidence reste attachée à V2 même lorsque V3 devient la version courante", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const { deliverable, version: v1 } = await creerDeliverableDirect(mission.id);
     const v2 = await prisma.deliverableVersion.create({
@@ -483,16 +495,16 @@ test.describe("A26 — Deliverable (toutes les versions, toutes les étapes)", (
 });
 
 test.describe("A26 — RBAC", () => {
-  test("59. ADMIN autorisé sur toutes les méthodes", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("59. ADMIN autorisé sur toutes les méthodes", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const workItem = await creerWorkItem(mission.id);
     const reponse = await postEvidenceWorkItem(request, mission.id, workItem.id, { methode: "VALIDATION_ADMIN", contenu: "x" });
     expect(reponse.status()).toBe(201);
   });
 
-  test("60. INGENIEUR : autorisé sur son propre WorkItem (DECLARATION_TALENT), refusé sur un WorkItem étranger, refusé sur VALIDATION_ADMIN", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("60. INGENIEUR : autorisé sur son propre WorkItem (DECLARATION_TALENT), refusé sur un WorkItem étranger, refusé sur VALIDATION_ADMIN", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const workItem = await creerWorkItem(mission.id);
     await affecterIngenieurDemoAuWorkItem(mission.id, workItem.id);
@@ -500,7 +512,7 @@ test.describe("A26 — RBAC", () => {
     const autreMission = await creerMission(StatutMission.EN_COURS);
     const autreWorkItem = await creerWorkItem(autreMission.id);
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     const ok = await postEvidenceWorkItem(request, mission.id, workItem.id, { methode: "DECLARATION_TALENT", contenu: "Mon observation." });
     expect(ok.status(), await ok.text()).toBe(201);
 
@@ -511,12 +523,12 @@ test.describe("A26 — RBAC", () => {
     expect(refuseEtranger.status()).toBe(404);
   });
 
-  test("61. CLIENT : autorisé pour VALIDATION_CLIENT sur sa propre Mission, refusé pour les autres méthodes, refusé sur une autre Mission", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("61. CLIENT : autorisé pour VALIDATION_CLIENT sur sa propre Mission, refusé pour les autres méthodes, refusé sur une autre Mission", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS); // appartient à client-demo
     const workItem = await creerWorkItem(mission.id);
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const ok = await postEvidenceWorkItem(request, mission.id, workItem.id, { methode: "VALIDATION_CLIENT", contenu: "Je confirme." });
     expect(ok.status(), await ok.text()).toBe(201);
 
@@ -524,25 +536,25 @@ test.describe("A26 — RBAC", () => {
     expect(refuse.status()).toBe(403);
   });
 
-  test("62. aucun rôle Agent n'existe — INFERENCE_IA jamais accessible à l'Ingénieur ni au Client", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("62. aucun rôle Agent n'existe — INFERENCE_IA jamais accessible à l'Ingénieur ni au Client", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const workItem = await creerWorkItem(mission.id);
     await affecterIngenieurDemoAuWorkItem(mission.id, workItem.id);
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     const refuseIngenieur = await postEvidenceWorkItem(request, mission.id, workItem.id, { methode: "INFERENCE_IA", contenu: "x" });
     expect(refuseIngenieur.status()).toBe(403);
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const refuseClient = await postEvidenceWorkItem(request, mission.id, workItem.id, { methode: "INFERENCE_IA", contenu: "x" });
     expect(refuseClient.status()).toBe(403);
   });
 });
 
 test.describe("A26 — IDOR", () => {
-  test("63. WorkItem d'une autre Mission -> 404", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("63. WorkItem d'une autre Mission -> 404", async () => {
+    let request = await connecter("ADMIN");
     const missionA = await creerMission(StatutMission.EN_COURS);
     const missionB = await creerMission(StatutMission.EN_COURS);
     const workItemB = await creerWorkItem(missionB.id);
@@ -551,8 +563,8 @@ test.describe("A26 — IDOR", () => {
     expect(reponse.status()).toBe(404);
   });
 
-  test("64. DeliverableVersion d'une autre Mission -> 404", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("64. DeliverableVersion d'une autre Mission -> 404", async () => {
+    let request = await connecter("ADMIN");
     const missionA = await creerMission(StatutMission.EN_COURS);
     const missionB = await creerMission(StatutMission.EN_COURS);
     const { deliverable, version } = await creerDeliverableDirect(missionB.id);
@@ -563,8 +575,8 @@ test.describe("A26 — IDOR", () => {
 });
 
 test.describe("A26 — Outcome / Quality (hors périmètre, jamais créés automatiquement)", () => {
-  test("66/67/68. aucune création ni modification d'OutcomeAssessment, Evidence != ACHIEVED", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("66/67/68. aucune création ni modification d'OutcomeAssessment, Evidence != ACHIEVED", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const workItem = await creerWorkItem(mission.id);
 
@@ -575,8 +587,8 @@ test.describe("A26 — Outcome / Quality (hors périmètre, jamais créés autom
     expect(outcomes).toBe(0);
   });
 
-  test("69/70. création d'une DeliveryQualityGate n'est jamais une conséquence automatique d'une Evidence — Evidence != PASS/FAIL (Quality introduit par A27)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("69/70. création d'une DeliveryQualityGate n'est jamais une conséquence automatique d'une Evidence — Evidence != PASS/FAIL (Quality introduit par A27)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const workItem = await creerWorkItem(mission.id);
 
@@ -590,8 +602,8 @@ test.describe("A26 — Outcome / Quality (hors périmètre, jamais créés autom
 });
 
 test.describe("A26 — Journalisation", () => {
-  test("71. création -> journal delivery_evidence.created", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("71. création -> journal delivery_evidence.created", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const workItem = await creerWorkItem(mission.id);
     const avant = Date.now();
@@ -607,8 +619,8 @@ test.describe("A26 — Journalisation", () => {
     expect(entree!.createdAt.getTime()).toBeGreaterThanOrEqual(avant - 1000);
   });
 
-  test("72. supersession -> journal delivery_evidence.superseded", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("72. supersession -> journal delivery_evidence.superseded", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const workItem = await creerWorkItem(mission.id);
     const r1 = await postEvidenceWorkItem(request, mission.id, workItem.id, { methode: "INFERENCE_IA", contenu: "v1" });

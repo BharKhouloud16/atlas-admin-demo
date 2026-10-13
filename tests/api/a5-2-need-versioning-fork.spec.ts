@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 
 // ATLAS — A5.2 : Need Versioning Core (fork atomique, chaîne linéaire,
@@ -13,9 +14,20 @@ import { prisma } from "@/lib/prisma";
 // d'une clé répétable (COMPETENCE, CONTRAINTE, CRITERE_REUSSITE, PRIORITE,
 // RISQUE, PREFERENCE).
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function creerBesoinValideDirect(clientId: string, faits: { cle: string; valeur: string; statut: string }[] = []) {
@@ -72,11 +84,11 @@ test.describe("A5.2 — Schema : contrainte anti-bifurcation", () => {
 });
 
 test.describe("A5.2 — PATCH : fork simple sur titre", () => {
-  test("VALIDATED + titre modifié -> V2 créée, V1 devient historique et immuable, V2 current avec version=2", async ({ request }) => {
+  test("VALIDATED + titre modifié -> V2 créée, V1 devient historique et immuable, V2 current avec version=2", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const v1 = await creerBesoinValideDirect(client!.id, [{ cle: "LOCALISATION", valeur: "Paris", statut: "DECLARE" }]);
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const patch = await request.fetch(`/api/client/besoins/${v1.id}`, { method: "PATCH", data: { titre: "Nouveau titre V2" } });
     expect(patch.status(), await patch.text()).toBe(200);
     const corps = await patch.json();
@@ -95,14 +107,14 @@ test.describe("A5.2 — PATCH : fork simple sur titre", () => {
     expect(v1Relu.version).toBe(1);
   });
 
-  test("les facts ACTIVE de V1 sont copiés sur V2 avec de nouveaux IDs, jamais réutilisés, valeurs identiques, source inchangée", async ({ request }) => {
+  test("les facts ACTIVE de V1 sont copiés sur V2 avec de nouveaux IDs, jamais réutilisés, valeurs identiques, source inchangée", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const v1 = await creerBesoinValideDirect(client!.id, [
       { cle: "LOCALISATION", valeur: "Paris", statut: "DECLARE" },
       { cle: "BUDGET_MONTANT", valeur: "5000", statut: "VERIFIE" },
     ]);
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const patch = await request.fetch(`/api/client/besoins/${v1.id}`, { method: "PATCH", data: { titre: "V2" } });
     expect(patch.status()).toBe(200);
     const v2 = (await patch.json()).besoin;
@@ -124,11 +136,11 @@ test.describe("A5.2 — PATCH : fork simple sur titre", () => {
 });
 
 test.describe("A5.2 — Fork successif (chaîne V1 -> V2 -> V3)", () => {
-  test("V1 et V2 deviennent historiques, V3 seule current ; V1/V2 refusent toute modification", async ({ request }) => {
+  test("V1 et V2 deviennent historiques, V3 seule current ; V1/V2 refusent toute modification", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const v1 = await creerBesoinValideDirect(client!.id, [{ cle: "LOCALISATION", valeur: "Paris", statut: "DECLARE" }]);
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const patch1 = await request.fetch(`/api/client/besoins/${v1.id}`, { method: "PATCH", data: { titre: "V2" } });
     expect(patch1.status()).toBe(200);
     const v2 = (await patch1.json()).besoin;
@@ -159,14 +171,14 @@ test.describe("A5.2 — Fork successif (chaîne V1 -> V2 -> V3)", () => {
 });
 
 test.describe("A5.2 — POST faits : fork sur correction/confirmation", () => {
-  test("CORRIGER sur VALIDATED current -> fork ; la correction est posée sur V2, jamais sur V1", async ({ request }) => {
+  test("CORRIGER sur VALIDATED current -> fork ; la correction est posée sur V2, jamais sur V1", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const v1 = await creerBesoinValideDirect(client!.id, [
       { cle: "LOCALISATION", valeur: "Paris", statut: "DECLARE" },
       { cle: "BUDGET_MONTANT", valeur: "5000", statut: "VERIFIE" },
     ]);
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const reponse = await request.post(`/api/client/besoins/${v1.id}/faits`, {
       data: { cle: "LOCALISATION", action: "CORRIGER", valeur: "Lyon" },
     });
@@ -188,7 +200,7 @@ test.describe("A5.2 — POST faits : fork sur correction/confirmation", () => {
     expect(faitsV1Relus.some((f) => f.valeur === "Lyon")).toBe(false);
   });
 
-  test("facts répétables : V1{A,B} -> fork ajout C -> V2{A,B,C}, jamais collapsés à une seule instance", async ({ request }) => {
+  test("facts répétables : V1{A,B} -> fork ajout C -> V2{A,B,C}, jamais collapsés à une seule instance", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const v1 = await creerBesoinValideDirect(client!.id, [
       { cle: "COMPETENCE", valeur: "A", statut: "DECLARE" },
@@ -196,7 +208,7 @@ test.describe("A5.2 — POST faits : fork sur correction/confirmation", () => {
       { cle: "LOCALISATION", valeur: "Paris", statut: "DECLARE" },
     ]);
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     // CLES_CLARIFIABLES exclut les clés répétables — le fork est déclenché
     // via une correction sur une clé non-répétable (LOCALISATION), et l'on
     // vérifie que les 2 instances de COMPETENCE sont TOUTES DEUX copiées
@@ -213,11 +225,11 @@ test.describe("A5.2 — POST faits : fork sur correction/confirmation", () => {
 });
 
 test.describe("A5.2 — Concurrence : deux forks simultanés sur la même version courante", () => {
-  test("une seule branche réussit (V1->V2 OU V1->V3), jamais les deux ; l'autre reçoit 409", async ({ request }) => {
+  test("une seule branche réussit (V1->V2 OU V1->V3), jamais les deux ; l'autre reçoit 409", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const v1 = await creerBesoinValideDirect(client!.id, [{ cle: "LOCALISATION", valeur: "Paris", statut: "DECLARE" }]);
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
 
     const [reponseA, reponseB] = await Promise.all([
       request.fetch(`/api/client/besoins/${v1.id}`, { method: "PATCH", data: { titre: "Tentative A" } }),
@@ -236,10 +248,10 @@ test.describe("A5.2 — Concurrence : deux forks simultanés sur la même versio
 });
 
 test.describe("A5.2 — Immutabilité (cas isolés)", () => {
-  test("PATCH statut=ARCHIVE sur une version historique -> 409", async ({ request }) => {
+  test("PATCH statut=ARCHIVE sur une version historique -> 409", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const v1 = await creerBesoinValideDirect(client!.id);
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const patch1 = await request.fetch(`/api/client/besoins/${v1.id}`, { method: "PATCH", data: { titre: "V2" } });
     expect(patch1.status()).toBe(200);
 
@@ -247,10 +259,10 @@ test.describe("A5.2 — Immutabilité (cas isolés)", () => {
     expect(archiveV1.status()).toBe(409);
   });
 
-  test("PATCH statut=ARCHIVE seul sur une version courante VALIDATED reste in-place (pas de fork pour une transition de lifecycle pure)", async ({ request }) => {
+  test("PATCH statut=ARCHIVE seul sur une version courante VALIDATED reste in-place (pas de fork pour une transition de lifecycle pure)", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const v1 = await creerBesoinValideDirect(client!.id);
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
 
     const archive = await request.fetch(`/api/client/besoins/${v1.id}`, { method: "PATCH", data: { statut: "ARCHIVE" } });
     expect(archive.status(), await archive.text()).toBe(200);
@@ -264,12 +276,12 @@ test.describe("A5.2 — Immutabilité (cas isolés)", () => {
 });
 
 test.describe("A5.2 — SolutionOption : garde de version courante", () => {
-  test("décision sur une recommandation de V1 refusée après fork vers V2 (409 RECOMMANDATION_OBSOLETE)", async ({ request }) => {
+  test("décision sur une recommandation de V1 refusée après fork vers V2 (409 RECOMMANDATION_OBSOLETE)", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     await creerCandidatExploitable(`${Date.now()}-a52-v1`);
     const v1 = await creerBesoinValideDirect(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const generation = await (await request.get(`/api/client/besoins/${v1.id}/solutions`)).json();
     expect(generation.eligible).toBe(true);
     expect(generation.recommandation).not.toBeNull();
@@ -286,12 +298,12 @@ test.describe("A5.2 — SolutionOption : garde de version courante", () => {
     expect(decisionsEnBase).toBe(0);
   });
 
-  test("décision sur V2 (version courante) fonctionne normalement si les autres conditions sont satisfaites", async ({ request }) => {
+  test("décision sur V2 (version courante) fonctionne normalement si les autres conditions sont satisfaites", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     await creerCandidatExploitable(`${Date.now()}-a52-v2`);
     const v1 = await creerBesoinValideDirect(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const patch = await request.fetch(`/api/client/besoins/${v1.id}`, { method: "PATCH", data: { titre: "V2" } });
     expect(patch.status()).toBe(200);
     const v2Id = (await patch.json()).besoin.id;
@@ -306,12 +318,12 @@ test.describe("A5.2 — SolutionOption : garde de version courante", () => {
 });
 
 test.describe("A5.2 — IDOR (isolation Client A / Client B) sur le versioning", () => {
-  test("Client A ne peut ni lire, ni PATCH, ni forker, ni ajouter un fait, ni décider sur une version appartenant à Client B", async ({ request }) => {
+  test("Client A ne peut ni lire, ni PATCH, ni forker, ni ajouter un fait, ni décider sur une version appartenant à Client B", async () => {
     const clientB = await prisma.client.create({ data: { nom: `Client Test A5.2 IDOR ${Date.now()}` } });
     await creerCandidatExploitable(`${Date.now()}-a52-idor`);
     const v1B = await creerBesoinValideDirect(clientB.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
 
     const lecture = await request.get(`/api/client/besoins/${v1B.id}`);
     expect(lecture.status()).toBe(404);

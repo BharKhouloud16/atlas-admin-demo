@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 
 // ATLAS — A8 : SolutionDecision + Capability Engine V1 (05/10/2026).
@@ -9,9 +10,20 @@ import { prisma } from "@/lib/prisma";
 // (Admin, lecture pure). C2/C3/C6 (logique pure de filtrage) sont couverts
 // par tests/unit/capability-engine.spec.ts.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function creerBesoinValideDirect(clientId: string, faits: { cle: string; valeur: string; statut: string }[] = []) {
@@ -35,12 +47,12 @@ async function creerClientDeTest(suffixe: string) {
 
 test.describe("A8 — GET /api/client/besoins/[id]/capabilities", () => {
   // C1
-  test("besoin avec COMPETENCE actif -> CapabilityRequirement créée, traçable au fait source exact", async ({ request }) => {
+  test("besoin avec COMPETENCE actif -> CapabilityRequirement créée, traçable au fait source exact", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const besoin = await creerBesoinValideDirect(client!.id, [{ cle: "COMPETENCE", valeur: "Playwright", statut: "DECLARE" }]);
     const faitSource = besoin.faits[0];
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const reponse = await request.get(`/api/client/besoins/${besoin.id}/capabilities`);
     expect(reponse.status(), await reponse.text()).toBe(200);
     const corps = await reponse.json();
@@ -54,11 +66,11 @@ test.describe("A8 — GET /api/client/besoins/[id]/capabilities", () => {
     expect(corps.capabilities[0].status).toBe("ACTIVE");
   });
 
-  test("besoin sans COMPETENCE -> NO_CAPABILITY_DERIVABLE, jamais une capacité inventée", async ({ request }) => {
+  test("besoin sans COMPETENCE -> NO_CAPABILITY_DERIVABLE, jamais une capacité inventée", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const besoin = await creerBesoinValideDirect(client!.id, [{ cle: "CONTRAINTE", valeur: "Budget limité", statut: "DECLARE" }]);
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const reponse = await request.get(`/api/client/besoins/${besoin.id}/capabilities`);
     expect(reponse.status()).toBe(200);
     const corps = await reponse.json();
@@ -67,11 +79,11 @@ test.describe("A8 — GET /api/client/besoins/[id]/capabilities", () => {
   });
 
   // C5
-  test("deux appels successifs sur le même besoin -> aucun doublon créé (idempotence)", async ({ request }) => {
+  test("deux appels successifs sur le même besoin -> aucun doublon créé (idempotence)", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const besoin = await creerBesoinValideDirect(client!.id, [{ cle: "COMPETENCE", valeur: "Java", statut: "DECLARE" }]);
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const premier = await request.get(`/api/client/besoins/${besoin.id}/capabilities`);
     const second = await request.get(`/api/client/besoins/${besoin.id}/capabilities`);
     expect(premier.status()).toBe(200);
@@ -95,7 +107,7 @@ test.describe("A8 — GET /api/client/besoins/[id]/capabilities", () => {
     const besoin = await creerBesoinValideDirect(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
     const faitSource = besoin.faits[0];
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const premier = await request.get(`/api/client/besoins/${besoin.id}/capabilities`);
     expect((await premier.json()).capabilities).toHaveLength(1);
 
@@ -114,11 +126,11 @@ test.describe("A8 — GET /api/client/besoins/[id]/capabilities", () => {
   });
 
   // C8 — IDOR
-  test("besoin d'un autre client -> 404, jamais une fuite d'existence", async ({ request }) => {
+  test("besoin d'un autre client -> 404, jamais une fuite d'existence", async () => {
     const autreClient = await creerClientDeTest(`${Date.now()}-idor`);
     try {
       const besoin = await creerBesoinValideDirect(autreClient.id, [{ cle: "COMPETENCE", valeur: "Go", statut: "DECLARE" }]);
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const reponse = await request.get(`/api/client/besoins/${besoin.id}/capabilities`);
       expect(reponse.status()).toBe(404);
     } finally {
@@ -136,11 +148,11 @@ test.describe("A8 — GET /api/client/besoins/[id]/capabilities", () => {
   });
 
   // C10 — Need historique
-  test("besoin devenu historique (fork survenu) -> 409, jamais une dérivation sur une version obsolète", async ({ request }) => {
+  test("besoin devenu historique (fork survenu) -> 409, jamais une dérivation sur une version obsolète", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const v1 = await creerBesoinValideDirect(client!.id, [{ cle: "COMPETENCE", valeur: "Java", statut: "DECLARE" }]);
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const patch = await request.fetch(`/api/client/besoins/${v1.id}`, { method: "PATCH", data: { titre: "Nouveau titre" } });
     expect(patch.status(), await patch.text()).toBe(200);
 
@@ -149,11 +161,11 @@ test.describe("A8 — GET /api/client/besoins/[id]/capabilities", () => {
   });
 
   // C4
-  test("fork V1 -> V2 : les CapabilityRequirement de V1 restent inchangées, V2 dérive indépendamment", async ({ request }) => {
+  test("fork V1 -> V2 : les CapabilityRequirement de V1 restent inchangées, V2 dérive indépendamment", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const v1 = await creerBesoinValideDirect(client!.id, [{ cle: "COMPETENCE", valeur: "Java", statut: "DECLARE" }]);
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const premier = await request.get(`/api/client/besoins/${v1.id}/capabilities`);
     expect((await premier.json()).capabilities).toHaveLength(1);
     const crV1AvantFork = await prisma.capabilityRequirement.findFirst({ where: { needVersionId: v1.id } });
@@ -175,7 +187,7 @@ test.describe("A8 — GET /api/client/besoins/[id]/capabilities", () => {
   });
 
   // C11 — SolutionDecision liée à Need V1
-  test("SolutionDecision existante sur V1 -> solutionDecisionId résolu sur la CapabilityRequirement de V1", async ({ request }) => {
+  test("SolutionDecision existante sur V1 -> solutionDecisionId résolu sur la CapabilityRequirement de V1", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const besoin = await creerBesoinValideDirect(client!.id, [{ cle: "COMPETENCE", valeur: "Java", statut: "DECLARE" }]);
 
@@ -201,7 +213,7 @@ test.describe("A8 — GET /api/client/besoins/[id]/capabilities", () => {
       },
     });
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const reponse = await request.get(`/api/client/besoins/${besoin.id}/capabilities`);
     expect(reponse.status()).toBe(200);
     const corps = await reponse.json();
@@ -211,19 +223,19 @@ test.describe("A8 — GET /api/client/besoins/[id]/capabilities", () => {
 
 test.describe("A8 — GET /api/talent/besoins/[id]/capabilities (Admin)", () => {
   // C9 — RBAC
-  test("rôle CLIENT -> 403 sur la route Admin", async ({ request }) => {
+  test("rôle CLIENT -> 403 sur la route Admin", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const besoin = await creerBesoinValideDirect(client!.id, [{ cle: "COMPETENCE", valeur: "Java", statut: "DECLARE" }]);
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const reponse = await request.get(`/api/talent/besoins/${besoin.id}/capabilities`);
     expect(reponse.status()).toBe(403);
   });
 
-  test("ADMIN lit les CapabilityRequirement déjà dérivées, sans jamais en déclencher de nouvelles", async ({ request }) => {
+  test("ADMIN lit les CapabilityRequirement déjà dérivées, sans jamais en déclencher de nouvelles", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const besoin = await creerBesoinValideDirect(client!.id, [{ cle: "COMPETENCE", valeur: "Rust", statut: "DECLARE" }]);
 
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const avantDerivation = await request.get(`/api/talent/besoins/${besoin.id}/capabilities`);
     expect(avantDerivation.status()).toBe(200);
     expect((await avantDerivation.json()).capabilities).toHaveLength(0);
@@ -231,16 +243,16 @@ test.describe("A8 — GET /api/talent/besoins/[id]/capabilities (Admin)", () => 
     const enBaseAvant = await prisma.capabilityRequirement.count({ where: { needVersionId: besoin.id } });
     expect(enBaseAvant).toBe(0); // la lecture Admin n'a rien dérivé
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     await request.get(`/api/client/besoins/${besoin.id}/capabilities`);
 
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const apresDerivation = await request.get(`/api/talent/besoins/${besoin.id}/capabilities`);
     expect((await apresDerivation.json()).capabilities).toHaveLength(1);
   });
 
-  test("besoin introuvable -> 404", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("besoin introuvable -> 404", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get(`/api/talent/besoins/introuvable-xyz/capabilities`);
     expect(reponse.status()).toBe(404);
   });

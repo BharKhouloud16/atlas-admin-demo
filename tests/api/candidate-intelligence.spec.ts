@@ -1,13 +1,25 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 
 // ATLAS TALENT — Candidate Intelligence V1 (Batch 4) — chemin API : isolation
 // RBAC (Admin uniquement, jamais Client/Ingénieur), absence de crash sans
 // Skill Graph, déterminisme. Complète tests/unit/candidate-intelligence.spec.ts
 // (fonctions pures).
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function idProfilIngenieurDemo(request: APIRequestContext): Promise<string> {
@@ -20,8 +32,8 @@ async function idProfilIngenieurDemo(request: APIRequestContext): Promise<string
 }
 
 test.describe("ATLAS TALENT — Candidate Intelligence V1 — API", () => {
-  test("14. candidat sans Skill Graph calculé : réponse 200, aucun crash, structure cohérente", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("14. candidat sans Skill Graph calculé : réponse 200, aucun crash, structure cohérente", async () => {
+    let request = await connecter("ADMIN");
     const liste = await request.get("/api/profils");
     const { profils } = await liste.json();
     const profilVide = profils.find((p: { nom: string }) => p.nom === "Nouvel Ingénieur (test)");
@@ -34,7 +46,7 @@ test.describe("ATLAS TALENT — Candidate Intelligence V1 — API", () => {
     expect(Array.isArray(intelligence.zonesInconnues)).toBe(true);
   });
 
-  test("15. candidat avec Skill Graph : compétences reprises depuis le Skill Graph déjà calculé", async ({ request }) => {
+  test("15. candidat avec Skill Graph : compétences reprises depuis le Skill Graph déjà calculé", async () => {
     // Ne déclare volontairement AUCUNE nouvelle compétence ici : le profil
     // "Ingénieur Démo" est partagé (fullyParallel, voir playwright.config.ts)
     // avec d'autres fichiers de tests API (skill-graph*.spec.ts) qui
@@ -45,7 +57,7 @@ test.describe("ATLAS TALENT — Candidate Intelligence V1 — API", () => {
     // structurelle entre le Skill Graph déjà exposé par
     // GET .../competences et Candidate Intelligence, sans dépendre d'une
     // compétence précise ni écrire quoi que ce soit.
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const profilId = await idProfilIngenieurDemo(request);
 
     const graphReponse = await request.get(`/api/profils/${profilId}/competences`);
@@ -69,27 +81,27 @@ test.describe("ATLAS TALENT — Candidate Intelligence V1 — API", () => {
     }
   });
 
-  test("16. isolation RBAC : Candidate Intelligence n'est accessible qu'à l'Admin (jamais Client/Ingénieur)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("16. isolation RBAC : Candidate Intelligence n'est accessible qu'à l'Admin (jamais Client/Ingénieur)", async () => {
+    let request = await connecter("ADMIN");
     const profilId = await idProfilIngenieurDemo(request);
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const refusClient = await request.get(`/api/profils/${profilId}/intelligence`);
     expect(refusClient.status()).toBe(403);
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     const refusIngenieur = await request.get(`/api/profils/${profilId}/intelligence`);
     expect(refusIngenieur.status()).toBe(403);
   });
 
-  test("17. profil inexistant : 404, jamais un crash serveur", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("17. profil inexistant : 404, jamais un crash serveur", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/profils/inexistant-xyz/intelligence");
     expect(reponse.status()).toBe(404);
   });
 
-  test("18. déterminisme : deux appels consécutifs sur le même profil renvoient le même résultat", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("18. déterminisme : deux appels consécutifs sur le même profil renvoient le même résultat", async () => {
+    let request = await connecter("ADMIN");
     const profilId = await idProfilIngenieurDemo(request);
     const r1 = await request.get(`/api/profils/${profilId}/intelligence`);
     const r2 = await request.get(`/api/profils/${profilId}/intelligence`);

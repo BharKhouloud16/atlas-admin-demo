@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 
 // ATLAS OS QUALITY FOUNDATION V1 (Batch 12.7) — chemin API GET /api/quality.
 // RBAC, forme de la réponse, absence de crash — jamais une assertion sur
@@ -7,24 +8,35 @@ import { test, expect, APIRequestContext } from "@playwright/test";
 // garantit quel que soit cet état (voir lib/quality/gates.ts, Batch 12.5 :
 // absence d'observation -> UNKNOWN, jamais un crash).
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 test.describe("ATLAS OS Quality Foundation V1 — API (GET /api/quality)", () => {
-  test("1. isolation RBAC : /api/quality n'est accessible qu'à l'Admin", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("1. isolation RBAC : /api/quality n'est accessible qu'à l'Admin", async () => {
+    let request = await connecter("CLIENT");
     const refusClient = await request.get("/api/quality");
     expect(refusClient.status()).toBe(403);
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     const refusIngenieur = await request.get("/api/quality");
     expect(refusIngenieur.status()).toBe(403);
   });
 
-  test("2. Admin : réponse 200, structure complète, jamais un crash quel que soit l'état de GitHub Actions", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("2. Admin : réponse 200, structure complète, jamais un crash quel que soit l'état de GitHub Actions", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/quality");
     expect(reponse.ok(), await reponse.text()).toBeTruthy();
     const corps = await reponse.json();
@@ -39,16 +51,16 @@ test.describe("ATLAS OS Quality Foundation V1 — API (GET /api/quality)", () =>
     expect(typeof corps.source.repo).toBe("string");
   });
 
-  test("3. les huit dimensions sont toujours présentes dans la réponse, même sans observation", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("3. les huit dimensions sont toujours présentes dans la réponse, même sans observation", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/quality");
     const corps = await reponse.json();
     const dimensionsAttendues = ["FUNCTIONAL", "TECHNICAL", "TEST", "DATA", "PROCESS", "DELIVERY", "SECURITY", "OPERATIONAL"];
     expect(Object.keys(corps.dimensions).sort()).toEqual(dimensionsAttendues.sort());
   });
 
-  test("4. aucune agrégation : gates reste une liste de résultats indépendants, jamais un objet de synthèse", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("4. aucune agrégation : gates reste une liste de résultats indépendants, jamais un objet de synthèse", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/quality");
     const corps = await reponse.json();
     expect(corps.gates.length).toBeGreaterThan(0);
@@ -61,8 +73,8 @@ test.describe("ATLAS OS Quality Foundation V1 — API (GET /api/quality)", () =>
     expect(corps).not.toHaveProperty("niveauGlobal");
   });
 
-  test("5. toute observation présente vient bien de la source CI déclarée (DELIVERY/CI), jamais une dimension ou source inventée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("5. toute observation présente vient bien de la source CI déclarée (DELIVERY/CI), jamais une dimension ou source inventée", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/quality");
     const corps = await reponse.json();
     for (const observation of corps.observations as { dimension: string; source: string }[]) {
@@ -71,8 +83,8 @@ test.describe("ATLAS OS Quality Foundation V1 — API (GET /api/quality)", () =>
     }
   });
 
-  test("6. déterminisme structurel : deux appels consécutifs renvoient la même forme de réponse", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("6. déterminisme structurel : deux appels consécutifs renvoient la même forme de réponse", async () => {
+    let request = await connecter("ADMIN");
     const r1 = await request.get("/api/quality");
     const r2 = await request.get("/api/quality");
     const j1 = await r1.json();
@@ -83,8 +95,8 @@ test.describe("ATLAS OS Quality Foundation V1 — API (GET /api/quality)", () =>
 
   // --- Batch 12.8 : renforcement sécurité ---
 
-  test("7. méthode HTTP non autorisée (POST) -> 405, jamais un traitement silencieux", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("7. méthode HTTP non autorisée (POST) -> 405, jamais un traitement silencieux", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.post("/api/quality");
     expect(reponse.status()).toBe(405);
   });
@@ -96,8 +108,8 @@ test.describe("ATLAS OS Quality Foundation V1 — API (GET /api/quality)", () =>
     await contexteAnonyme.dispose();
   });
 
-  test("9. aucune fuite de secret/jeton dans la réponse, quel que soit son contenu", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("9. aucune fuite de secret/jeton dans la réponse, quel que soit son contenu", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/quality");
     const corpsBrut = (await reponse.text()).toLowerCase();
     expect(corpsBrut).not.toContain("ghp_"); // préfixe des jetons GitHub personnels
@@ -106,8 +118,8 @@ test.describe("ATLAS OS Quality Foundation V1 — API (GET /api/quality)", () =>
     expect(corpsBrut).not.toContain("session_secret");
   });
 
-  test("10. non-régression B1-B12.7 : /api/quality n'importe et n'expose rien de lib/talent/", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("10. non-régression B1-B12.7 : /api/quality n'importe et n'expose rien de lib/talent/", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/quality");
     const corps = await reponse.json();
     expect(corps).not.toHaveProperty("talentTrust");

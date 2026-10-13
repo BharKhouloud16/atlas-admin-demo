@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 import { genererOuRecupererSolutions } from "@/lib/client-solution/generation";
 import { construireContexteDecisionnel } from "@/lib/decision-context";
@@ -10,9 +11,20 @@ import { journaliser } from "@/lib/audit";
 // génération/idempotence/concurrence, UNKNOWN, absence de fuite Talent,
 // décision/historique/changement d'avis.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function creerBesoinValide(clientId: string, faits: { cle: string; valeur: string; statut: string }[] = []) {
@@ -67,28 +79,28 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       expect(reponse.status()).toBe(403);
     });
 
-    test("GET solutions — INGENIEUR -> 403", async ({ request }) => {
+    test("GET solutions — INGENIEUR -> 403", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const need = await creerBesoinValide(client!.id);
-      await connecter(request, "ingenieur-demo@example.com");
+      let request = await connecter("INGENIEUR");
       const reponse = await request.get(`/api/client/besoins/${need.id}/solutions`);
       expect(reponse.status()).toBe(403);
     });
 
-    test("GET solutions — ADMIN -> 403 (route Client réservée au rôle CLIENT)", async ({ request }) => {
+    test("GET solutions — ADMIN -> 403 (route Client réservée au rôle CLIENT)", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const need = await creerBesoinValide(client!.id);
-      await connecter(request, "admin-demo@example.com");
+      let request = await connecter("ADMIN");
       const reponse = await request.get(`/api/client/besoins/${need.id}/solutions`);
       expect(reponse.status()).toBe(403);
     });
 
-    test("GET admin solutions — CLIENT / INGENIEUR -> 403", async ({ request }) => {
+    test("GET admin solutions — CLIENT / INGENIEUR -> 403", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const need = await creerBesoinValide(client!.id);
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       expect((await request.get(`/api/talent/besoins/${need.id}/solutions`)).status()).toBe(403);
-      await connecter(request, "ingenieur-demo@example.com");
+      request = await connecter("INGENIEUR");
       expect((await request.get(`/api/talent/besoins/${need.id}/solutions`)).status()).toBe(403);
     });
 
@@ -102,11 +114,11 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
   });
 
   test.describe("IDOR / BOLA — isolation cross-client", () => {
-    test("GET solutions d'un besoin appartenant à un autre client -> 404, jamais une fuite", async ({ request }) => {
+    test("GET solutions d'un besoin appartenant à un autre client -> 404, jamais une fuite", async () => {
       const autreClient = await creerClientDeTest(`${Date.now()}-idor1`);
       try {
         const need = await creerBesoinValide(autreClient.id);
-        await connecter(request, "client-demo@example.com");
+        let request = await connecter("CLIENT");
         const reponse = await request.get(`/api/client/besoins/${need.id}/solutions`);
         expect(reponse.status()).toBe(404);
       } finally {
@@ -115,7 +127,7 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       }
     });
 
-    test("POST decision sur une option d'un autre client -> 404, aucune décision créée", async ({ request }) => {
+    test("POST decision sur une option d'un autre client -> 404, aucune décision créée", async () => {
       const clientB = await creerClientDeTest(`${Date.now()}-idor2`);
       try {
         const suffixe = `${Date.now()}-idor`;
@@ -128,7 +140,7 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
         const recommandationB = resultatB.eligible ? resultatB.recommandation : null;
         expect(recommandationB, "une recommandation doit exister pour ce test").toBeTruthy();
 
-        await connecter(request, "client-demo@example.com");
+        let request = await connecter("CLIENT");
         const reponse = await request.post(`/api/client/besoins/${needB.id}/solutions/${recommandationB!.id}/decision`);
         expect(reponse.status()).toBe(404);
         expect(await prisma.solutionOption.count({ where: { needId: needB.id, niveau: "DECISION" } })).toBe(0);
@@ -140,18 +152,18 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
   });
 
   test.describe("Besoin invalide / non VALIDE", () => {
-    test("besoin inexistant -> 404", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("besoin inexistant -> 404", async () => {
+      let request = await connecter("CLIENT");
       const reponse = await request.get(`/api/client/besoins/inexistant-xyz/solutions`);
       expect(reponse.status()).toBe(404);
     });
 
-    test("besoin non VALIDE (SOUMIS) -> eligible=false, aucune génération, aucune invention", async ({ request }) => {
+    test("besoin non VALIDE (SOUMIS) -> eligible=false, aucune génération, aucune invention", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const need = await prisma.clientNeed.create({
         data: { clientId: client!.id, correlationId: `b39-${Date.now()}`, texteOriginal: "Besoin non validé", statut: "SOUMIS" },
       });
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const reponse = await request.get(`/api/client/besoins/${need.id}/solutions`);
       expect(reponse.ok()).toBeTruthy();
       const body = await reponse.json();
@@ -177,7 +189,7 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       // apparaître comme "correspondante" dans la sortie Client-safe.
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "CompetenceInexistanteXYZ123", statut: "DECLARE" }]);
-      await connecter(request, "client-demo@example.com");
+      request = await connecter("CLIENT");
       const reponse = await request.get(`/api/client/besoins/${need.id}/solutions`);
       const body = await reponse.json();
       expect(body.eligible).toBe(true);
@@ -194,7 +206,7 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       const profil = await creerProfilCandidatDeTest(suffixe);
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-      await connecter(request, "client-demo@example.com");
+      request = await connecter("CLIENT");
       const reponse = await request.get(`/api/client/besoins/${need.id}/solutions`);
       expect(reponse.ok()).toBeTruthy();
       const body = await reponse.json();
@@ -218,12 +230,12 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
   });
 
   test.describe("Idempotence, refresh, concurrence", () => {
-    test("deux appels successifs sans changement du besoin -> mêmes lignes, aucun doublon", async ({ request }) => {
+    test("deux appels successifs sans changement du besoin -> mêmes lignes, aucun doublon", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       await creerProfilCandidatDeTest(`${Date.now()}-idem`);
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const r1 = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
       const r2 = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
 
@@ -232,12 +244,12 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       expect(await prisma.solutionOption.count({ where: { needId: need.id, niveau: "OPTION" } })).toBe(r1.options.length);
     });
 
-    test("changement du besoin (nouveau fait) -> nouvelle génération append-only, anciennes lignes conservées", async ({ request }) => {
+    test("changement du besoin (nouveau fait) -> nouvelle génération append-only, anciennes lignes conservées", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       await creerProfilCandidatDeTest(`${Date.now()}-refresh`);
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const r1 = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
       const compteApresR1 = await prisma.solutionOption.count({ where: { needId: need.id } });
 
@@ -253,12 +265,12 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       expect(r2.recommandation?.id).not.toBe(r1.recommandation?.id);
     });
 
-    test("deux requêtes simultanées sur un besoin jamais généré -> aucun doublon", async ({ request }) => {
+    test("deux requêtes simultanées sur un besoin jamais généré -> aucun doublon", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       await creerProfilCandidatDeTest(`${Date.now()}-concurrence`);
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const [r1, r2] = await Promise.all([
         request.get(`/api/client/besoins/${need.id}/solutions`),
         request.get(`/api/client/besoins/${need.id}/solutions`),
@@ -272,12 +284,12 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
   });
 
   test.describe("Décision, historique, changement d'avis", () => {
-    test("décider sur une RECOMMANDATION -> succès, décision append-only tracée", async ({ request }) => {
+    test("décider sur une RECOMMANDATION -> succès, décision append-only tracée", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       await creerProfilCandidatDeTest(`${Date.now()}-decision`);
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const generation = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
       const recommandationId = generation.recommandation.id;
 
@@ -290,12 +302,12 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       expect(body.decision.decideLe).not.toBeNull();
     });
 
-    test("décider directement sur une OPTION (pas une RECOMMANDATION) -> 400, jamais accepté", async ({ request }) => {
+    test("décider directement sur une OPTION (pas une RECOMMANDATION) -> 400, jamais accepté", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       await creerProfilCandidatDeTest(`${Date.now()}-optiondirecte`);
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const generation = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
       const optionId = generation.options[0].id;
 
@@ -304,12 +316,12 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       expect(await prisma.solutionOption.count({ where: { needId: need.id, niveau: "DECISION" } })).toBe(0);
     });
 
-    test("décider sur une recommandation obsolète (besoin changé depuis) -> 409", async ({ request }) => {
+    test("décider sur une recommandation obsolète (besoin changé depuis) -> 409", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       await creerProfilCandidatDeTest(`${Date.now()}-obsolete`);
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const r1 = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
       const ancienneRecommandationId = r1.recommandation.id;
 
@@ -327,7 +339,7 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       await creerProfilCandidatDeTest(`${Date.now()}-changementavis`);
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-      await connecter(request, "client-demo@example.com");
+      request = await connecter("CLIENT");
       const generation = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
       const recommandationId = generation.recommandation.id;
 
@@ -336,7 +348,7 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
 
       expect(decision1.decision.id).not.toBe(decision2.decision.id);
 
-      await connecter(request, "admin-demo@example.com");
+      request = await connecter("ADMIN");
       const vueAdmin = await (await request.get(`/api/talent/besoins/${need.id}/solutions`)).json();
       expect(vueAdmin.decisions.length).toBe(2);
       expect(vueAdmin.decisions.map((d: { id: string }) => d.id).sort()).toEqual([decision1.decision.id, decision2.decision.id].sort());
@@ -406,12 +418,12 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       });
     }
 
-    test("A — recommandation présente -> decisionContext présent, construit sur recommendation.id", async ({ request }) => {
+    test("A — recommandation présente -> decisionContext présent, construit sur recommendation.id", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       await creerProfilCandidatDeTest(`${Date.now()}-dc-a`);
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const body = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
       expect(body.recommandation).not.toBeNull();
       expect(body.decisionContext).not.toBeNull();
@@ -420,26 +432,26 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       expect(Array.isArray(body.decisionContext.conflicts)).toBe(true);
     });
 
-    test("B — recommandation absente (besoin non éligible) -> decisionContext=null, aucun contexte artificiel", async ({ request }) => {
+    test("B — recommandation absente (besoin non éligible) -> decisionContext=null, aucun contexte artificiel", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const need = await prisma.clientNeed.create({
         data: { clientId: client!.id, correlationId: `b39-dc-b-${Date.now()}`, texteOriginal: "Besoin non validé A36.2.3", statut: "SOUMIS" },
       });
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const body = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
       expect(body.eligible).toBe(false);
       expect(body.recommandation).toBeNull();
       expect(body.decisionContext).toBeNull();
     });
 
-    test("C/G — Learning VALIDE+ACTIVE pertinent (CLIENT scope) apparaît avec provenance/confidence exacts, jamais promus", async ({ request }) => {
+    test("C/G — Learning VALIDE+ACTIVE pertinent (CLIENT scope) apparaît avec provenance/confidence exacts, jamais promus", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       await creerProfilCandidatDeTest(`${Date.now()}-dc-c`);
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
       const mission = await creerMissionPourTest(client!.id);
       const learning = await creerLearningPourTest(mission.id, { scope: "CLIENT", provenance: "INFERRED", confidence: "LOW" });
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const body = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
       const ligne = body.decisionContext.learnings.find((l: { learningId: string }) => l.learningId === learning.id);
       expect(ligne).toBeTruthy();
@@ -451,7 +463,7 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       expect(typeof ligne.reason).toBe("string");
     });
 
-    test("D — Learning PROPOSE ou OBSOLETE n'apparaît jamais (le consumer ne contourne pas A36.1)", async ({ request }) => {
+    test("D — Learning PROPOSE ou OBSOLETE n'apparaît jamais (le consumer ne contourne pas A36.1)", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       await creerProfilCandidatDeTest(`${Date.now()}-dc-d`);
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
@@ -459,14 +471,14 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       const learningPropose = await creerLearningPourTest(mission.id, { scope: "CLIENT", statut: "PROPOSE" });
       const learningObsolete = await creerLearningPourTest(mission.id, { scope: "CLIENT", applicabilite: "OBSOLETE" });
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const body = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
       const ids = body.decisionContext.learnings.map((l: { learningId: string }) => l.learningId);
       expect(ids).not.toContain(learningPropose.id);
       expect(ids).not.toContain(learningObsolete.id);
     });
 
-    test("E — isolation cross-client : un Learning CLIENT d'un autre client n'apparaît jamais", async ({ request }) => {
+    test("E — isolation cross-client : un Learning CLIENT d'un autre client n'apparaît jamais", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const autreClient = await creerClientDeTest(`${Date.now()}-dc-e`);
       try {
@@ -475,7 +487,7 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
         const missionAutreClient = await creerMissionPourTest(autreClient.id);
         const learningAutreClient = await creerLearningPourTest(missionAutreClient.id, { scope: "CLIENT" });
 
-        await connecter(request, "client-demo@example.com");
+        let request = await connecter("CLIENT");
         const body = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
         const ids = body.decisionContext.learnings.map((l: { learningId: string }) => l.learningId);
         expect(ids).not.toContain(learningAutreClient.id);
@@ -491,7 +503,7 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       }
     });
 
-    test("F — conflit BEST_PRACTICE/ANTI_PATTERN : status=CONFLICTING_CONTEXT, les deux Learnings restent présents", async ({ request }) => {
+    test("F — conflit BEST_PRACTICE/ANTI_PATTERN : status=CONFLICTING_CONTEXT, les deux Learnings restent présents", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       await creerProfilCandidatDeTest(`${Date.now()}-dc-f`);
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
@@ -499,7 +511,7 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       const bp = await creerLearningPourTest(mission.id, { scope: "CLIENT", type: "BEST_PRACTICE" });
       const ap = await creerLearningPourTest(mission.id, { scope: "CLIENT", type: "ANTI_PATTERN" });
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const body = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
       expect(body.decisionContext.status).toBe("CONFLICTING_CONTEXT");
       const ids = body.decisionContext.learnings.map((l: { learningId: string }) => l.learningId);
@@ -508,7 +520,7 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       expect(body.decisionContext.conflicts.length).toBeGreaterThan(0);
     });
 
-    test("H — read-only : aucune mutation Learning/SolutionOption/ClientNeed/Mission provoquée par le GET", async ({ request }) => {
+    test("H — read-only : aucune mutation Learning/SolutionOption/ClientNeed/Mission provoquée par le GET", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       await creerProfilCandidatDeTest(`${Date.now()}-dc-h`);
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
@@ -519,7 +531,7 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       const compteSolutionAvant = await prisma.solutionOption.count();
       const compteLearningAvant = await prisma.learning.count();
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       await request.get(`/api/client/besoins/${need.id}/solutions`);
 
       const learningApres = await prisma.learning.findUniqueOrThrow({ where: { id: learning.id } });
@@ -532,12 +544,12 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       expect(await prisma.solutionOption.count()).toBeGreaterThanOrEqual(compteSolutionAvant);
     });
 
-    test("I — le contexte utilise exactement recommendation.id, jamais needId ni sourceOptionId", async ({ request }) => {
+    test("I — le contexte utilise exactement recommendation.id, jamais needId ni sourceOptionId", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       await creerProfilCandidatDeTest(`${Date.now()}-dc-i`);
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const body = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
       const recommandationId = body.recommandation.id;
       expect(recommandationId).not.toBe(need.id);
@@ -663,12 +675,12 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       });
     }
 
-    test("A — recommandation présente -> 200, decisionContext présent, événement decision.learning_consulted créé", async ({ request }) => {
+    test("A — recommandation présente -> 200, decisionContext présent, événement decision.learning_consulted créé", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       await creerProfilCandidatDeTest(`${Date.now()}-dc4-a`);
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const reponse = await request.get(`/api/client/besoins/${need.id}/solutions`);
       expect(reponse.status()).toBe(200);
       const body = await reponse.json();
@@ -679,12 +691,12 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       expect(entree).not.toBeNull();
     });
 
-    test("B — decisionEntityId = recommendation.id (jamais need.id)", async ({ request }) => {
+    test("B — decisionEntityId = recommendation.id (jamais need.id)", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       await creerProfilCandidatDeTest(`${Date.now()}-dc4-b`);
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const body = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
 
       const entree = await dernierJournalConsultation(body.recommandation.id);
@@ -693,24 +705,24 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       expect(entree!.detail).toContain("SOLUTION");
     });
 
-    test("C — needId correct dans le détail", async ({ request }) => {
+    test("C — needId correct dans le détail", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       await creerProfilCandidatDeTest(`${Date.now()}-dc4-c`);
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const body = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
 
       const entree = await dernierJournalConsultation(body.recommandation.id);
       expect(entree!.detail).toContain(need.id);
     });
 
-    test("D — client correct (jamais une valeur fournie par le client)", async ({ request }) => {
+    test("D — client correct (jamais une valeur fournie par le client)", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       await creerProfilCandidatDeTest(`${Date.now()}-dc4-d`);
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const body = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
 
       const entree = await dernierJournalConsultation(body.recommandation.id);
@@ -719,7 +731,7 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       expect(entree!.acteurRole).toBe("CLIENT");
     });
 
-    test("E — learningIds exacts : aucun manquant, aucun supplémentaire", async ({ request }) => {
+    test("E — learningIds exacts : aucun manquant, aucun supplémentaire", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       await creerProfilCandidatDeTest(`${Date.now()}-dc4-e`);
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
@@ -727,7 +739,7 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       const learningA = await creerLearningPourTest(mission.id, { scope: "CLIENT" });
       const learningB = await creerLearningPourTest(mission.id, { scope: "CLIENT" });
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const body = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
 
       const entree = await dernierJournalConsultation(body.recommandation.id);
@@ -782,7 +794,7 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       }
     });
 
-    test("G — conflit BEST_PRACTICE/ANTI_PATTERN : status=CONFLICTING_CONTEXT journalisé, les deux ids présents, aucun winner", async ({ request }) => {
+    test("G — conflit BEST_PRACTICE/ANTI_PATTERN : status=CONFLICTING_CONTEXT journalisé, les deux ids présents, aucun winner", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       await creerProfilCandidatDeTest(`${Date.now()}-dc4-g`);
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
@@ -790,7 +802,7 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       const bp = await creerLearningPourTest(mission.id, { scope: "CLIENT", type: "BEST_PRACTICE" });
       const ap = await creerLearningPourTest(mission.id, { scope: "CLIENT", type: "ANTI_PATTERN" });
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const body = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
       expect(body.decisionContext.status).toBe("CONFLICTING_CONTEXT");
 
@@ -803,14 +815,14 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       expect(entree!.detail!.toLowerCase()).not.toContain("winner");
     });
 
-    test("H — recommandation absente -> aucun événement decision.learning_consulted créé", async ({ request }) => {
+    test("H — recommandation absente -> aucun événement decision.learning_consulted créé", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const need = await prisma.clientNeed.create({
         data: { clientId: client!.id, correlationId: `b39-dc4-h-${Date.now()}`, texteOriginal: "Besoin non validé A36.2.4", statut: "SOUMIS" },
       });
       const compteAvant = await prisma.journalActivite.count({ where: { action: "decision.learning_consulted" } });
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const body = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
       expect(body.recommandation).toBeNull();
       expect(body.decisionContext).toBeNull();
@@ -819,7 +831,7 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       expect(compteApres).toBe(compteAvant);
     });
 
-    test("I — cross-client : le journal du Client A ne contient que les Learnings réellement exposés à A", async ({ request }) => {
+    test("I — cross-client : le journal du Client A ne contient que les Learnings réellement exposés à A", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const autreClient = await creerClientDeTest(`${Date.now()}-dc4-i`);
       try {
@@ -828,7 +840,7 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
         const missionAutreClient = await creerMissionPourTest(autreClient.id);
         const learningAutreClient = await creerLearningPourTest(missionAutreClient.id, { scope: "CLIENT" });
 
-        await connecter(request, "client-demo@example.com");
+        let request = await connecter("CLIENT");
         const body = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
 
         const entree = await dernierJournalConsultation(body.recommandation.id);
@@ -844,12 +856,12 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       }
     });
 
-    test("J — deux GET successifs -> deux événements de consultation distincts (consultation, pas une entité unique)", async ({ request }) => {
+    test("J — deux GET successifs -> deux événements de consultation distincts (consultation, pas une entité unique)", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       await creerProfilCandidatDeTest(`${Date.now()}-dc4-j`);
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const body1 = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
       const compteApres1 = await prisma.journalActivite.count({
         where: { action: "decision.learning_consulted", cible: `solution-option:${body1.recommandation.id}` },
@@ -866,7 +878,7 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       expect(compteApres2).toBe(compteApres1 + 1); // chaque GET = une nouvelle consultation, jamais dédupliquée
     });
 
-    test("K — read-only : un Learning consulté reste strictement inchangé", async ({ request }) => {
+    test("K — read-only : un Learning consulté reste strictement inchangé", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       await creerProfilCandidatDeTest(`${Date.now()}-dc4-k`);
       const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
@@ -874,7 +886,7 @@ test.describe("V2.1-C/E — API C3 Solution Intelligence", () => {
       const learning = await creerLearningPourTest(mission.id, { scope: "CLIENT" });
       const avant = await prisma.learning.findUniqueOrThrow({ where: { id: learning.id } });
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       await request.get(`/api/client/besoins/${need.id}/solutions`);
 
       const apres = await prisma.learning.findUniqueOrThrow({ where: { id: learning.id } });

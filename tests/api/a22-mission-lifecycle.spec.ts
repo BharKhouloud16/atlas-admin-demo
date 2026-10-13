@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { StatutMission, MissionAssignmentRole, MissionAssignmentStatut } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
@@ -14,9 +15,20 @@ import { prisma } from "@/lib/prisma";
 // non-interférence avec MissionAssignment.statut (A20) et
 // MissionCapabilityLink.statut (A21).
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function clientDemo() {
@@ -73,8 +85,8 @@ async function transition(
 }
 
 test.describe("A22 — Machine de transitions : chemins valides", () => {
-  test("1. PLANIFIEE -> PRETE (avec Assignment ACTIF)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("1. PLANIFIEE -> PRETE (avec Assignment ACTIF)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.PLANIFIEE);
     await creerAssignment(mission.id);
 
@@ -83,8 +95,8 @@ test.describe("A22 — Machine de transitions : chemins valides", () => {
     expect((await reponse.json()).statut).toBe("PRETE");
   });
 
-  test("2. PRETE -> EN_COURS (avec Assignment ACTIF + responsable principal)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("2. PRETE -> EN_COURS (avec Assignment ACTIF + responsable principal)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.PRETE);
     await creerAssignment(mission.id, { estResponsablePrincipal: true });
 
@@ -93,8 +105,8 @@ test.describe("A22 — Machine de transitions : chemins valides", () => {
     expect((await reponse.json()).statut).toBe("EN_COURS");
   });
 
-  test("3. PRETE -> BLOQUEE (avec raison valide)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("3. PRETE -> BLOQUEE (avec raison valide)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.PRETE);
 
     const reponse = await transition(request, mission.id, "bloquer", { raison: "TECHNICAL" });
@@ -102,8 +114,8 @@ test.describe("A22 — Machine de transitions : chemins valides", () => {
     expect((await reponse.json()).statut).toBe("BLOQUEE");
   });
 
-  test("4. PRETE -> ANNULEE (avec motif)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("4. PRETE -> ANNULEE (avec motif)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.PRETE);
 
     const reponse = await transition(request, mission.id, "annuler", { motif: "Test A22" });
@@ -111,8 +123,8 @@ test.describe("A22 — Machine de transitions : chemins valides", () => {
     expect((await reponse.json()).statut).toBe("ANNULEE");
   });
 
-  test("5. EN_COURS -> BLOQUEE (avec raison valide)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("5. EN_COURS -> BLOQUEE (avec raison valide)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
 
     const reponse = await transition(request, mission.id, "bloquer", { raison: "CLIENT_DEPENDENCY" });
@@ -120,8 +132,8 @@ test.describe("A22 — Machine de transitions : chemins valides", () => {
     expect((await reponse.json()).statut).toBe("BLOQUEE");
   });
 
-  test("6. EN_COURS -> TERMINEE (aucune précondition)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("6. EN_COURS -> TERMINEE (aucune précondition)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
 
     const reponse = await transition(request, mission.id, "terminer");
@@ -129,8 +141,8 @@ test.describe("A22 — Machine de transitions : chemins valides", () => {
     expect((await reponse.json()).statut).toBe("TERMINEE");
   });
 
-  test("7. EN_COURS -> ANNULEE (avec motif)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("7. EN_COURS -> ANNULEE (avec motif)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
 
     const reponse = await transition(request, mission.id, "annuler", { motif: "Test A22" });
@@ -138,8 +150,8 @@ test.describe("A22 — Machine de transitions : chemins valides", () => {
     expect((await reponse.json()).statut).toBe("ANNULEE");
   });
 
-  test("8. BLOQUEE -> EN_COURS (avec raisonResolution)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("8. BLOQUEE -> EN_COURS (avec raisonResolution)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.BLOQUEE);
 
     const reponse = await transition(request, mission.id, "debloquer", { raisonResolution: "Dépendance levée" });
@@ -147,8 +159,8 @@ test.describe("A22 — Machine de transitions : chemins valides", () => {
     expect((await reponse.json()).statut).toBe("EN_COURS");
   });
 
-  test("9. BLOQUEE -> TERMINEE (avec motif, requis depuis BLOQUEE)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("9. BLOQUEE -> TERMINEE (avec motif, requis depuis BLOQUEE)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.BLOQUEE);
 
     const reponse = await transition(request, mission.id, "terminer", { motif: "Clôturée malgré blocage" });
@@ -156,8 +168,8 @@ test.describe("A22 — Machine de transitions : chemins valides", () => {
     expect((await reponse.json()).statut).toBe("TERMINEE");
   });
 
-  test("10. BLOQUEE -> ANNULEE (avec motif)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("10. BLOQUEE -> ANNULEE (avec motif)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.BLOQUEE);
 
     const reponse = await transition(request, mission.id, "annuler", { motif: "Test A22" });
@@ -165,8 +177,8 @@ test.describe("A22 — Machine de transitions : chemins valides", () => {
     expect((await reponse.json()).statut).toBe("ANNULEE");
   });
 
-  test("11. PLANIFIEE -> ANNULEE (avec motif)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("11. PLANIFIEE -> ANNULEE (avec motif)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.PLANIFIEE);
 
     const reponse = await transition(request, mission.id, "annuler", { motif: "Test A22" });
@@ -177,7 +189,7 @@ test.describe("A22 — Machine de transitions : chemins valides", () => {
 
 test.describe("A22 — Machine de transitions : chemins interdits (toujours refusés, aucune mutation)", () => {
   async function attendreRefus(request: APIRequestContext, statutDepart: StatutMission, action: string, extra: Record<string, unknown> = {}) {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const mission = await creerMission(statutDepart);
     const reponse = await transition(request, mission.id, action, extra);
     expect(reponse.status()).toBe(409);
@@ -225,8 +237,8 @@ test.describe("A22 — Machine de transitions : chemins interdits (toujours refu
 });
 
 test.describe("A22 — Précondition Assignment (A20)", () => {
-  test("19. PLANIFIEE -> PRETE sans Assignment ACTIF -> 409, aucune mutation", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("19. PLANIFIEE -> PRETE sans Assignment ACTIF -> 409, aucune mutation", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.PLANIFIEE);
 
     const reponse = await transition(request, mission.id, "rendre_prete");
@@ -235,8 +247,8 @@ test.describe("A22 — Précondition Assignment (A20)", () => {
     expect(enBase?.statut).toBe("PLANIFIEE");
   });
 
-  test("20. PLANIFIEE -> PRETE avec Assignment ACTIF -> 200", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("20. PLANIFIEE -> PRETE avec Assignment ACTIF -> 200", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.PLANIFIEE);
     await creerAssignment(mission.id, { statut: MissionAssignmentStatut.ACTIF });
 
@@ -244,8 +256,8 @@ test.describe("A22 — Précondition Assignment (A20)", () => {
     expect(reponse.status(), await reponse.text()).toBe(200);
   });
 
-  test("21. PRETE -> EN_COURS sans responsable principal ACTIF -> 409, aucune mutation", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("21. PRETE -> EN_COURS sans responsable principal ACTIF -> 409, aucune mutation", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.PRETE);
     // Assignment ACTIF présent mais PAS responsable principal.
     await creerAssignment(mission.id, { estResponsablePrincipal: false });
@@ -257,8 +269,8 @@ test.describe("A22 — Précondition Assignment (A20)", () => {
     expect(enBase?.statut).toBe("PRETE");
   });
 
-  test("22. PRETE -> EN_COURS avec responsable principal ACTIF -> 200", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("22. PRETE -> EN_COURS avec responsable principal ACTIF -> 200", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.PRETE);
     await creerAssignment(mission.id, { estResponsablePrincipal: true });
 
@@ -266,8 +278,8 @@ test.describe("A22 — Précondition Assignment (A20)", () => {
     expect(reponse.status(), await reponse.text()).toBe(200);
   });
 
-  test("22b. Assignment TERMINE (non ACTIF) ne compte pas comme précondition satisfaite", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("22b. Assignment TERMINE (non ACTIF) ne compte pas comme précondition satisfaite", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.PLANIFIEE);
     await creerAssignment(mission.id, { statut: MissionAssignmentStatut.TERMINE });
 
@@ -277,8 +289,8 @@ test.describe("A22 — Précondition Assignment (A20)", () => {
 });
 
 test.describe("A22 — Blocage / déblocage", () => {
-  test("23. PRETE -> BLOQUEE sans raison -> 400, aucune mutation", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("23. PRETE -> BLOQUEE sans raison -> 400, aucune mutation", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.PRETE);
 
     const reponse = await transition(request, mission.id, "bloquer");
@@ -287,8 +299,8 @@ test.describe("A22 — Blocage / déblocage", () => {
     expect(enBase?.statut).toBe("PRETE");
   });
 
-  test("24. EN_COURS -> BLOQUEE sans raison -> 400, aucune mutation", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("24. EN_COURS -> BLOQUEE sans raison -> 400, aucune mutation", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
 
     const reponse = await transition(request, mission.id, "bloquer");
@@ -297,8 +309,8 @@ test.describe("A22 — Blocage / déblocage", () => {
     expect(enBase?.statut).toBe("EN_COURS");
   });
 
-  test("25. Bloquer avec raison invalide (hors catalogue) -> 400, aucune mutation", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("25. Bloquer avec raison invalide (hors catalogue) -> 400, aucune mutation", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
 
     const reponse = await transition(request, mission.id, "bloquer", { raison: "PAS_DANS_LE_CATALOGUE" });
@@ -307,8 +319,8 @@ test.describe("A22 — Blocage / déblocage", () => {
     expect(enBase?.statut).toBe("EN_COURS");
   });
 
-  test("26. Bloquer avec raison valide -> 200, journalisée avec la raison", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("26. Bloquer avec raison valide -> 200, journalisée avec la raison", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
 
     const reponse = await transition(request, mission.id, "bloquer", { raison: "ACCESS" });
@@ -321,8 +333,8 @@ test.describe("A22 — Blocage / déblocage", () => {
     expect(entree!.detail).toContain("ACCESS");
   });
 
-  test("27. BLOQUEE -> EN_COURS sans raisonResolution -> 400, aucune mutation", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("27. BLOQUEE -> EN_COURS sans raisonResolution -> 400, aucune mutation", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.BLOQUEE);
 
     const reponse = await transition(request, mission.id, "debloquer");
@@ -331,8 +343,8 @@ test.describe("A22 — Blocage / déblocage", () => {
     expect(enBase?.statut).toBe("BLOQUEE");
   });
 
-  test("28. BLOQUEE -> EN_COURS avec raisonResolution -> 200, journalisée avec la résolution", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("28. BLOQUEE -> EN_COURS avec raisonResolution -> 200, journalisée avec la résolution", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.BLOQUEE);
 
     const reponse = await transition(request, mission.id, "debloquer", { raisonResolution: "Accès restauré" });
@@ -356,8 +368,8 @@ test.describe("A22 — Terminaison : aucune précondition WorkItem/Deliverable/E
   // OutcomeAssessment/OutcomeEvidence (A6.1) : on vérifie ici qu'aucun des
   // deux n'est requis NI créé par la terminaison.
 
-  test("29. EN_COURS -> TERMINEE sans aucune OutcomeAssessment -> 200", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("29. EN_COURS -> TERMINEE sans aucune OutcomeAssessment -> 200", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const avant = await prisma.outcomeAssessment.count({ where: { missionId: mission.id } });
     expect(avant).toBe(0);
@@ -366,8 +378,8 @@ test.describe("A22 — Terminaison : aucune précondition WorkItem/Deliverable/E
     expect(reponse.status(), await reponse.text()).toBe(200);
   });
 
-  test("30. EN_COURS -> TERMINEE ne crée aucune OutcomeAssessment automatiquement", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("30. EN_COURS -> TERMINEE ne crée aucune OutcomeAssessment automatiquement", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
 
     const reponse = await transition(request, mission.id, "terminer");
@@ -377,8 +389,8 @@ test.describe("A22 — Terminaison : aucune précondition WorkItem/Deliverable/E
     expect(apres).toBe(0);
   });
 
-  test("31. EN_COURS -> TERMINEE ne crée aucune OutcomeEvidence automatiquement", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("31. EN_COURS -> TERMINEE ne crée aucune OutcomeEvidence automatiquement", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
 
     const reponse = await transition(request, mission.id, "terminer");
@@ -392,8 +404,8 @@ test.describe("A22 — Terminaison : aucune précondition WorkItem/Deliverable/E
     expect(apres).toBe(0);
   });
 
-  test("32. BLOQUEE -> TERMINEE (avec motif) sans aucune précondition résultat -> 200", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("32. BLOQUEE -> TERMINEE (avec motif) sans aucune précondition résultat -> 200", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.BLOQUEE);
 
     const reponse = await transition(request, mission.id, "terminer", { motif: "Clôture sans résultat tracé" });
@@ -403,8 +415,8 @@ test.describe("A22 — Terminaison : aucune précondition WorkItem/Deliverable/E
     expect(apres).toBe(0);
   });
 
-  test("33. EN_COURS -> TERMINEE ne touche jamais MissionAssignment/MissionCapabilityLink", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("33. EN_COURS -> TERMINEE ne touche jamais MissionAssignment/MissionCapabilityLink", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const assignment = await creerAssignment(mission.id, { estResponsablePrincipal: true });
 
@@ -417,8 +429,8 @@ test.describe("A22 — Terminaison : aucune précondition WorkItem/Deliverable/E
 });
 
 test.describe("A22 — Annulation : motif obligatoire quel que soit le statut de départ", () => {
-  test("34a. PLANIFIEE -> ANNULEE sans motif -> 400, aucune mutation", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("34a. PLANIFIEE -> ANNULEE sans motif -> 400, aucune mutation", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.PLANIFIEE);
     const reponse = await transition(request, mission.id, "annuler");
     expect(reponse.status()).toBe(400);
@@ -426,8 +438,8 @@ test.describe("A22 — Annulation : motif obligatoire quel que soit le statut de
     expect(enBase?.statut).toBe("PLANIFIEE");
   });
 
-  test("34b. PRETE -> ANNULEE sans motif -> 400, aucune mutation", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("34b. PRETE -> ANNULEE sans motif -> 400, aucune mutation", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.PRETE);
     const reponse = await transition(request, mission.id, "annuler");
     expect(reponse.status()).toBe(400);
@@ -435,8 +447,8 @@ test.describe("A22 — Annulation : motif obligatoire quel que soit le statut de
     expect(enBase?.statut).toBe("PRETE");
   });
 
-  test("34c. EN_COURS -> ANNULEE sans motif -> 400, aucune mutation", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("34c. EN_COURS -> ANNULEE sans motif -> 400, aucune mutation", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const reponse = await transition(request, mission.id, "annuler");
     expect(reponse.status()).toBe(400);
@@ -444,8 +456,8 @@ test.describe("A22 — Annulation : motif obligatoire quel que soit le statut de
     expect(enBase?.statut).toBe("EN_COURS");
   });
 
-  test("34d. BLOQUEE -> ANNULEE sans motif -> 400, aucune mutation", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("34d. BLOQUEE -> ANNULEE sans motif -> 400, aucune mutation", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.BLOQUEE);
     const reponse = await transition(request, mission.id, "annuler");
     expect(reponse.status()).toBe(400);
@@ -453,8 +465,8 @@ test.describe("A22 — Annulation : motif obligatoire quel que soit le statut de
     expect(enBase?.statut).toBe("BLOQUEE");
   });
 
-  test("35a. PLANIFIEE -> ANNULEE avec motif -> 200, motif journalisé", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("35a. PLANIFIEE -> ANNULEE avec motif -> 200, motif journalisé", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.PLANIFIEE);
     const reponse = await transition(request, mission.id, "annuler", { motif: "Besoin client retiré" });
     expect(reponse.status(), await reponse.text()).toBe(200);
@@ -465,8 +477,8 @@ test.describe("A22 — Annulation : motif obligatoire quel que soit le statut de
     expect(entree!.detail).toContain("Besoin client retiré");
   });
 
-  test("35b. EN_COURS -> ANNULEE avec motif -> 200, motif journalisé", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("35b. EN_COURS -> ANNULEE avec motif -> 200, motif journalisé", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const reponse = await transition(request, mission.id, "annuler", { motif: "Fin de contrat anticipée" });
     expect(reponse.status(), await reponse.text()).toBe(200);
@@ -479,15 +491,15 @@ test.describe("A22 — Annulation : motif obligatoire quel que soit le statut de
 });
 
 test.describe("A22 — RBAC : Admin uniquement, jamais l'Agent/Ingénieur/Client", () => {
-  test("36. Admin peut exécuter toute action du moteur -> 200", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("36. Admin peut exécuter toute action du moteur -> 200", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const reponse = await transition(request, mission.id, "terminer");
     expect(reponse.status(), await reponse.text()).toBe(200);
   });
 
-  test("37. Client ne peut exécuter aucune action du moteur -> 403, aucune mutation", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("37. Client ne peut exécuter aucune action du moteur -> 403, aucune mutation", async () => {
+    let request = await connecter("CLIENT");
     const mission = await creerMission(StatutMission.EN_COURS);
     const reponse = await transition(request, mission.id, "bloquer", { raison: "TECHNICAL" });
     expect(reponse.status()).toBe(403);
@@ -495,8 +507,8 @@ test.describe("A22 — RBAC : Admin uniquement, jamais l'Agent/Ingénieur/Client
     expect(enBase?.statut).toBe("EN_COURS");
   });
 
-  test("38. Ingénieur ne peut exécuter aucune action du moteur (même sur sa propre Mission) -> 403, aucune mutation", async ({ request }) => {
-    await connecter(request, "ingenieur-demo@example.com");
+  test("38. Ingénieur ne peut exécuter aucune action du moteur (même sur sa propre Mission) -> 403, aucune mutation", async () => {
+    let request = await connecter("INGENIEUR");
     const mission = await creerMission(StatutMission.EN_COURS);
     const reponse = await transition(request, mission.id, "bloquer", { raison: "TECHNICAL" });
     expect(reponse.status()).toBe(403);
@@ -504,11 +516,11 @@ test.describe("A22 — RBAC : Admin uniquement, jamais l'Agent/Ingénieur/Client
     expect(enBase?.statut).toBe("EN_COURS");
   });
 
-  test("39. Aucune route dédiée Agent n'existe pour ces actions (même endpoint que l'Admin, refusé pour tout non-Admin)", async ({ request }) => {
+  test("39. Aucune route dédiée Agent n'existe pour ces actions (même endpoint que l'Admin, refusé pour tout non-Admin)", async () => {
     // Pas de rôle AGENT distinct dans ce système (ADMIN/INGENIEUR/CLIENT) —
     // ce test confirme qu'aucun rôle non-ADMIN, quel qu'il soit, ne passe
     // par une autre voie : même route, même vérification RBAC unique.
-    await connecter(request, "ingenieur-demo@example.com");
+    let request = await connecter("INGENIEUR");
     const mission = await creerMission(StatutMission.PLANIFIEE);
     const reponse = await transition(request, mission.id, "rendre_prete");
     expect(reponse.status()).toBe(403);
@@ -516,8 +528,8 @@ test.describe("A22 — RBAC : Admin uniquement, jamais l'Agent/Ingénieur/Client
 });
 
 test.describe("A22 — Concurrence : un seul gagnant, aucune écrasement", () => {
-  test("40. Deux 'terminer' simultanés sur la même Mission EN_COURS -> un seul 200, un seul 409", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("40. Deux 'terminer' simultanés sur la même Mission EN_COURS -> un seul 200, un seul 409", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
 
     const [r1, r2] = await Promise.all([transition(request, mission.id, "terminer"), transition(request, mission.id, "terminer")]);
@@ -528,8 +540,8 @@ test.describe("A22 — Concurrence : un seul gagnant, aucune écrasement", () =>
     expect(enBase?.statut).toBe("TERMINEE");
   });
 
-  test("41. 'terminer' et 'annuler' simultanés sur la même Mission EN_COURS -> un seul gagnant, état final cohérent", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("41. 'terminer' et 'annuler' simultanés sur la même Mission EN_COURS -> un seul gagnant, état final cohérent", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
 
     const [r1, r2] = await Promise.all([
@@ -543,8 +555,8 @@ test.describe("A22 — Concurrence : un seul gagnant, aucune écrasement", () =>
     expect(["TERMINEE", "ANNULEE"]).toContain(enBase?.statut);
   });
 
-  test("42. Deux 'terminer' simultanés -> une seule ligne JournalActivite créée pour ce couple (pas de doublon)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("42. Deux 'terminer' simultanés -> une seule ligne JournalActivite créée pour ce couple (pas de doublon)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const avant = Date.now();
 
@@ -558,8 +570,8 @@ test.describe("A22 — Concurrence : un seul gagnant, aucune écrasement", () =>
 });
 
 test.describe("A22 — Idempotence : répéter une transition déjà effectuée est proprement refusé", () => {
-  test("43. Répéter 'terminer' sur une Mission déjà TERMINEE -> 409, aucune nouvelle ligne de journal", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("43. Répéter 'terminer' sur une Mission déjà TERMINEE -> 409, aucune nouvelle ligne de journal", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
 
     const premiere = await transition(request, mission.id, "terminer");
@@ -576,8 +588,8 @@ test.describe("A22 — Idempotence : répéter une transition déjà effectuée 
     expect(lignesApresSeconde).toBe(lignesApresPremiere);
   });
 
-  test("44. Répéter 'annuler' sur une Mission déjà ANNULEE -> 409, aucune nouvelle ligne de journal", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("44. Répéter 'annuler' sur une Mission déjà ANNULEE -> 409, aucune nouvelle ligne de journal", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
 
     const premiere = await transition(request, mission.id, "annuler", { motif: "Première annulation" });
@@ -596,8 +608,8 @@ test.describe("A22 — Idempotence : répéter une transition déjà effectuée 
 });
 
 test.describe("A22 — Non-interférence avec A20 (MissionAssignment) et A21 (MissionCapabilityLink)", () => {
-  test("45. Toute transition Mission.statut ne modifie jamais MissionAssignment.statut d'aucun Assignment lié", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("45. Toute transition Mission.statut ne modifie jamais MissionAssignment.statut d'aucun Assignment lié", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.PRETE);
     const actif = await creerAssignment(mission.id, { estResponsablePrincipal: true, statut: MissionAssignmentStatut.ACTIF });
     const planifie = await creerAssignment(mission.id, { statut: MissionAssignmentStatut.PLANIFIE });
@@ -613,8 +625,8 @@ test.describe("A22 — Non-interférence avec A20 (MissionAssignment) et A21 (Mi
     expect(planifieApres?.statut).toBe("PLANIFIE");
   });
 
-  test("46. Toute transition Mission.statut ne modifie jamais MissionCapabilityLink.statut d'aucun lien actif", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("46. Toute transition Mission.statut ne modifie jamais MissionCapabilityLink.statut d'aucun lien actif", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS);
     const lien = await prisma.missionCapabilityLink.create({
       data: {

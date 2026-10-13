@@ -1,4 +1,5 @@
-import { test, expect, request as apiRequest, APIRequestContext } from "@playwright/test";
+import { test, expect, request as apiRequest, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { StatutMission } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
@@ -17,9 +18,20 @@ import { prisma } from "@/lib/prisma";
 // ici car plusieurs tests vérifient des ÉTATS EXACTS (aucune évaluation
 // avant création, exactement une après, etc.).
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function clientDemo() {
@@ -47,8 +59,8 @@ async function missionDediee(statut: StatutMission = StatutMission.TERMINEE, cli
 }
 
 test.describe("EVALUATION API HARDENING — POST /api/evaluations — RBAC", () => {
-  test("1. Client authentifié évalue sa propre mission terminée -> 201", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("1. Client authentifié évalue sa propre mission terminée -> 201", async () => {
+    let request = await connecter("CLIENT");
     const { mission } = await missionDediee(StatutMission.TERMINEE);
     const reponse = await request.post("/api/evaluations", { data: { missionId: mission.id, note: 4 } });
     expect(reponse.status(), await reponse.text()).toBe(201);
@@ -57,16 +69,16 @@ test.describe("EVALUATION API HARDENING — POST /api/evaluations — RBAC", () 
     expect(corps.missionId).toBe(mission.id);
   });
 
-  test("2. Admin -> 403, aucune évaluation créée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("2. Admin -> 403, aucune évaluation créée", async () => {
+    let request = await connecter("ADMIN");
     const { mission } = await missionDediee(StatutMission.TERMINEE);
     const reponse = await request.post("/api/evaluations", { data: { missionId: mission.id, note: 4 } });
     expect(reponse.status()).toBe(403);
     expect(await prisma.evaluation.count({ where: { missionId: mission.id } })).toBe(0);
   });
 
-  test("3. Engineer -> 403, aucune évaluation créée", async ({ request }) => {
-    await connecter(request, "ingenieur-demo@example.com");
+  test("3. Engineer -> 403, aucune évaluation créée", async () => {
+    let request = await connecter("INGENIEUR");
     const { mission } = await missionDediee(StatutMission.TERMINEE);
     const reponse = await request.post("/api/evaluations", { data: { missionId: mission.id, note: 4 } });
     expect(reponse.status()).toBe(403);
@@ -81,41 +93,41 @@ test.describe("EVALUATION API HARDENING — POST /api/evaluations — RBAC", () 
 });
 
 test.describe("EVALUATION API HARDENING — Ownership / IDOR", () => {
-  test("5. Client A ne peut pas évaluer une Mission du Client B -> 404, aucune création", async ({ request }) => {
+  test("5. Client A ne peut pas évaluer une Mission du Client B -> 404, aucune création", async () => {
     const clientB = await autreClient();
     const { mission } = await missionDediee(StatutMission.TERMINEE, clientB.id);
 
-    await connecter(request, "client-demo@example.com"); // Client A, réel
+    let request = await connecter("CLIENT"); // Client A, réel
     const reponse = await request.post("/api/evaluations", { data: { missionId: mission.id, note: 5 } });
     expect(reponse.status()).toBe(404);
     expect(await prisma.evaluation.count({ where: { missionId: mission.id } })).toBe(0);
   });
 
-  test("6. Mission inexistante -> 404", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("6. Mission inexistante -> 404", async () => {
+    let request = await connecter("CLIENT");
     const reponse = await request.post("/api/evaluations", { data: { missionId: "mission-inexistante-xyz", note: 5 } });
     expect(reponse.status()).toBe(404);
   });
 });
 
 test.describe("EVALUATION API HARDENING — Mission status", () => {
-  test("7. Mission Terminée -> succès", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("7. Mission Terminée -> succès", async () => {
+    let request = await connecter("CLIENT");
     const { mission } = await missionDediee(StatutMission.TERMINEE);
     const reponse = await request.post("/api/evaluations", { data: { missionId: mission.id, note: 3 } });
     expect(reponse.status(), await reponse.text()).toBe(201);
   });
 
-  test("8. Mission En cours -> 400, aucune création", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("8. Mission En cours -> 400, aucune création", async () => {
+    let request = await connecter("CLIENT");
     const { mission } = await missionDediee(StatutMission.EN_COURS);
     const reponse = await request.post("/api/evaluations", { data: { missionId: mission.id, note: 3 } });
     expect(reponse.status()).toBe(400);
     expect(await prisma.evaluation.count({ where: { missionId: mission.id } })).toBe(0);
   });
 
-  test("9. Mission Annulée -> 400, aucune création", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("9. Mission Annulée -> 400, aucune création", async () => {
+    let request = await connecter("CLIENT");
     const { mission } = await missionDediee(StatutMission.ANNULEE);
     const reponse = await request.post("/api/evaluations", { data: { missionId: mission.id, note: 3 } });
     expect(reponse.status()).toBe(400);
@@ -126,8 +138,8 @@ test.describe("EVALUATION API HARDENING — Mission status", () => {
 test.describe("EVALUATION API HARDENING — note", () => {
   const casValides = [1, 5];
   for (const note of casValides) {
-    test(`10/11. note = ${note} -> 201`, async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test(`10/11. note = ${note} -> 201`, async () => {
+      let request = await connecter("CLIENT");
       const { mission } = await missionDediee(StatutMission.TERMINEE);
       const reponse = await request.post("/api/evaluations", { data: { missionId: mission.id, note } });
       expect(reponse.status(), await reponse.text()).toBe(201);
@@ -146,8 +158,8 @@ test.describe("EVALUATION API HARDENING — note", () => {
     { label: "null", note: null },
   ];
   for (const cas of casInvalides) {
-    test(`12-16. note = ${cas.label} -> 400, aucune création`, async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test(`12-16. note = ${cas.label} -> 400, aucune création`, async () => {
+      let request = await connecter("CLIENT");
       const { mission } = await missionDediee(StatutMission.TERMINEE);
       const reponse = await request.post("/api/evaluations", { data: { missionId: mission.id, note: cas.note } });
       expect(reponse.status(), await reponse.text()).toBe(400);
@@ -155,28 +167,28 @@ test.describe("EVALUATION API HARDENING — note", () => {
     });
   }
 
-  test("note fournie en chaîne numérique ('5') -> 201 (contrat existant préservé, voir lib/validation.ts::evaluationSchema)", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("note fournie en chaîne numérique ('5') -> 201 (contrat existant préservé, voir lib/validation.ts::evaluationSchema)", async () => {
+    let request = await connecter("CLIENT");
     const { mission } = await missionDediee(StatutMission.TERMINEE);
     const reponse = await request.post("/api/evaluations", { data: { missionId: mission.id, note: "5" } });
     expect(reponse.status(), await reponse.text()).toBe(201);
     expect((await reponse.json()).note).toBe(5);
   });
 
-  test("missionId absent -> 400, jamais un crash", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("missionId absent -> 400, jamais un crash", async () => {
+    let request = await connecter("CLIENT");
     const reponse = await request.post("/api/evaluations", { data: { note: 3 } });
     expect(reponse.status()).toBe(400);
   });
 
-  test("missionId de type invalide (nombre) -> 400, jamais atteindre Prisma sans validation", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("missionId de type invalide (nombre) -> 400, jamais atteindre Prisma sans validation", async () => {
+    let request = await connecter("CLIENT");
     const reponse = await request.post("/api/evaluations", { data: { missionId: 12345, note: 3 } });
     expect(reponse.status(), await reponse.text()).toBe(400);
   });
 
-  test("body JSON invalide -> 400 propre, jamais un 500", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("body JSON invalide -> 400 propre, jamais un 500", async () => {
+    let request = await connecter("CLIENT");
     const reponse = await request.post("/api/evaluations", {
       headers: { "Content-Type": "application/json" },
       data: "{ceci n'est pas du JSON valide",
@@ -186,48 +198,48 @@ test.describe("EVALUATION API HARDENING — note", () => {
 });
 
 test.describe("EVALUATION API HARDENING — commentaire", () => {
-  test("17. commentaire absent -> stocké comme null", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("17. commentaire absent -> stocké comme null", async () => {
+    let request = await connecter("CLIENT");
     const { mission } = await missionDediee(StatutMission.TERMINEE);
     const reponse = await request.post("/api/evaluations", { data: { missionId: mission.id, note: 4 } });
     expect(reponse.status(), await reponse.text()).toBe(201);
     expect((await reponse.json()).commentaire).toBeNull();
   });
 
-  test("18. commentaire = null -> stocké comme null", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("18. commentaire = null -> stocké comme null", async () => {
+    let request = await connecter("CLIENT");
     const { mission } = await missionDediee(StatutMission.TERMINEE);
     const reponse = await request.post("/api/evaluations", { data: { missionId: mission.id, note: 4, commentaire: null } });
     expect(reponse.status(), await reponse.text()).toBe(201);
     expect((await reponse.json()).commentaire).toBeNull();
   });
 
-  test("19. commentaire = '' -> stocké comme null", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("19. commentaire = '' -> stocké comme null", async () => {
+    let request = await connecter("CLIENT");
     const { mission } = await missionDediee(StatutMission.TERMINEE);
     const reponse = await request.post("/api/evaluations", { data: { missionId: mission.id, note: 4, commentaire: "" } });
     expect(reponse.status(), await reponse.text()).toBe(201);
     expect((await reponse.json()).commentaire).toBeNull();
   });
 
-  test("20. commentaire = espaces uniquement -> stocké comme null", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("20. commentaire = espaces uniquement -> stocké comme null", async () => {
+    let request = await connecter("CLIENT");
     const { mission } = await missionDediee(StatutMission.TERMINEE);
     const reponse = await request.post("/api/evaluations", { data: { missionId: mission.id, note: 4, commentaire: "    " } });
     expect(reponse.status(), await reponse.text()).toBe(201);
     expect((await reponse.json()).commentaire).toBeNull();
   });
 
-  test("21. commentaire normal -> stocké trimmé", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("21. commentaire normal -> stocké trimmé", async () => {
+    let request = await connecter("CLIENT");
     const { mission } = await missionDediee(StatutMission.TERMINEE);
     const reponse = await request.post("/api/evaluations", { data: { missionId: mission.id, note: 4, commentaire: "  Très bonne mission  " } });
     expect(reponse.status(), await reponse.text()).toBe(201);
     expect((await reponse.json()).commentaire).toBe("Très bonne mission");
   });
 
-  test("22. commentaire de 2000 caractères -> accepté", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("22. commentaire de 2000 caractères -> accepté", async () => {
+    let request = await connecter("CLIENT");
     const { mission } = await missionDediee(StatutMission.TERMINEE);
     const commentaire = "a".repeat(2000);
     const reponse = await request.post("/api/evaluations", { data: { missionId: mission.id, note: 4, commentaire } });
@@ -235,8 +247,8 @@ test.describe("EVALUATION API HARDENING — commentaire", () => {
     expect((await reponse.json()).commentaire).toHaveLength(2000);
   });
 
-  test("23. commentaire de 2001 caractères -> 400, aucune création", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("23. commentaire de 2001 caractères -> 400, aucune création", async () => {
+    let request = await connecter("CLIENT");
     const { mission } = await missionDediee(StatutMission.TERMINEE);
     const commentaire = "a".repeat(2001);
     const reponse = await request.post("/api/evaluations", { data: { missionId: mission.id, note: 4, commentaire } });
@@ -250,8 +262,8 @@ test.describe("EVALUATION API HARDENING — commentaire", () => {
     { label: "nombre", commentaire: 42 },
   ];
   for (const cas of commentairesTypeInvalide) {
-    test(`24-26. commentaire de type invalide (${cas.label}) -> 400, aucune création`, async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test(`24-26. commentaire de type invalide (${cas.label}) -> 400, aucune création`, async () => {
+      let request = await connecter("CLIENT");
       const { mission } = await missionDediee(StatutMission.TERMINEE);
       const reponse = await request.post("/api/evaluations", { data: { missionId: mission.id, note: 4, commentaire: cas.commentaire } });
       expect(reponse.status(), await reponse.text()).toBe(400);
@@ -259,8 +271,8 @@ test.describe("EVALUATION API HARDENING — commentaire", () => {
     });
   }
 
-  test("commentaire contenant du HTML/script -> stocké tel quel comme texte, jamais transformé (aucune sanitization ajoutée)", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("commentaire contenant du HTML/script -> stocké tel quel comme texte, jamais transformé (aucune sanitization ajoutée)", async () => {
+    let request = await connecter("CLIENT");
     const { mission } = await missionDediee(StatutMission.TERMINEE);
     const commentaire = "<script>alert(1)</script> très bien";
     const reponse = await request.post("/api/evaluations", { data: { missionId: mission.id, note: 4, commentaire } });
@@ -274,8 +286,8 @@ test.describe("EVALUATION API HARDENING — commentaire", () => {
 });
 
 test.describe("EVALUATION API HARDENING — Double évaluation / concurrence", () => {
-  test("27/28. première évaluation -> 201, deuxième séquentielle -> 409", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("27/28. première évaluation -> 201, deuxième séquentielle -> 409", async () => {
+    let request = await connecter("CLIENT");
     const { mission } = await missionDediee(StatutMission.TERMINEE);
 
     const premiere = await request.post("/api/evaluations", { data: { missionId: mission.id, note: 4 } });
@@ -287,8 +299,8 @@ test.describe("EVALUATION API HARDENING — Double évaluation / concurrence", (
     expect(await prisma.evaluation.count({ where: { missionId: mission.id } })).toBe(1);
   });
 
-  test("29. deux POST concurrents sur la même mission -> exactement 1 évaluation créée, jamais de 500 (P2002 -> 409)", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("29. deux POST concurrents sur la même mission -> exactement 1 évaluation créée, jamais de 500 (P2002 -> 409)", async () => {
+    let request = await connecter("CLIENT");
     const { mission } = await missionDediee(StatutMission.TERMINEE);
 
     const [a, b] = await Promise.all([
@@ -305,8 +317,8 @@ test.describe("EVALUATION API HARDENING — Double évaluation / concurrence", (
 });
 
 test.describe("EVALUATION API HARDENING — Intelligence isolation (garde-fou de non-régression)", () => {
-  test("une création d'Evaluation ne crée ni ne modifie aucune SkillEvidence ni ProfilCompetence", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("une création d'Evaluation ne crée ni ne modifie aucune SkillEvidence ni ProfilCompetence", async () => {
+    let request = await connecter("CLIENT");
     const { mission, profil } = await missionDediee(StatutMission.TERMINEE);
 
     const preuvesAvant = await prisma.skillEvidence.count({ where: { profilCompetence: { profilId: profil.id } } });
@@ -326,12 +338,12 @@ test.describe("EVALUATION API HARDENING — Intelligence isolation (garde-fou de
 });
 
 test.describe("EVALUATION API HARDENING — GET /api/evaluations", () => {
-  test("30/31. GET Client -> uniquement ses propres missions terminées, jamais celles d'un autre Client", async ({ request }) => {
+  test("30/31. GET Client -> uniquement ses propres missions terminées, jamais celles d'un autre Client", async () => {
     const clientB = await autreClient();
     const { mission: missionA } = await missionDediee(StatutMission.TERMINEE);
     const { mission: missionB } = await missionDediee(StatutMission.TERMINEE, clientB.id);
 
-    await connecter(request, "client-demo@example.com"); // Client A
+    let request = await connecter("CLIENT"); // Client A
     const reponse = await request.get("/api/evaluations");
     expect(reponse.ok(), await reponse.text()).toBeTruthy();
     const { missions } = await reponse.json();
@@ -341,14 +353,14 @@ test.describe("EVALUATION API HARDENING — GET /api/evaluations", () => {
     expect(reperes).not.toContain(missionB.repere);
   });
 
-  test("32. GET Admin -> comportement actuel conservé (toutes les évaluations, non refondu dans ce lot)", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("32. GET Admin -> comportement actuel conservé (toutes les évaluations, non refondu dans ce lot)", async () => {
+    let request = await connecter("CLIENT");
     const { mission } = await missionDediee(StatutMission.TERMINEE);
     const creation = await request.post("/api/evaluations", { data: { missionId: mission.id, note: 4, commentaire: "Admin GET test" } });
     expect(creation.status()).toBe(201);
     const evaluationId = (await creation.json()).id;
 
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const reponse = await request.get("/api/evaluations");
     expect(reponse.ok(), await reponse.text()).toBeTruthy();
     const { evaluations } = await reponse.json();
@@ -358,8 +370,8 @@ test.describe("EVALUATION API HARDENING — GET /api/evaluations", () => {
     expect(trouvee.mission.profil).toBeTruthy();
   });
 
-  test("33. GET Engineer -> 403", async ({ request }) => {
-    await connecter(request, "ingenieur-demo@example.com");
+  test("33. GET Engineer -> 403", async () => {
+    let request = await connecter("INGENIEUR");
     const reponse = await request.get("/api/evaluations");
     expect(reponse.status()).toBe(403);
   });

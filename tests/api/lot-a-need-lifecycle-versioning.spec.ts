@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 
 // ATLAS — LOT A : Need Lifecycle canonique (A2), NeedFactStatus (A1),
@@ -10,9 +11,20 @@ import { prisma } from "@/lib/prisma";
 // Les tests de dernierFaitParCle (filtrage statutActivite=ACTIVE) vivent
 // dans tests/unit/client-need-faits.spec.ts — non dupliqués ici.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function creerBesoin(request: APIRequestContext, texteOriginal: string, titre?: string) {
@@ -60,8 +72,8 @@ async function creerCandidatExploitable(suffixe: string) {
 }
 
 test.describe("LOT A — A1 : NeedFactStatus", () => {
-  test("tout nouveau ClientNeedFait créé via l'API est ACTIVE", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("tout nouveau ClientNeedFait créé via l'API est ACTIVE", async () => {
+    let request = await connecter("CLIENT");
     const besoin = await creerBesoin(request, "Nous cherchons un développeur Python confirmé pour six mois.");
     expect(besoin.faits.length).toBeGreaterThan(0);
     for (const fait of besoin.faits) {
@@ -71,15 +83,15 @@ test.describe("LOT A — A1 : NeedFactStatus", () => {
 });
 
 test.describe("LOT A — A2 : Need Lifecycle canonique", () => {
-  test("création : lifecycleStatut = UNDERSTANDING, quelle que soit la complétude de l'extraction (même discipline que statut=SOUMIS)", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("création : lifecycleStatut = UNDERSTANDING, quelle que soit la complétude de l'extraction (même discipline que statut=SOUMIS)", async () => {
+    let request = await connecter("CLIENT");
     const besoin = await creerBesoin(request, "Besoin flou, peu de détails pour l'instant.");
     expect(besoin.statut).toBe("SOUMIS");
     expect(besoin.lifecycleStatut).toBe("UNDERSTANDING");
   });
 
-  test("recalcul serveur (faits) : clarifications restantes -> UNDERSTANDING, aucune clarification restante -> STRUCTURING — dérivé de la MÊME logique que A_CLARIFIER/SOUMIS, jamais un mapping direct", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("recalcul serveur (faits) : clarifications restantes -> UNDERSTANDING, aucune clarification restante -> STRUCTURING — dérivé de la MÊME logique que A_CLARIFIER/SOUMIS, jamais un mapping direct", async () => {
+    let request = await connecter("CLIENT");
     const besoin = await creerBesoin(
       request,
       "Nous cherchons un développeur Backend Senior avec 6 ans d'expérience, budget 600 EUR/jour fixe, à Paris, disponible début novembre pour 4 mois."
@@ -110,8 +122,8 @@ test.describe("LOT A — A2 : Need Lifecycle canonique", () => {
     }
   });
 
-  test("recalcul serveur : besoin volontairement incomplet -> A_CLARIFIER + UNDERSTANDING, jamais STRUCTURING", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("recalcul serveur : besoin volontairement incomplet -> A_CLARIFIER + UNDERSTANDING, jamais STRUCTURING", async () => {
+    let request = await connecter("CLIENT");
     const besoin = await creerBesoin(request, "On a besoin de quelqu'un.");
     const correction = await request.post(`/api/client/besoins/${besoin.id}/faits`, {
       data: { cle: "ROLE", action: "CORRIGER", valeur: "Ingénieur QA" },
@@ -124,8 +136,8 @@ test.describe("LOT A — A2 : Need Lifecycle canonique", () => {
     expect(releve.lifecycleStatut).toBe("UNDERSTANDING");
   });
 
-  test("PATCH statut=VALIDE -> lifecycleStatut=VALIDATED", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("PATCH statut=VALIDE -> lifecycleStatut=VALIDATED", async () => {
+    let request = await connecter("CLIENT");
     const besoin = await creerBesoin(request, "Nous cherchons un ingénieur DevOps pour un projet cloud.");
     const valide = await request.fetch(`/api/client/besoins/${besoin.id}`, { method: "PATCH", data: { statut: "VALIDE" } });
     expect(valide.status(), await valide.text()).toBe(200);
@@ -134,8 +146,8 @@ test.describe("LOT A — A2 : Need Lifecycle canonique", () => {
     expect(releve.lifecycleStatut).toBe("VALIDATED");
   });
 
-  test("PATCH statut=ARCHIVE -> lifecycleStatut=ARCHIVED", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("PATCH statut=ARCHIVE -> lifecycleStatut=ARCHIVED", async () => {
+    let request = await connecter("CLIENT");
     const besoin = await creerBesoin(request, "Besoin abandonné, projet reporté.");
     const archive = await request.fetch(`/api/client/besoins/${besoin.id}`, { method: "PATCH", data: { statut: "ARCHIVE" } });
     expect(archive.status(), await archive.text()).toBe(200);
@@ -144,18 +156,18 @@ test.describe("LOT A — A2 : Need Lifecycle canonique", () => {
     expect(releve.lifecycleStatut).toBe("ARCHIVED");
   });
 
-  test("jamais de retour à DRAFT (règle inchangée, vérifiée pour les deux vocabulaires en dual-read)", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("jamais de retour à DRAFT (règle inchangée, vérifiée pour les deux vocabulaires en dual-read)", async () => {
+    let request = await connecter("CLIENT");
     const besoin = await creerBesoin(request, "Besoin pour vérifier l'interdiction de retour en brouillon.");
     const retourBrouillon = await request.fetch(`/api/client/besoins/${besoin.id}`, { method: "PATCH", data: { statut: "BROUILLON" } });
     expect(retourBrouillon.status()).toBe(400);
   });
 
-  test("IDOR — un besoin d'un autre client reste 404 (jamais une fuite d'existence), lifecycleStatut inclus sans régression d'isolation", async ({ request }) => {
+  test("IDOR — un besoin d'un autre client reste 404 (jamais une fuite d'existence), lifecycleStatut inclus sans régression d'isolation", async () => {
     const clientB = await prisma.client.create({ data: { nom: `Client Test LOT A IDOR ${Date.now()}` } });
     const besoinClientB = await creerBesoinValideDirect(clientB.id);
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const lecture = await request.get(`/api/client/besoins/${besoinClientB.id}`);
     expect(lecture.status()).toBe(404);
 
@@ -165,12 +177,12 @@ test.describe("LOT A — A2 : Need Lifecycle canonique", () => {
 });
 
 test.describe("LOT A — A5 : SolutionOption.versionLien / correctif du filtrage par vague", () => {
-  test("une nouvelle génération pose versionLien = signature courante sur chaque ligne (OPTION et RECOMMANDATION)", async ({ request }) => {
+  test("une nouvelle génération pose versionLien = signature courante sur chaque ligne (OPTION et RECOMMANDATION)", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     await creerCandidatExploitable(`${Date.now()}-versionlien`);
     const need = await creerBesoinValideDirect(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const generation = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
 
     expect(generation.eligible).toBe(true);
@@ -184,12 +196,12 @@ test.describe("LOT A — A5 : SolutionOption.versionLien / correctif du filtrage
     }
   });
 
-  test("décider sur une recommandation dont le besoin a changé depuis (versionLien désynchronisé, sans nouvelle vague générée) est refusé — 409 RECOMMANDATION_OBSOLETE", async ({ request }) => {
+  test("décider sur une recommandation dont le besoin a changé depuis (versionLien désynchronisé, sans nouvelle vague générée) est refusé — 409 RECOMMANDATION_OBSOLETE", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     await creerCandidatExploitable(`${Date.now()}-obsolete`);
     const need = await creerBesoinValideDirect(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const generation = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
     expect(generation.eligible).toBe(true);
     expect(generation.recommandation).not.toBeNull();
@@ -213,12 +225,12 @@ test.describe("LOT A — A5 : SolutionOption.versionLien / correctif du filtrage
     expect(decisionsEnBase).toBe(0);
   });
 
-  test("le chemin idempotent (\"rien n'a changé\") ne renvoie que les OPTION de la vague courante, jamais mélangées avec une vague antérieure", async ({ request }) => {
+  test("le chemin idempotent (\"rien n'a changé\") ne renvoie que les OPTION de la vague courante, jamais mélangées avec une vague antérieure", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     await creerCandidatExploitable(`${Date.now()}-vague`);
     const need = await creerBesoinValideDirect(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const premiereGeneration = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
     expect(premiereGeneration.eligible).toBe(true);
     const signatureInitiale = premiereGeneration.signatureActuelle;

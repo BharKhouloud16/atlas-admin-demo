@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 import { demanderAutorisationStrategique } from "@/lib/strategic/authorization-request";
 import type { revoquerDemande } from "@/lib/control-plane/authorization";
@@ -22,9 +23,20 @@ import { enregistrerSignalStrategique, enregistrerAnalyseStrategique, enregistre
 // — structurellement inaccessibles depuis la route HTTP, qui ne les
 // transmet jamais (voir lib/strategic/authorization-request.ts).
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function idAgent(request: APIRequestContext, nom: string): Promise<string> {
@@ -63,8 +75,8 @@ async function creerPropositionDeTest(
 test.describe("COMPANY ATLAS B24 Lot B — B21 → B22 Authorization Request Path", () => {
   // ---- NOMINAL ----------------------------------------------------------
 
-  test("1. nominal — proposition valide + action/scope valides -> AuthorizationRequest créée (201)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("1. nominal — proposition valide + action/scope valides -> AuthorizationRequest créée (201)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
 
@@ -78,8 +90,8 @@ test.describe("COMPANY ATLAS B24 Lot B — B21 → B22 Authorization Request Pat
     expect(corps.decision).toBe("ALLOW");
   });
 
-  test("2. le StrategicAuthorizationLink est correctement créé et pointe vers la bonne proposition", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("2. le StrategicAuthorizationLink est correctement créé et pointe vers la bonne proposition", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
 
@@ -95,8 +107,8 @@ test.describe("COMPANY ATLAS B24 Lot B — B21 → B22 Authorization Request Pat
 
   // ---- PERMISSION ---------------------------------------------------------
 
-  test("3. permission exacte ACTIVE (PROPOSE/TALENT) -> B22 accepte (ALLOW)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("3. permission exacte ACTIVE (PROPOSE/TALENT) -> B22 accepte (ALLOW)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
 
@@ -106,8 +118,8 @@ test.describe("COMPANY ATLAS B24 Lot B — B21 → B22 Authorization Request Pat
     expect((await reponse.json()).decision).toBe("ALLOW");
   });
 
-  test("4. scope incorrect (ATLAS_TALENT n'a PROPOSE que sur TALENT, jamais SECURITY) -> refus par B22 (DENY)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("4. scope incorrect (ATLAS_TALENT n'a PROPOSE que sur TALENT, jamais SECURITY) -> refus par B22 (DENY)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
 
@@ -118,8 +130,8 @@ test.describe("COMPANY ATLAS B24 Lot B — B21 → B22 Authorization Request Pat
     expect((await reponse.json()).decision).toBe("DENY");
   });
 
-  test("5. permission DISABLED (même scope exact) -> refus par B22 (DENY)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("5. permission DISABLED (même scope exact) -> refus par B22 (DENY)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
     const { permissions } = await (await request.get("/api/security/permissions")).json();
@@ -142,8 +154,8 @@ test.describe("COMPANY ATLAS B24 Lot B — B21 → B22 Authorization Request Pat
 
   // ---- AGENT ----------------------------------------------------------
 
-  test("6. agentId de la proposition est utilisé pour l'AuthorizationRequest", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("6. agentId de la proposition est utilisé pour l'AuthorizationRequest", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
 
@@ -155,8 +167,8 @@ test.describe("COMPANY ATLAS B24 Lot B — B21 → B22 Authorization Request Pat
     expect(demande?.agentId).toBe(agentId);
   });
 
-  test("7. impossible de substituer un agent arbitraire — un agentId injecté dans le body est ignoré", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("7. impossible de substituer un agent arbitraire — un agentId injecté dans le body est ignoré", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const autreAgentId = await idAgent(request, "ATLAS_OS_SERVICES");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
@@ -175,8 +187,8 @@ test.describe("COMPANY ATLAS B24 Lot B — B21 → B22 Authorization Request Pat
 
   // ---- CORRELATION ID ----------------------------------------------------
 
-  test("8. correlationId de la proposition est utilisé pour l'AuthorizationRequest", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("8. correlationId de la proposition est utilisé pour l'AuthorizationRequest", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId, correlationId } = await creerPropositionDeTest(request, agentId);
 
@@ -188,8 +200,8 @@ test.describe("COMPANY ATLAS B24 Lot B — B21 → B22 Authorization Request Pat
     expect(demande?.correlationId).toBe(correlationId);
   });
 
-  test("9. un correlationId arbitraire fourni par le client est ignoré", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("9. un correlationId arbitraire fourni par le client est ignoré", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId, correlationId } = await creerPropositionDeTest(request, agentId);
 
@@ -204,8 +216,8 @@ test.describe("COMPANY ATLAS B24 Lot B — B21 → B22 Authorization Request Pat
 
   // ---- ACTION / SCOPE -----------------------------------------------------
 
-  test("10-11. action valide acceptée, action invalide refusée (400), aucune AuthorizationRequest créée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("10-11. action valide acceptée, action invalide refusée (400), aucune AuthorizationRequest créée", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
 
@@ -223,8 +235,8 @@ test.describe("COMPANY ATLAS B24 Lot B — B21 → B22 Authorization Request Pat
     expect(valide.status()).toBe(201);
   });
 
-  test("12-13. scope valide accepté, scope invalide refusé (400), aucune AuthorizationRequest créée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("12-13. scope valide accepté, scope invalide refusé (400), aucune AuthorizationRequest créée", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
 
@@ -246,7 +258,7 @@ test.describe("COMPANY ATLAS B24 Lot B — B21 → B22 Authorization Request Pat
   test("14. aucune conversion automatique StrategicCategory -> scope : le scope demandé explicitement est celui utilisé, jamais dérivé de la catégorie du signal", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     // Catégorie SECURITY sur le signal d'origine — si un mapping
     // automatique existait, on pourrait s'attendre à scope=SECURITY. On
@@ -268,7 +280,7 @@ test.describe("COMPANY ATLAS B24 Lot B — B21 → B22 Authorization Request Pat
   test("15-19. intégrité du link : agentId/correlationId/action/scope identiques entre proposition et AuthorizationRequest ; authorizationRequestId toujours généré côté serveur", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId, correlationId } = await creerPropositionDeTest(request, agentId);
 
@@ -297,8 +309,8 @@ test.describe("COMPANY ATLAS B24 Lot B — B21 → B22 Authorization Request Pat
 
   // ---- PENDING (ATOMICITÉ) ------------------------------------------------
 
-  test("20. une deuxième demande alors qu'une PENDING existe déjà est refusée (409)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("20. une deuxième demande alors qu'une PENDING existe déjà est refusée (409)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
 
@@ -316,8 +328,8 @@ test.describe("COMPANY ATLAS B24 Lot B — B21 → B22 Authorization Request Pat
     expect(erreur.error).toContain("PENDING");
   });
 
-  test("21. deux demandes concurrentes sur la même proposition — une seule réussit, l'autre est refusée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("21. deux demandes concurrentes sur la même proposition — une seule réussit, l'autre est refusée", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
 
@@ -353,7 +365,7 @@ test.describe("COMPANY ATLAS B24 Lot B — B21 → B22 Authorization Request Pat
   test("22. modification d'une proposition impossible pendant PENDING — invariant déjà structurellement vrai (aucune route de modification n'existe)", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
     await request.post(`/api/strategic/propositions/${proposalId}/request-authorization`, {
@@ -379,7 +391,7 @@ test.describe("COMPANY ATLAS B24 Lot B — B21 → B22 Authorization Request Pat
   test("23. la demande passe bien par le vrai mécanisme B22 (actionClass calculé serveur, expiresAt posé, audit trail)", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
 
@@ -398,8 +410,8 @@ test.describe("COMPANY ATLAS B24 Lot B — B21 → B22 Authorization Request Pat
     expect(evenements.length).toBeGreaterThan(0);
   });
 
-  test("24. B24-FIX0 (agentId+action+scope+ACTIVE) s'applique sans changement au nouveau chemin B21 -> B22", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("24. B24-FIX0 (agentId+action+scope+ACTIVE) s'applique sans changement au nouveau chemin B21 -> B22", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
 
@@ -415,8 +427,8 @@ test.describe("COMPANY ATLAS B24 Lot B — B21 → B22 Authorization Request Pat
 
   // ---- EMERGENCY STOP -----------------------------------------------------
 
-  test("25. aucune possibilité de contourner un Emergency Stop B22 via le chemin B21", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("25. aucune possibilité de contourner un Emergency Stop B22 via le chemin B21", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
 
@@ -442,7 +454,7 @@ test.describe("COMPANY ATLAS B24 Lot B — B21 → B22 Authorization Request Pat
   test("26. B23 ne possède aucun pouvoir d'autorisation sur ce chemin — la réponse ne dépend jamais d'un plafond B23", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
 

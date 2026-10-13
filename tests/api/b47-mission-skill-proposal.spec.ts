@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { StatutMission } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { versCompetencesPourMatching, type StatutPreuveCompetence } from "@/lib/talent/skill-graph";
@@ -20,9 +21,20 @@ import { versCompetencesPourMatching, type StatutPreuveCompetence } from "@/lib/
 // (RBAC de possession réelle : proposer/modifier sur SA PROPRE mission)
 // utilisent creerMission(), liée au compte réel ingenieur-demo@example.com.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function clientDemo() {
@@ -70,8 +82,8 @@ async function dernierJournal(action: string, cible: string) {
 
 test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
   test.describe("Création — POST /api/missions/[id]/skill-proposals", () => {
-    test("1. Engineer propriétaire crée une proposition sur sa propre mission -> 201", async ({ request }) => {
-      await connecter(request, "ingenieur-demo@example.com");
+    test("1. Engineer propriétaire crée une proposition sur sa propre mission -> 201", async () => {
+      let request = await connecter("INGENIEUR");
       const mission = await creerMission();
 
       const reponse = await request.post(`/api/missions/${mission.id}/skill-proposals`, {
@@ -87,8 +99,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
       expect(proposition.proposeParRole).toBe("INGENIEUR");
     });
 
-    test("2. Admin peut créer une proposition sur n'importe quelle mission -> 201", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("2. Admin peut créer une proposition sur n'importe quelle mission -> 201", async () => {
+      let request = await connecter("ADMIN");
       const { mission } = await creerMissionDediee();
 
       const reponse = await request.post(`/api/missions/${mission.id}/skill-proposals`, {
@@ -100,14 +112,14 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
       expect(proposition.niveauPropose).toBeNull();
     });
 
-    test("3. Mission inexistante -> 404", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("3. Mission inexistante -> 404", async () => {
+      let request = await connecter("ADMIN");
       const reponse = await request.post("/api/missions/inexistante-xyz/skill-proposals", { data: { competence: "GCP" } });
       expect(reponse.status()).toBe(404);
     });
 
-    test("4. Engineer non propriétaire (mission d'un autre ingénieur) -> 404", async ({ request }) => {
-      await connecter(request, "ingenieur-demo@example.com");
+    test("4. Engineer non propriétaire (mission d'un autre ingénieur) -> 404", async () => {
+      let request = await connecter("INGENIEUR");
       const { mission } = await creerMissionDediee();
 
       const reponse = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "GCP" } });
@@ -115,8 +127,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
       expect(await prisma.missionSkillProposal.count({ where: { missionId: mission.id } })).toBe(0);
     });
 
-    test("5. Client -> 403, aucune proposition créée", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("5. Client -> 403, aucune proposition créée", async () => {
+      let request = await connecter("CLIENT");
       const { mission } = await creerMissionDediee();
 
       const reponse = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "GCP" } });
@@ -130,8 +142,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
       expect(reponse.status()).toBe(403);
     });
 
-    test("6b. Compétence hors du vocabulaire fermé -> 400, aucune création", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("6b. Compétence hors du vocabulaire fermé -> 400, aucune création", async () => {
+      let request = await connecter("ADMIN");
       const { mission } = await creerMissionDediee();
       const reponse = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "Compétence Inventée Inexistante" } });
       expect(reponse.status()).toBe(400);
@@ -139,8 +151,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
   });
 
   test.describe("Modification — PATCH /api/missions/[id]/skill-proposals/[proposalId]", () => {
-    test("7. Engineer auteur peut modifier sa proposition EN_ATTENTE -> 200", async ({ request }) => {
-      await connecter(request, "ingenieur-demo@example.com");
+    test("7. Engineer auteur peut modifier sa proposition EN_ATTENTE -> 200", async () => {
+      let request = await connecter("INGENIEUR");
       const mission = await creerMission();
       const creation = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "GCP", niveauPropose: 2 } });
       const proposition = await creation.json();
@@ -152,8 +164,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
       expect(apres.contexte).toBe("Précision ajoutée");
     });
 
-    test("8. Admin peut modifier une proposition EN_ATTENTE -> 200", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("8. Admin peut modifier une proposition EN_ATTENTE -> 200", async () => {
+      let request = await connecter("ADMIN");
       const { mission } = await creerMissionDediee();
       const creation = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "SOAP" } });
       const proposition = await creation.json();
@@ -163,19 +175,19 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
       expect((await modif.json()).niveauPropose).toBe(5);
     });
 
-    test("9. Engineer ne peut pas modifier la proposition d'un autre auteur (créée par Admin sur sa mission) -> 404", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("9. Engineer ne peut pas modifier la proposition d'un autre auteur (créée par Admin sur sa mission) -> 404", async () => {
+      let request = await connecter("ADMIN");
       const mission = await creerMission();
       const creation = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "GCP" } });
       const proposition = await creation.json();
 
-      await connecter(request, "ingenieur-demo@example.com");
+      request = await connecter("INGENIEUR");
       const modif = await request.patch(`/api/missions/${mission.id}/skill-proposals/${proposition.id}`, { data: { niveauPropose: 2 } });
       expect(modif.status()).toBe(404);
     });
 
-    test("10. Modification impossible après VALIDEE -> 409", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("10. Modification impossible après VALIDEE -> 409", async () => {
+      let request = await connecter("ADMIN");
       const { mission, profil } = await creerMissionDediee();
       const creation = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "GCP" } });
       const proposition = await creation.json();
@@ -185,8 +197,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
       expect(modif.status()).toBe(409);
     });
 
-    test("11. Modification impossible après REFUSEE -> 409", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("11. Modification impossible après REFUSEE -> 409", async () => {
+      let request = await connecter("ADMIN");
       const { mission, profil } = await creerMissionDediee();
       const creation = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "SOAP" } });
       const proposition = await creation.json();
@@ -198,8 +210,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
   });
 
   test.describe("Validation / refus — PATCH /api/profils/[id]/skill-proposals/[proposalId]", () => {
-    test("12. Admin valide -> 200, statut VALIDEE", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("12. Admin valide -> 200, statut VALIDEE", async () => {
+      let request = await connecter("ADMIN");
       const { mission, profil } = await creerMissionDediee();
       const creation = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "GCP", niveauPropose: 2 } });
       const proposition = await creation.json();
@@ -212,24 +224,24 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
       expect(apres.skillEvidenceId).toBeTruthy();
     });
 
-    test("13. Engineer ne peut pas valider -> 403", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("13. Engineer ne peut pas valider -> 403", async () => {
+      let request = await connecter("ADMIN");
       const { mission, profil } = await creerMissionDediee();
       const creation = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "SOAP" } });
       const proposition = await creation.json();
 
-      await connecter(request, "ingenieur-demo@example.com");
+      request = await connecter("INGENIEUR");
       const decision = await request.patch(`/api/profils/${profil.id}/skill-proposals/${proposition.id}`, { data: { action: "valider" } });
       expect(decision.status()).toBe(403);
     });
 
-    test("14. Client ne peut pas valider -> 403", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("14. Client ne peut pas valider -> 403", async () => {
+      let request = await connecter("ADMIN");
       const { mission, profil } = await creerMissionDediee();
       const creation = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "GCP" } });
       const proposition = await creation.json();
 
-      await connecter(request, "client-demo@example.com");
+      request = await connecter("CLIENT");
       const decision = await request.patch(`/api/profils/${profil.id}/skill-proposals/${proposition.id}`, { data: { action: "valider" } });
       expect(decision.status()).toBe(403);
     });
@@ -240,15 +252,15 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
       expect(decision.status()).toBe(403);
     });
 
-    test("16. Proposal inexistante -> 404", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("16. Proposal inexistante -> 404", async () => {
+      let request = await connecter("ADMIN");
       const { profil } = await creerMissionDediee();
       const decision = await request.patch(`/api/profils/${profil.id}/skill-proposals/inexistante-xyz`, { data: { action: "valider" } });
       expect(decision.status()).toBe(404);
     });
 
-    test("17. Profil de l'URL incohérent avec la proposition (cross-profil) -> 404, jamais 403", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("17. Profil de l'URL incohérent avec la proposition (cross-profil) -> 404, jamais 403", async () => {
+      let request = await connecter("ADMIN");
       const { mission } = await creerMissionDediee();
       const creation = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "GCP" } });
       const proposition = await creation.json();
@@ -258,8 +270,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
       expect(decision.status()).toBe(404);
     });
 
-    test("18. Action invalide -> 400", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("18. Action invalide -> 400", async () => {
+      let request = await connecter("ADMIN");
       const { mission, profil } = await creerMissionDediee();
       const creation = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "SOAP" } });
       const proposition = await creation.json();
@@ -270,8 +282,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
   });
 
   test.describe("Preuve — SkillEvidence(source=MISSION)", () => {
-    test("19. Aucune SkillEvidence avant validation", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("19. Aucune SkillEvidence avant validation", async () => {
+      let request = await connecter("ADMIN");
       const { mission, profil } = await creerMissionDediee();
       await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "GCP" } });
 
@@ -279,8 +291,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
       expect(pc).toBeNull(); // aucune ProfilCompetence créée par la seule proposition
     });
 
-    test("20. SkillEvidence(source=MISSION) créée après validation, détail traçable jusqu'à la mission", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("20. SkillEvidence(source=MISSION) créée après validation, détail traçable jusqu'à la mission", async () => {
+      let request = await connecter("ADMIN");
       const { mission, profil } = await creerMissionDediee();
       const creation = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "GCP" } });
       const proposition = await creation.json();
@@ -301,8 +313,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
       expect(preuveMission!.detail).toContain("admin-demo@example.com");
     });
 
-    test("21/22. niveauObserve utilisé, niveauPropose ne devient JAMAIS automatiquement le niveau de preuve", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("21/22. niveauObserve utilisé, niveauPropose ne devient JAMAIS automatiquement le niveau de preuve", async () => {
+      let request = await connecter("ADMIN");
       const { mission, profil } = await creerMissionDediee();
       const creation = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "SOAP", niveauPropose: 2 } });
       const proposition = await creation.json();
@@ -319,8 +331,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
       expect(preuve!.niveau).not.toBe(2);
     });
 
-    test("22b. niveauObserve omis à la validation -> SkillEvidence.niveau reste null, jamais déduit de niveauPropose", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("22b. niveauObserve omis à la validation -> SkillEvidence.niveau reste null, jamais déduit de niveauPropose", async () => {
+      let request = await connecter("ADMIN");
       const { mission, profil } = await creerMissionDediee();
       const creation = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "GCP", niveauPropose: 4 } });
       const proposition = await creation.json();
@@ -335,8 +347,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
       expect(preuve!.niveau).toBeNull();
     });
 
-    test("23. Refus -> aucune SkillEvidence créée", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("23. Refus -> aucune SkillEvidence créée", async () => {
+      let request = await connecter("ADMIN");
       const { mission, profil } = await creerMissionDediee();
       const creation = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "SOAP" } });
       const proposition = await creation.json();
@@ -351,8 +363,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
   });
 
   test.describe("Idempotence / concurrence", () => {
-    test("24. Double validation concurrente de la même proposition -> exactement 1 SkillEvidence, la 2e requête reçoit 409", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("24. Double validation concurrente de la même proposition -> exactement 1 SkillEvidence, la 2e requête reçoit 409", async () => {
+      let request = await connecter("ADMIN");
       const { mission, profil } = await creerMissionDediee();
       const creation = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "GCP" } });
       const proposition = await creation.json();
@@ -371,8 +383,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
       expect(pc!.preuves.filter((p) => p.source === "MISSION").length).toBe(1); // jamais 2
     });
 
-    test("25. Double création concurrente EN_ATTENTE (même mission+compétence) -> une seule proposition active, l'autre 409", async ({ request }) => {
-      await connecter(request, "ingenieur-demo@example.com");
+    test("25. Double création concurrente EN_ATTENTE (même mission+compétence) -> une seule proposition active, l'autre 409", async () => {
+      let request = await connecter("INGENIEUR");
       const mission = await creerMission();
 
       const [r1, r2] = await Promise.all([
@@ -388,8 +400,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
   });
 
   test.describe("Historique", () => {
-    test("26/27. Refus -> nouvelle proposition possible pour la même compétence, l'ancienne reste REFUSEE (jamais rouverte)", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("26/27. Refus -> nouvelle proposition possible pour la même compétence, l'ancienne reste REFUSEE (jamais rouverte)", async () => {
+      let request = await connecter("ADMIN");
       const { mission, profil } = await creerMissionDediee();
 
       const premiere = await (await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "GCP" } })).json();
@@ -404,8 +416,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
       expect(premiereEnBase?.statut).toBe("REFUSEE"); // jamais rouverte automatiquement
     });
 
-    test("28. Une SkillEvidence créée par validation reste immuable après une consultation ultérieure", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("28. Une SkillEvidence créée par validation reste immuable après une consultation ultérieure", async () => {
+      let request = await connecter("ADMIN");
       const { mission, profil } = await creerMissionDediee();
       const creation = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "SOAP" } });
       const proposition = await creation.json();
@@ -420,8 +432,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
   });
 
   test.describe("Audit (journaliser())", () => {
-    test("29. mission.skill_proposal.created", async ({ request }) => {
-      await connecter(request, "ingenieur-demo@example.com");
+    test("29. mission.skill_proposal.created", async () => {
+      let request = await connecter("INGENIEUR");
       const mission = await creerMission();
       const creation = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "GCP" } });
       const proposition = await creation.json();
@@ -431,8 +443,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
       expect(entree!.acteurEmail).toBe("ingenieur-demo@example.com");
     });
 
-    test("30. mission.skill_proposal.updated (uniquement si un champ change réellement)", async ({ request }) => {
-      await connecter(request, "ingenieur-demo@example.com");
+    test("30. mission.skill_proposal.updated (uniquement si un champ change réellement)", async () => {
+      let request = await connecter("INGENIEUR");
       const mission = await creerMission();
       const creation = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "SOAP", niveauPropose: 1 } });
       const proposition = await creation.json();
@@ -443,8 +455,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
       expect(entree!.detail).toContain("niveauPropose");
     });
 
-    test("31. mission.skill_proposal.validated (contient le skillEvidenceId)", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("31. mission.skill_proposal.validated (contient le skillEvidenceId)", async () => {
+      let request = await connecter("ADMIN");
       const { mission, profil } = await creerMissionDediee();
       const creation = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "GCP" } });
       const proposition = await creation.json();
@@ -458,8 +470,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
       expect(entree!.detail).toContain(profil.id);
     });
 
-    test("32. mission.skill_proposal.rejected (contient le motif)", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("32. mission.skill_proposal.rejected (contient le motif)", async () => {
+      let request = await connecter("ADMIN");
       const { mission, profil } = await creerMissionDediee();
       const creation = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "SOAP" } });
       const proposition = await creation.json();
@@ -472,8 +484,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
   });
 
   test.describe("Intelligence — Professional Intelligence Console / Matching", () => {
-    test("33/34. La preuve validée est visible dans /api/profils/[id]/competences et l'intelligence est recalculée à la lecture", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("33/34. La preuve validée est visible dans /api/profils/[id]/competences et l'intelligence est recalculée à la lecture", async () => {
+      let request = await connecter("ADMIN");
       const { mission, profil } = await creerMissionDediee();
       const creation = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "GCP" } });
       const proposition = await creation.json();
@@ -492,8 +504,8 @@ test.describe("ATLAS PHASE 2B-1 — Mission Skill Proposal", () => {
       expect(gcpIntel.confianceDetaillee.confiance).not.toBe("INCONNUE");
     });
 
-    test("35. La compétence validée entre dans versCompetencesPourMatching (chemin Matching existant, non modifié)", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("35. La compétence validée entre dans versCompetencesPourMatching (chemin Matching existant, non modifié)", async () => {
+      let request = await connecter("ADMIN");
       const { mission, profil } = await creerMissionDediee();
       const creation = await request.post(`/api/missions/${mission.id}/skill-proposals`, { data: { competence: "SOAP" } });
       const proposition = await creation.json();

@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 
 // ATLAS TALENT — Observabilité & Security Intelligence interne (B17,
@@ -24,9 +25,20 @@ import { prisma } from "@/lib/prisma";
 // tests/api/facturation-devise.spec.ts — pas de nettoyage requis, la base
 // de test est réinitialisée entre les runs CI.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function idProfilIngenieurDemo(request: APIRequestContext): Promise<string> {
@@ -67,7 +79,7 @@ async function evenementRecent(
   request: APIRequestContext,
   params: { action: string; resultat: string; acteurEmail: string; depuis: number }
 ): Promise<Record<string, unknown> | undefined> {
-  await connecter(request, "admin-demo@example.com");
+  request = await connecter("ADMIN");
   const qs = new URLSearchParams({
     action: params.action,
     resultat: params.resultat,
@@ -83,9 +95,9 @@ async function evenementRecent(
 }
 
 test.describe("B17 — traçabilité RBAC désormais atteignable (/api/missions, /api/clients)", () => {
-  test("Client sur GET /api/missions : 403 + événement rbac.acces_refuse journalisé (ressourceType Mission)", async ({ request }) => {
+  test("Client sur GET /api/missions : 403 + événement rbac.acces_refuse journalisé (ressourceType Mission)", async () => {
     const avant = Date.now();
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const refus = await request.get("/api/missions");
     expect(refus.status()).toBe(403);
 
@@ -100,9 +112,9 @@ test.describe("B17 — traçabilité RBAC désormais atteignable (/api/missions,
     expect(evt?.contexteRoute).toBe("/api/missions");
   });
 
-  test("Client sur POST /api/missions : 403 + événement journalisé", async ({ request }) => {
+  test("Client sur POST /api/missions : 403 + événement journalisé", async () => {
     const avant = Date.now();
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const refus = await request.post("/api/missions", { data: {} });
     expect(refus.status()).toBe(403);
 
@@ -116,9 +128,9 @@ test.describe("B17 — traçabilité RBAC désormais atteignable (/api/missions,
     expect(evt?.contexteRoute).toBe("/api/missions");
   });
 
-  test("Client sur GET /api/clients : 403 + événement journalisé (ressourceType Client)", async ({ request }) => {
+  test("Client sur GET /api/clients : 403 + événement journalisé (ressourceType Client)", async () => {
     const avant = Date.now();
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const refus = await request.get("/api/clients");
     expect(refus.status()).toBe(403);
 
@@ -132,9 +144,9 @@ test.describe("B17 — traçabilité RBAC désormais atteignable (/api/missions,
     expect(evt?.ressourceType).toBe("Client");
   });
 
-  test("Ingénieur sur GET /api/clients : 403 + événement journalisé (horizontal, rôle différent)", async ({ request }) => {
+  test("Ingénieur sur GET /api/clients : 403 + événement journalisé (horizontal, rôle différent)", async () => {
     const avant = Date.now();
-    await connecter(request, "ingenieur-demo@example.com");
+    let request = await connecter("INGENIEUR");
     const refus = await request.get("/api/clients");
     expect(refus.status()).toBe(403);
 
@@ -148,9 +160,9 @@ test.describe("B17 — traçabilité RBAC désormais atteignable (/api/missions,
     expect(evt?.ressourceType).toBe("Client");
   });
 
-  test("Ingénieur sur POST /api/clients : 403 + événement journalisé", async ({ request }) => {
+  test("Ingénieur sur POST /api/clients : 403 + événement journalisé", async () => {
     const avant = Date.now();
-    await connecter(request, "ingenieur-demo@example.com");
+    let request = await connecter("INGENIEUR");
     const refus = await request.post("/api/clients", { data: { nom: "Ne devrait jamais être créé" } });
     expect(refus.status()).toBe(403);
 
@@ -163,8 +175,8 @@ test.describe("B17 — traçabilité RBAC désormais atteignable (/api/missions,
     expect(evt).toBeTruthy();
   });
 
-  test("non-régression : un Admin peut toujours utiliser /api/missions et /api/clients normalement", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("non-régression : un Admin peut toujours utiliser /api/missions et /api/clients normalement", async () => {
+    let request = await connecter("ADMIN");
     const [rMissions, rClients] = await Promise.all([request.get("/api/missions"), request.get("/api/clients")]);
     expect(rMissions.ok(), await rMissions.text()).toBeTruthy();
     expect(rClients.ok(), await rClients.text()).toBeTruthy();
@@ -172,11 +184,11 @@ test.describe("B17 — traçabilité RBAC désormais atteignable (/api/missions,
 });
 
 test.describe("B17 — isolation inter-client / BOLA (feuilles-de-temps)", () => {
-  test("un Client ne peut jamais valider la feuille de temps d'un AUTRE client : 403 + événement avec ressourceId", async ({ request }) => {
+  test("un Client ne peut jamais valider la feuille de temps d'un AUTRE client : 403 + événement avec ressourceId", async () => {
     // Fixture jetable : un second Client (sans compte utilisateur associé,
     // seul le clientId compte pour reproduire l'écart d'isolation), une
     // mission pour ce client, un CRA soumis puis validé Admin.
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const profilId = await idProfilIngenieurDemo(request);
 
     const creationClient = await request.post("/api/clients", { data: { nom: "Client BOLA Test B17" } });
@@ -189,14 +201,14 @@ test.describe("B17 — isolation inter-client / BOLA (feuilles-de-temps)", () =>
     expect(creationMission.status(), await creationMission.text()).toBe(201);
     const mission = await creationMission.json();
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     const soumission = await request.post("/api/feuilles-de-temps", {
       data: { missionId: mission.id, mois: "2099-01", joursTravailles: 5, heuresSupplementaires: 0, soumettre: true },
     });
     expect(soumission.status(), await soumission.text()).toBe(201);
     const feuille = await soumission.json();
 
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const validationAdmin = await request.patch("/api/feuilles-de-temps", {
       data: { id: feuille.id, action: "validerAdmin" },
     });
@@ -206,7 +218,7 @@ test.describe("B17 — isolation inter-client / BOLA (feuilles-de-temps)", () =>
     // "Client BOLA Test B17" : sa tentative de validation doit être
     // refusée par isolation inter-client, pas par un simple refus de rôle.
     const avant = Date.now();
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const refusBola = await request.patch("/api/feuilles-de-temps", {
       data: { id: feuille.id, action: "validerClient" },
     });
@@ -225,9 +237,9 @@ test.describe("B17 — isolation inter-client / BOLA (feuilles-de-temps)", () =>
 });
 
 test.describe("B17 — instrumentation des lectures sensibles (marge-intelligence)", () => {
-  test("une lecture Admin réussie de marge-intelligence journalise objet.consultation (SUCCES)", async ({ request }) => {
+  test("une lecture Admin réussie de marge-intelligence journalise objet.consultation (SUCCES)", async () => {
     const avant = Date.now();
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const missionId = await idMissionSeed();
     const lecture = await request.get(`/api/missions/${missionId}/marge-intelligence`);
     expect(lecture.ok(), await lecture.text()).toBeTruthy();
@@ -243,12 +255,12 @@ test.describe("B17 — instrumentation des lectures sensibles (marge-intelligenc
     expect(evt?.ressourceId).toBe(missionId);
   });
 
-  test("un refus (Client) sur marge-intelligence journalise rbac.acces_refuse avec le ressourceId de la mission", async ({ request }) => {
+  test("un refus (Client) sur marge-intelligence journalise rbac.acces_refuse avec le ressourceId de la mission", async () => {
     const avant = Date.now();
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const missionId = await idMissionSeed();
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const refus = await request.get(`/api/missions/${missionId}/marge-intelligence`);
     expect(refus.status()).toBe(403);
 
@@ -265,9 +277,9 @@ test.describe("B17 — instrumentation des lectures sensibles (marge-intelligenc
 });
 
 test.describe("B17 — signal calculé « accès anormal à des objets » (bout en bout)", () => {
-  test("20 lectures d'objets distincts par le même acteur déclenchent le signal acces_anormal_objets (plus UNKNOWN)", async ({ request }) => {
+  test("20 lectures d'objets distincts par le même acteur déclenchent le signal acces_anormal_objets (plus UNKNOWN)", async () => {
     test.setTimeout(60_000);
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const clientId = await idPremierClient(request);
     const profilId = await idProfilIngenieurDemo(request);
 
@@ -304,8 +316,8 @@ test.describe("B17 — signal calculé « accès anormal à des objets » (bout 
 });
 
 test.describe("B17 — absence de fuite de secret/PII dans les nouveaux champs journalisés", () => {
-  test("les événements rbac.acces_refuse et objet.consultation de ce lot ne contiennent ni secret, ni mot de passe, ni jeton", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("les événements rbac.acces_refuse et objet.consultation de ce lot ne contiennent ni secret, ni mot de passe, ni jeton", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/security/evenements?limite=100");
     expect(reponse.ok(), await reponse.text()).toBeTruthy();
     const { evenements } = await reponse.json();

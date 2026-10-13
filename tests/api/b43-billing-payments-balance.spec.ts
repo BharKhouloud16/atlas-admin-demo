@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 
 // COMPANY ATLAS — V2.2-D (17/09/2026) : Billing — Paiements + Solde +
@@ -19,9 +20,20 @@ import { prisma } from "@/lib/prisma";
 // précédents : état "donné" construit directement via Prisma, une seule
 // connexion par test pour ce qui est effectivement sous test.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function idProfilIngenieurDemo(): Promise<string> {
@@ -86,9 +98,9 @@ async function factureEnvoyeeDeTest(mois: string, montantTTC: number, devise = "
 }
 
 test.describe("V2.2-D — Annulation de paiement (delta réel : ANNULE jamais atteint avant ce lot)", () => {
-  test("annuler l'unique paiement (100% du montantTTC) d'une Facture PAYEE la ramène à ENVOYEE, solde entier restauré", async ({ request }) => {
+  test("annuler l'unique paiement (100% du montantTTC) d'une Facture PAYEE la ramène à ENVOYEE, solde entier restauré", async () => {
     const { factureId, montantTTC, devise } = await factureEnvoyeeDeTest("2029-01", 1000);
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
 
     const paiement = await (
       await request.post(`/api/factures/${factureId}/paiements`, { data: { montant: montantTTC, devise, reference: `REF-${Date.now()}`, methode: "Virement" } })
@@ -108,9 +120,9 @@ test.describe("V2.2-D — Annulation de paiement (delta réel : ANNULE jamais at
     expect(paiementEnBase!.montant.toNumber()).toBe(montantTTC); // jamais supprimé ni modifié, seulement son statut
   });
 
-  test("annuler un paiement partiel ramène la Facture de PARTIELLEMENT_PAYEE à ENVOYEE si c'était le seul paiement", async ({ request }) => {
+  test("annuler un paiement partiel ramène la Facture de PARTIELLEMENT_PAYEE à ENVOYEE si c'était le seul paiement", async () => {
     const { factureId, devise } = await factureEnvoyeeDeTest("2029-02", 1000);
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
 
     const paiement = await (
       await request.post(`/api/factures/${factureId}/paiements`, { data: { montant: 400, devise, reference: `REF-${Date.now()}`, methode: "Virement" } })
@@ -123,9 +135,9 @@ test.describe("V2.2-D — Annulation de paiement (delta réel : ANNULE jamais at
     expect(enBase!.statut).toBe("ENVOYEE");
   });
 
-  test("annuler un paiement sur une Facture déjà ANNULEE ne la fait jamais redevenir ENVOYEE/PARTIELLEMENT_PAYEE/PAYEE", async ({ request }) => {
+  test("annuler un paiement sur une Facture déjà ANNULEE ne la fait jamais redevenir ENVOYEE/PARTIELLEMENT_PAYEE/PAYEE", async () => {
     const { factureId, devise } = await factureEnvoyeeDeTest("2029-03", 1000);
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
 
     const paiement = await (
       await request.post(`/api/factures/${factureId}/paiements`, { data: { montant: 400, devise, reference: `REF-${Date.now()}`, methode: "Virement" } })
@@ -141,9 +153,9 @@ test.describe("V2.2-D — Annulation de paiement (delta réel : ANNULE jamais at
     expect((await prisma.paiement.findUnique({ where: { id: paiement.paiement.id } }))!.statut).toBe("ANNULE");
   });
 
-  test("Idempotence — annuler deux fois le même paiement ne le recompte jamais deux fois dans le solde", async ({ request }) => {
+  test("Idempotence — annuler deux fois le même paiement ne le recompte jamais deux fois dans le solde", async () => {
     const { factureId, devise } = await factureEnvoyeeDeTest("2029-04", 1000);
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
 
     const paiement = await (
       await request.post(`/api/factures/${factureId}/paiements`, { data: { montant: 400, devise, reference: `REF-${Date.now()}`, methode: "Virement" } })
@@ -158,9 +170,9 @@ test.describe("V2.2-D — Annulation de paiement (delta réel : ANNULE jamais at
     expect(enBase!.statut).toBe("ENVOYEE"); // pas de double annulation qui déraillerait le calcul
   });
 
-  test("Concurrence — deux annulations simultanées du même paiement ne corrompent jamais le solde", async ({ request }) => {
+  test("Concurrence — deux annulations simultanées du même paiement ne corrompent jamais le solde", async () => {
     const { factureId, devise } = await factureEnvoyeeDeTest("2029-05", 1000);
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
 
     const paiement = await (
       await request.post(`/api/factures/${factureId}/paiements`, { data: { montant: 600, devise, reference: `REF-${Date.now()}`, methode: "Virement" } })
@@ -181,24 +193,24 @@ test.describe("V2.2-D — Annulation de paiement (delta réel : ANNULE jamais at
     expect(enBase!.statut).toBe("ENVOYEE");
   });
 
-  test("RBAC — jamais le Client ni l'Ingénieur ne peuvent annuler un paiement", async ({ request }) => {
+  test("RBAC — jamais le Client ni l'Ingénieur ne peuvent annuler un paiement", async () => {
     const { factureId, devise } = await factureEnvoyeeDeTest("2029-06", 1000);
     const paiement = await prisma.paiement.create({
       data: { factureId, montant: 400, devise, datePaiement: new Date(), reference: `REF-${Date.now()}`, methode: "Virement", statut: "CONFIRME" },
     });
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     expect((await request.patch(`/api/factures/${factureId}/paiements/${paiement.id}`, { data: {} })).status()).toBe(403);
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     expect((await request.patch(`/api/factures/${factureId}/paiements/${paiement.id}`, { data: {} })).status()).toBe(403);
 
     expect((await prisma.paiement.findUnique({ where: { id: paiement.id } }))!.statut).toBe("CONFIRME");
   });
 
-  test("un paiement inexistant, ou n'appartenant pas à la Facture désignée dans l'URL, -> 404", async ({ request }) => {
+  test("un paiement inexistant, ou n'appartenant pas à la Facture désignée dans l'URL, -> 404", async () => {
     const factureA = await factureEnvoyeeDeTest("2029-07", 1000);
     const factureB = await factureEnvoyeeDeTest("2029-08", 1000);
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const paiementA = await (
       await request.post(`/api/factures/${factureA.factureId}/paiements`, { data: { montant: 400, devise: factureA.devise, reference: `REF-${Date.now()}`, methode: "Virement" } })
     ).json();
@@ -209,17 +221,17 @@ test.describe("V2.2-D — Annulation de paiement (delta réel : ANNULE jamais at
 });
 
 test.describe("V2.2-D — Frontières monétaires (mandat CEO section 21)", () => {
-  test("paiement exact du montantTTC -> PAYEE, solde = 0", async ({ request }) => {
+  test("paiement exact du montantTTC -> PAYEE, solde = 0", async () => {
     const { factureId, montantTTC, devise } = await factureEnvoyeeDeTest("2029-09", 1000);
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const reponse = await request.post(`/api/factures/${factureId}/paiements`, { data: { montant: montantTTC, devise, reference: `REF-${Date.now()}`, methode: "Virement" } });
     expect(reponse.status()).toBe(201);
     expect((await prisma.facture.findUnique({ where: { id: factureId } }))!.statut).toBe("PAYEE");
   });
 
-  test("paiement de montantTTC - 0.01 -> PARTIELLEMENT_PAYEE, solde = 0.01 exactement", async ({ request }) => {
+  test("paiement de montantTTC - 0.01 -> PARTIELLEMENT_PAYEE, solde = 0.01 exactement", async () => {
     const { factureId, montantTTC, devise } = await factureEnvoyeeDeTest("2029-10", 1000);
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const reponse = await request.post(`/api/factures/${factureId}/paiements`, { data: { montant: montantTTC - 0.01, devise, reference: `REF-${Date.now()}`, methode: "Virement" } });
     expect(reponse.status()).toBe(201);
     const enBase = await prisma.facture.findUnique({ where: { id: factureId }, include: { paiements: true } });
@@ -228,17 +240,17 @@ test.describe("V2.2-D — Frontières monétaires (mandat CEO section 21)", () =
     expect(Number((enBase!.montantTTC.toNumber() - paye).toFixed(2))).toBe(0.01);
   });
 
-  test("paiement de montantTTC + 0.01 -> refusé (409), jamais accepté puis clampé", async ({ request }) => {
+  test("paiement de montantTTC + 0.01 -> refusé (409), jamais accepté puis clampé", async () => {
     const { factureId, montantTTC, devise } = await factureEnvoyeeDeTest("2029-11", 1000);
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const reponse = await request.post(`/api/factures/${factureId}/paiements`, { data: { montant: montantTTC + 0.01, devise, reference: `REF-${Date.now()}`, methode: "Virement" } });
     expect(reponse.status()).toBe(409);
     expect((await prisma.facture.findUnique({ where: { id: factureId } }))!.statut).toBe("ENVOYEE");
   });
 
-  test("paiement de 0.01 (plus petit montant valide) -> accepté, solde décrémenté exactement", async ({ request }) => {
+  test("paiement de 0.01 (plus petit montant valide) -> accepté, solde décrémenté exactement", async () => {
     const { factureId, montantTTC, devise } = await factureEnvoyeeDeTest("2029-12", 1000);
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const reponse = await request.post(`/api/factures/${factureId}/paiements`, { data: { montant: 0.01, devise, reference: `REF-${Date.now()}`, methode: "Virement" } });
     expect(reponse.status()).toBe(201);
     const enBase = await prisma.facture.findUnique({ where: { id: factureId }, include: { paiements: true } });
@@ -246,17 +258,17 @@ test.describe("V2.2-D — Frontières monétaires (mandat CEO section 21)", () =
     expect(Number((montantTTC - paye).toFixed(2))).toBe(999.99);
   });
 
-  test("paiement de 0 -> refusé (montant invalide), jamais enregistré", async ({ request }) => {
+  test("paiement de 0 -> refusé (montant invalide), jamais enregistré", async () => {
     const { factureId, devise } = await factureEnvoyeeDeTest("2030-01", 1000);
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const reponse = await request.post(`/api/factures/${factureId}/paiements`, { data: { montant: 0, devise, reference: `REF-${Date.now()}`, methode: "Virement" } });
     expect(reponse.status()).toBe(409);
     expect(await prisma.paiement.count({ where: { factureId } })).toBe(0);
   });
 
-  test("montants non ronds (10.005, 1000000.99) — jamais de dérive flottante sur le solde stocké", async ({ request }) => {
+  test("montants non ronds (10.005, 1000000.99) — jamais de dérive flottante sur le solde stocké", async () => {
     const { factureId, montantTTC, devise } = await factureEnvoyeeDeTest("2030-02", 1000000.99);
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const reponse = await request.post(`/api/factures/${factureId}/paiements`, { data: { montant: 10.01, devise, reference: `REF-${Date.now()}`, methode: "Virement" } });
     expect(reponse.status()).toBe(201);
     const enBase = await prisma.facture.findUnique({ where: { id: factureId }, include: { paiements: true } });
@@ -266,9 +278,9 @@ test.describe("V2.2-D — Frontières monétaires (mandat CEO section 21)", () =
 });
 
 test.describe("V2.2-D — Concurrence : paiements complémentaires (mandat CEO section 9)", () => {
-  test("deux paiements concurrents dont la somme égale exactement le montantTTC -> tous deux acceptés, PAYEE, solde = 0 (jamais 1000+400 ni un rejet)", async ({ request }) => {
+  test("deux paiements concurrents dont la somme égale exactement le montantTTC -> tous deux acceptés, PAYEE, solde = 0 (jamais 1000+400 ni un rejet)", async () => {
     const { factureId, devise } = await factureEnvoyeeDeTest("2030-03", 1000);
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
 
     const [a, b] = await Promise.all([
       request.post(`/api/factures/${factureId}/paiements`, { data: { montant: 600, devise, reference: `REF-A-${Date.now()}`, methode: "Virement" } }),
@@ -286,16 +298,16 @@ test.describe("V2.2-D — Concurrence : paiements complémentaires (mandat CEO s
 });
 
 test.describe("V2.2-D — Invariants financiers formalisés (mandat CEO section 20)", () => {
-  test("devise du paiement != devise de la Facture -> toujours refusé, jamais une conversion implicite", async ({ request }) => {
+  test("devise du paiement != devise de la Facture -> toujours refusé, jamais une conversion implicite", async () => {
     const { factureId } = await factureEnvoyeeDeTest("2030-04", 1000, "EUR");
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const reponse = await request.post(`/api/factures/${factureId}/paiements`, { data: { montant: 500, devise: "USD", reference: `REF-${Date.now()}`, methode: "Virement" } });
     expect(reponse.status()).toBe(409);
   });
 
-  test("PAYEE <-> solde = 0 : vrai dans les deux sens, y compris après une annulation partielle qui repasse sous TTC", async ({ request }) => {
+  test("PAYEE <-> solde = 0 : vrai dans les deux sens, y compris après une annulation partielle qui repasse sous TTC", async () => {
     const { factureId, devise } = await factureEnvoyeeDeTest("2030-05", 1000);
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const p1 = await (await request.post(`/api/factures/${factureId}/paiements`, { data: { montant: 1000, devise, reference: `REF-A-${Date.now()}`, methode: "Virement" } })).json();
     let enBase = await prisma.facture.findUnique({ where: { id: factureId }, include: { paiements: true } });
     expect(enBase!.statut).toBe("PAYEE");
@@ -309,9 +321,9 @@ test.describe("V2.2-D — Invariants financiers formalisés (mandat CEO section 
     expect(solde2).not.toBe(0);
   });
 
-  test("aucun paiement ANNULE n'est jamais compté dans le total payé, quel que soit le nombre de paiements", async ({ request }) => {
+  test("aucun paiement ANNULE n'est jamais compté dans le total payé, quel que soit le nombre de paiements", async () => {
     const { factureId, devise } = await factureEnvoyeeDeTest("2030-06", 1000);
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const p1 = await (await request.post(`/api/factures/${factureId}/paiements`, { data: { montant: 300, devise, reference: `REF-A-${Date.now()}`, methode: "Virement" } })).json();
     await request.post(`/api/factures/${factureId}/paiements`, { data: { montant: 200, devise, reference: `REF-B-${Date.now()}`, methode: "Virement" } });
     await request.patch(`/api/factures/${factureId}/paiements/${p1.paiement.id}`, { data: {} });
@@ -322,9 +334,9 @@ test.describe("V2.2-D — Invariants financiers formalisés (mandat CEO section 
     expect(enBase!.paiements).toHaveLength(2); // historique complet conservé, rien supprimé
   });
 
-  test("historique immuable — un paiement annulé reste lisible avec son montant/référence d'origine intacts", async ({ request }) => {
+  test("historique immuable — un paiement annulé reste lisible avec son montant/référence d'origine intacts", async () => {
     const { factureId, devise } = await factureEnvoyeeDeTest("2030-07", 1000);
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const reference = `REF-IMMUABLE-${Date.now()}`;
     const p1 = await (await request.post(`/api/factures/${factureId}/paiements`, { data: { montant: 250, devise, reference, methode: "Chèque" } })).json();
     await request.patch(`/api/factures/${factureId}/paiements/${p1.paiement.id}`, { data: {} });
@@ -338,7 +350,7 @@ test.describe("V2.2-D — Invariants financiers formalisés (mandat CEO section 
 });
 
 test.describe("V2.2-D — Sécurité (mandat CEO section 19)", () => {
-  test("IDOR — le Client A ne peut jamais annuler un paiement d'une Facture du Client B (403, RBAC avant ownership)", async ({ request }) => {
+  test("IDOR — le Client A ne peut jamais annuler un paiement d'une Facture du Client B (403, RBAC avant ownership)", async () => {
     const clientB = await creerClientDeTest(`${Date.now()}-annulation`);
     try {
       const { factureId, devise } = await factureEnvoyeeDeTest("2030-08", 1000);
@@ -347,7 +359,7 @@ test.describe("V2.2-D — Sécurité (mandat CEO section 19)", () => {
         data: { factureId, montant: 400, devise, datePaiement: new Date(), reference: `REF-${Date.now()}`, methode: "Virement", statut: "CONFIRME" },
       });
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const reponse = await request.patch(`/api/factures/${factureId}/paiements/${paiement.id}`, { data: {} });
       expect(reponse.status()).toBe(403);
     } finally {

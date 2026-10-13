@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { StatutMission } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
@@ -18,9 +19,20 @@ import { prisma } from "@/lib/prisma";
 // A28 §2) — uniquement des appels aux routes/services déjà validés par
 // A6.1/A8/A18/A20-A27, assemblés pour prouver l'intégration réelle.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function clientDemo() {
@@ -81,7 +93,7 @@ type CreationMissionParams = {
 };
 
 async function creerMissionViaApi(request: APIRequestContext, params: CreationMissionParams) {
-  await connecter(request, "admin-demo@example.com");
+  request = await connecter("ADMIN");
   const reponse = await request.post("/api/missions", {
     data: {
       clientId: params.clientId,
@@ -158,7 +170,7 @@ async function patchTransition(request: APIRequestContext, missionId: string, da
 // manipulation directe de la DB qui contournerait la logique applicative) :
 // PATCH titre sur une version VALIDATED, en tant que CLIENT.
 async function forkNeed(request: APIRequestContext, needId: string) {
-  await connecter(request, "client-demo@example.com");
+  request = await connecter("CLIENT");
   const patch = await request.patch(`/api/client/besoins/${needId}`, { data: { titre: `Titre modifié A28 ${Date.now()}` } });
   expect(patch.status(), await patch.text()).toBe(200);
   const rechargee = await prisma.clientNeed.findUnique({ where: { id: needId } });
@@ -173,7 +185,7 @@ async function forkNeed(request: APIRequestContext, needId: string) {
 // (contrat A22 §8) — "rendre_prete"/"demarrer" ne s'appliqueraient qu'à une
 // Mission PLANIFIEE, jamais atteignable depuis cette route.
 async function amenerMissionATerminee(request: APIRequestContext, missionId: string) {
-  await connecter(request, "admin-demo@example.com");
+  request = await connecter("ADMIN");
   const versTerminee = await patchTransition(request, missionId, { action: "terminer" });
   expect(versTerminee.status(), await versTerminee.text()).toBe(200);
 }
@@ -212,7 +224,7 @@ test.describe("A28 — Chaîne canonique (Need -> Mission -> ... -> Outcome)", (
 
     // Capability derivation (A8) — dérive CapabilityRequirement depuis le
     // fait COMPETENCE de Need V1 (session CLIENT, lecture déclenchante).
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const capa = await request.get(`/api/client/besoins/${needV1.id}/capabilities`);
     expect(capa.status(), await capa.text()).toBe(200);
     const corpsCapa = await capa.json();
@@ -223,7 +235,7 @@ test.describe("A28 — Chaîne canonique (Need -> Mission -> ... -> Outcome)", (
     // MissionCapabilityLink MC1 — lie M1 à la CapabilityRequirement dérivée
     // de SA PROPRE version de Need (cohérence de version vérifiée par le
     // service, contrat A21 §6).
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const lienCapacite = await postCapabilityLink(request, mission.id, { capabilityRequirementId: capabilityRequirement.id });
     expect(lienCapacite.status(), await lienCapacite.text()).toBe(201);
     const mc1 = await lienCapacite.json();
@@ -528,12 +540,12 @@ test.describe("A28 — Lifecycle (TERMINEE/ANNULEE : freeze du travail, jamais d
   // fonctionne bien via le VRAI moteur de transition une fois dans cet
   // état, avec ses VRAIES préconditions (Assignment ACTIF pour
   // "rendre_prete", responsable principal ACTIF pour "demarrer").
-  test("PLANIFIEE -> PRETE -> EN_COURS avec préconditions Assignment réelles", async ({ request }) => {
+  test("PLANIFIEE -> PRETE -> EN_COURS avec préconditions Assignment réelles", async () => {
     const client = await clientDemo();
     const profilId = await profilIngenieurDemo();
     const mission = await creerMissionDirect("PLANIFIEE", client.id, profilId);
 
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const sansAssignment = await patchTransition(request, mission.id, { action: "rendre_prete" });
     expect(sansAssignment.status()).toBe(409);
 
@@ -554,7 +566,7 @@ test.describe("A28 — Lifecycle (TERMINEE/ANNULEE : freeze du travail, jamais d
     const profilId = await profilIngenieurDemo();
     const mission = await creerMissionViaApi(request, { clientId: client.id, profilId });
     const dl1 = await (await postDeliverable(request, mission.id, { titre: "Document", natureContenu: "DOCUMENT" })).json();
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     if (statutFinal === "TERMINEE") {
       await amenerMissionATerminee(request, mission.id);
     } else {
@@ -644,12 +656,12 @@ test.describe("A28 — Cross-context (Mission/Need/Deliverable étrangers)", () 
     const mission = await creerMissionViaApi(request, { clientId: client.id, profilId, needVersionId: needV1.id });
 
     const needV2Id = await forkNeed(request, needV1.id);
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const capaV2 = await request.get(`/api/client/besoins/${needV2Id}/capabilities`);
     expect(capaV2.status(), await capaV2.text()).toBe(200);
     const capabilityV2 = (await capaV2.json()).capabilities[0];
 
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const lien = await postCapabilityLink(request, mission.id, { capabilityRequirementId: capabilityV2.id });
     expect(lien.status()).toBe(409);
   });
@@ -680,7 +692,7 @@ test.describe("A28 — RBAC cross-engine", () => {
     const mission = await creerMissionViaApi(request, { clientId: client.id, profilId });
     const dl1 = await (await postDeliverable(request, mission.id, { titre: "Document", natureContenu: "DOCUMENT" })).json();
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     const creationQuality = await postQuality(request, mission.id, { deliverableVersionId: dl1.versions[0].id, criteresEvalues: "x", resultat: "PASS" });
     expect(creationQuality.status(), await creationQuality.text()).toBe(201);
     const q1 = await creationQuality.json();
@@ -705,7 +717,7 @@ test.describe("A28 — RBAC cross-engine", () => {
     const dl1 = await (await postDeliverable(request, mission.id, { titre: "Document", natureContenu: "DOCUMENT" })).json();
     const q1 = await (await postQuality(request, mission.id, { deliverableVersionId: dl1.versions[0].id, criteresEvalues: "x", resultat: "PASS" })).json();
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     expect((await patchQuality(request, mission.id, q1.id, { action: "finaliser" })).status()).toBe(403);
     expect((await postOutcome(request, mission.id, { verdicts: [] })).status()).toBe(403);
     expect((await patchTransition(request, mission.id, { action: "annuler", motif: "x" })).status()).toBe(403);
@@ -723,7 +735,7 @@ test.describe("A28 — RBAC cross-engine", () => {
     const needV1 = await creerNeedAvecFaits(client.id, [{ cle: "CRITERE_REUSSITE", valeur: "Critère Admin" }]);
     const mission = await creerMissionViaApi(request, { clientId: client.id, profilId, needVersionId: needV1.id });
 
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const assignment = await (await postAssignment(request, mission.id, { talentId: profilId, role: "RESPONSABLE_PRINCIPAL", dateDebut: new Date().toISOString(), estResponsablePrincipal: true })).json();
     expect((await postCapabilityLink(request, mission.id, { capability: "Capacité manuelle Admin" })).status()).toBe(201);
     const dl1 = await (await postDeliverable(request, mission.id, { titre: "Document", natureContenu: "DOCUMENT" })).json();
@@ -761,11 +773,11 @@ test.describe("A28 — Immutabilité cross-engine", () => {
     const needV1 = await creerNeedAvecFaits(client.id, [{ cle: "COMPETENCE", valeur: "Rust intermédiaire" }]);
     const mission = await creerMissionViaApi(request, { clientId: client.id, profilId, needVersionId: needV1.id });
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const capa = await (await request.get(`/api/client/besoins/${needV1.id}/capabilities`)).json();
     const capabilityRequirement = capa.capabilities[0];
 
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const lien = await (await postCapabilityLink(request, mission.id, { capabilityRequirementId: capabilityRequirement.id })).json();
     expect(lien.capability).toBe("Rust intermédiaire");
 

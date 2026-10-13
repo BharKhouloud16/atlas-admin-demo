@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { StatutMission } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
@@ -23,9 +24,20 @@ import { prisma } from "@/lib/prisma";
 // courant" par Mission (contrat A29 §35) — supersedesId reste
 // explicite, jamais auto-détecté.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function clientDemo() {
@@ -74,7 +86,7 @@ async function patchFinancialResult(request: APIRequestContext, missionId: strin
 }
 
 async function creerResultatViaApi(request: APIRequestContext, missionId: string, overrides: Record<string, unknown> = {}) {
-  await connecter(request, "admin-demo@example.com");
+  request = await connecter("ADMIN");
   const reponse = await postFinancialResult(request, missionId, {
     revenueAmount: 16000,
     revenueProvenance: "DECLARE",
@@ -89,8 +101,8 @@ async function creerResultatViaApi(request: APIRequestContext, missionId: string
 }
 
 test.describe("A29 — Modèle", () => {
-  test("1/2. création valide -> 201, Mission correcte", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("1/2. création valide -> 201, Mission correcte", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const reponse = await postFinancialResult(request, mission.id, {
       revenueAmount: 16000,
@@ -106,8 +118,8 @@ test.describe("A29 — Modèle", () => {
     expect(corps.statut).toBe("DRAFT");
   });
 
-  test("3. montant monétaire correct (Decimal, 2 décimales)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("3. montant monétaire correct (Decimal, 2 décimales)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const reponse = await postFinancialResult(request, mission.id, {
       revenueAmount: 16000.456,
@@ -119,8 +131,8 @@ test.describe("A29 — Modèle", () => {
     expect(Number(corps.revenueAmount)).toBe(16000.46);
   });
 
-  test("4. devise correcte (snapshot depuis Mission.deviseVente si non fournie)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("4. devise correcte (snapshot depuis Mission.deviseVente si non fournie)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission(StatutMission.EN_COURS, { deviseVente: "USD" });
     const reponse = await postFinancialResult(request, mission.id, {});
     expect(reponse.status(), await reponse.text()).toBe(201);
@@ -142,24 +154,24 @@ test.describe("A29 — Modèle", () => {
 });
 
 test.describe("A29 — Revenue", () => {
-  test("7. revenue connu -> stocké tel quel", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("7. revenue connu -> stocké tel quel", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const reponse = await postFinancialResult(request, mission.id, { revenueAmount: 16000, revenueProvenance: "DECLARE", revenueJustification: "x" });
     expect(reponse.status(), await reponse.text()).toBe(201);
     expect(Number((await reponse.json()).revenueAmount)).toBe(16000);
   });
 
-  test("8. revenue inconnu (absent) -> null, jamais 0", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("8. revenue inconnu (absent) -> null, jamais 0", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const reponse = await postFinancialResult(request, mission.id, {});
     expect(reponse.status(), await reponse.text()).toBe(201);
     expect((await reponse.json()).revenueAmount).toBeNull();
   });
 
-  test("9. revenue = 0 déclaré explicitement -> 0 connu, distinct d'inconnu", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("9. revenue = 0 déclaré explicitement -> 0 connu, distinct d'inconnu", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const reponse = await postFinancialResult(request, mission.id, { revenueAmount: 0, revenueProvenance: "DECLARE", revenueJustification: "Mission annulée avant toute facturation." });
     expect(reponse.status(), await reponse.text()).toBe(201);
@@ -170,32 +182,32 @@ test.describe("A29 — Revenue", () => {
 });
 
 test.describe("A29 — Cost", () => {
-  test("10. cost connu -> stocké tel quel", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("10. cost connu -> stocké tel quel", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const reponse = await postFinancialResult(request, mission.id, { costAmount: 11200, costProvenance: "DECLARE", costJustification: "x" });
     expect(reponse.status(), await reponse.text()).toBe(201);
     expect(Number((await reponse.json()).costAmount)).toBe(11200);
   });
 
-  test("11. cost inconnu (absent) -> null, jamais 0", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("11. cost inconnu (absent) -> null, jamais 0", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const reponse = await postFinancialResult(request, mission.id, { revenueAmount: 16000, revenueProvenance: "DECLARE", revenueJustification: "x" });
     expect(reponse.status(), await reponse.text()).toBe(201);
     expect((await reponse.json()).costAmount).toBeNull();
   });
 
-  test("12. cost = 0 déclaré explicitement -> 0 connu", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("12. cost = 0 déclaré explicitement -> 0 connu", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const reponse = await postFinancialResult(request, mission.id, { costAmount: 0, costProvenance: "DECLARE", costJustification: "Aucun coût engagé." });
     expect(reponse.status(), await reponse.text()).toBe(201);
     expect(Number((await reponse.json()).costAmount)).toBe(0);
   });
 
-  test("16/46. TEST CRITIQUE DE NON-INVENTION : revenue connu + cost inconnu -> Profit NOT_DETERMINABLE, JAMAIS profit=revenue", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("16/46. TEST CRITIQUE DE NON-INVENTION : revenue connu + cost inconnu -> Profit NOT_DETERMINABLE, JAMAIS profit=revenue", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const reponse = await postFinancialResult(request, mission.id, { revenueAmount: 16000, revenueProvenance: "DECLARE", revenueJustification: "x" });
     expect(reponse.status(), await reponse.text()).toBe(201);
@@ -233,8 +245,8 @@ test.describe("A29 — Margin", () => {
     expect(Number(corps.marginPct)).toBeCloseTo(0.3, 4);
   });
 
-  test("18/19. revenue = 0 connu -> margin NOT_DETERMINABLE (division par zéro jamais calculée, jamais NaN/Infinity)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("18/19. revenue = 0 connu -> margin NOT_DETERMINABLE (division par zéro jamais calculée, jamais NaN/Infinity)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const reponse = await postFinancialResult(request, mission.id, {
       revenueAmount: 0,
@@ -273,15 +285,15 @@ test.describe("A29 — Provenance", () => {
     expect(corps.revenueProvenance).toBe("VERIFIE");
   });
 
-  test("23. montant sans provenance -> 400, jamais stocké sans savoir d'où il vient", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("23. montant sans provenance -> 400, jamais stocké sans savoir d'où il vient", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const reponse = await postFinancialResult(request, mission.id, { revenueAmount: 16000 });
     expect(reponse.status()).toBe(400);
   });
 
-  test("24. montant avec provenance mais sans justification -> 400, calcul explicable exigé", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("24. montant avec provenance mais sans justification -> 400, calcul explicable exigé", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
     const reponse = await postFinancialResult(request, mission.id, { revenueAmount: 16000, revenueProvenance: "DECLARE" });
     expect(reponse.status()).toBe(400);
@@ -305,13 +317,13 @@ test.describe("A29 — Snapshot", () => {
     expect(missionApres?.margeCible).toBe(0.5);
   });
 
-  test("47. CIBLE COMMERCIALE != RÉALISÉ : sans déclaration Admin, aucun Financial Result n'est auto-calculé depuis tjmVente*nbJours", async ({ request }) => {
+  test("47. CIBLE COMMERCIALE != RÉALISÉ : sans déclaration Admin, aucun Financial Result n'est auto-calculé depuis tjmVente*nbJours", async () => {
     // Mission.tjmVente=800 * nbJours=20 = 16000 (la CIBLE commerciale) —
     // une création sans revenueAmount/costAmount explicites ne doit
     // JAMAIS produire ce montant par magie : elle reste null/
     // NOT_DETERMINABLE, jamais 16000.
     const mission = await creerMission(StatutMission.EN_COURS, { tjmVente: 800, nbJours: 20, margeCible: 0.3 });
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const sansDeclaration = await postFinancialResult(request, mission.id, {});
     expect(sansDeclaration.status(), await sansDeclaration.text()).toBe(201);
     const corpsSansDeclaration = await sansDeclaration.json();
@@ -447,7 +459,7 @@ test.describe("A29 — RBAC", () => {
     const mission = await creerMission();
     const corps = await creerResultatViaApi(request, mission.id);
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     expect((await postFinancialResult(request, mission.id, { revenueAmount: 1, revenueProvenance: "DECLARE", revenueJustification: "x" })).status()).toBe(403);
     expect((await getFinancialResult(request, mission.id, corps.id)).status()).toBe(403);
     expect((await patchFinancialResult(request, mission.id, corps.id, { action: "finaliser" })).status()).toBe(403);
@@ -457,7 +469,7 @@ test.describe("A29 — RBAC", () => {
     const mission = await creerMission();
     const corps = await creerResultatViaApi(request, mission.id);
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     expect((await postFinancialResult(request, mission.id, { revenueAmount: 1, revenueProvenance: "DECLARE", revenueJustification: "x" })).status()).toBe(403);
     expect((await getFinancialResult(request, mission.id, corps.id)).status()).toBe(403);
     expect((await patchFinancialResult(request, mission.id, corps.id, { action: "finaliser" })).status()).toBe(403);
@@ -474,8 +486,8 @@ test.describe("A29 — IDOR", () => {
     expect(reponse.status()).toBe(404);
   });
 
-  test("42. Mission introuvable -> 404", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("42. Mission introuvable -> 404", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await postFinancialResult(request, "mission-inexistante-123", { revenueAmount: 1, revenueProvenance: "DECLARE", revenueJustification: "x" });
     expect(reponse.status()).toBe(404);
   });
@@ -485,7 +497,7 @@ test.describe("A29 — IDOR", () => {
     const missionB = await creerMission();
     const corpsB = await creerResultatViaApi(request, missionB.id);
 
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const reponse = await postFinancialResult(request, missionA.id, { supersedesId: corpsB.id });
     expect(reponse.status()).toBe(404);
   });
@@ -507,8 +519,8 @@ test.describe("A29 — Concurrence", () => {
     expect(rechargee?.statut).toBe("FINALIZED");
   });
 
-  test("44. double création simultanée sur la même Mission -> toutes deux autorisées (aucun invariant croisé, contrat A29 §35)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("44. double création simultanée sur la même Mission -> toutes deux autorisées (aucun invariant croisé, contrat A29 §35)", async () => {
+    let request = await connecter("ADMIN");
     const mission = await creerMission();
 
     const [r1, r2] = await Promise.all([

@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { StatutMission } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { contientAffirmationCausaleNonJustifiee, determinerType, determinerConfidence, compterFaitsVerifies } from "@/lib/learning-loop/classification";
@@ -18,9 +19,20 @@ import { resoudreAiProvider } from "@/lib/ai/provider";
 // tests/api/a32-agentic-runtime.spec.ts pour Mission) — pas de duplication
 // de la logique de service A26/A27/A29/A6.1, non modifiée par ce lot.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function idAgentAtlasTalent(request: APIRequestContext): Promise<string> {
@@ -171,7 +183,7 @@ function getSteps(request: APIRequestContext, runId: string) {
 }
 
 async function creerRunLearningViaApi(request: APIRequestContext, missionId: string, overrides: Record<string, unknown> = {}) {
-  await connecter(request, "admin-demo@example.com");
+  request = await connecter("ADMIN");
   const agentId = await idAgentAtlasTalent(request);
   const reponse = await postRun(request, {
     loopType: "LEARNING",
@@ -464,13 +476,13 @@ test.describe("A34 — Max iterations", () => {
 });
 
 test.describe("A34 — Context pinning", () => {
-  test("needVersionId incohérent avec la Mission -> 400 (A32 pinning, inchangé)", async ({ request }) => {
+  test("needVersionId incohérent avec la Mission -> 400 (A32 pinning, inchangé)", async () => {
     const mission = await creerMissionTerminee();
     const autreNeed = await prisma.clientNeed.create({
       data: { clientId: (await clientDemo()).id, correlationId: `A34-${SUFFIXE()}`, texteOriginal: "Besoin A34 non lié" },
     });
 
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const agentId = await idAgentAtlasTalent(request);
     const reponse = await postRun(request, {
       loopType: "LEARNING",
@@ -487,8 +499,8 @@ test.describe("A34 — Context pinning", () => {
 });
 
 test.describe("A34 — Préconditions Mission TERMINEE", () => {
-  test("Mission inexistante -> 404", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("Mission inexistante -> 404", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgentAtlasTalent(request);
     const reponse = await postRun(request, {
       loopType: "LEARNING",
@@ -502,9 +514,9 @@ test.describe("A34 — Préconditions Mission TERMINEE", () => {
     expect(reponse.status()).toBe(404);
   });
 
-  test("Mission non TERMINEE (EN_COURS) -> 400", async ({ request }) => {
+  test("Mission non TERMINEE (EN_COURS) -> 400", async () => {
     const mission = await creerMissionTerminee({ statut: StatutMission.EN_COURS });
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const agentId = await idAgentAtlasTalent(request);
     const reponse = await postRun(request, {
       loopType: "LEARNING",
@@ -520,23 +532,23 @@ test.describe("A34 — Préconditions Mission TERMINEE", () => {
 });
 
 test.describe("A34 — IDOR", () => {
-  test("Run introuvable -> 404 uniforme sur steps/execute", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("Run introuvable -> 404 uniforme sur steps/execute", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await executerStepSuivante(request, "run-inexistant-a34");
     expect(reponse.status()).toBe(404);
   });
 
-  test("GET sur un Run introuvable -> 404 uniforme", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("GET sur un Run introuvable -> 404 uniforme", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await getRun(request, "run-inexistant-a34");
     expect(reponse.status()).toBe(404);
   });
 });
 
 test.describe("A34 — RBAC", () => {
-  test("CLIENT -> 403 sur la création d'un Run LEARNING", async ({ request }) => {
+  test("CLIENT -> 403 sur la création d'un Run LEARNING", async () => {
     const mission = await creerMissionTerminee();
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const reponse = await postRun(request, {
       loopType: "LEARNING",
       agentIdentityId: "agent-atlas-talent",
@@ -549,9 +561,9 @@ test.describe("A34 — RBAC", () => {
     expect(reponse.status()).toBe(403);
   });
 
-  test("INGENIEUR -> 403 sur la création d'un Run LEARNING", async ({ request }) => {
+  test("INGENIEUR -> 403 sur la création d'un Run LEARNING", async () => {
     const mission = await creerMissionTerminee();
-    await connecter(request, "ingenieur-demo@example.com");
+    let request = await connecter("INGENIEUR");
     const reponse = await postRun(request, {
       loopType: "LEARNING",
       agentIdentityId: "agent-atlas-talent",
@@ -568,7 +580,7 @@ test.describe("A34 — RBAC", () => {
     const mission = await creerMissionTerminee();
     await creerChaineFactuelle(mission.id);
     const run = await creerRunLearningViaApi(request, mission.id);
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const reponse = await executerStepSuivante(request, run.id);
     expect(reponse.status()).toBe(403);
   });
@@ -576,7 +588,7 @@ test.describe("A34 — RBAC", () => {
 
 test.describe("A34 — Emergency Stop", () => {
   async function activerStopGlobal(request: APIRequestContext) {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const reponse = await request.post("/api/control-plane/emergency-stops", {
       data: { correlationId: `A34-stop-${SUFFIXE()}`, scope: "GLOBAL", reason: "Test A34 Emergency Stop." },
     });
@@ -594,7 +606,7 @@ test.describe("A34 — Emergency Stop", () => {
 
     const stopId = await activerStopGlobal(request);
     try {
-      await connecter(request, "admin-demo@example.com");
+      request = await connecter("ADMIN");
       const demarre = await (await startRun(request, run.id)).json();
       expect(demarre.statut).toBe("FAILED");
       expect(demarre.stopReason).toBe("EMERGENCY_STOP");
