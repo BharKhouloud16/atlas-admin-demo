@@ -425,8 +425,21 @@ async function reserverProchaineStep(runId: string): Promise<{ stepIndex: number
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     } catch (erreur) {
       if (erreur instanceof Prisma.PrismaClientKnownRequestError) {
-        if (erreur.code === "P2034" && tentative < MAX_TENTATIVES - 1) continue;
-        if (erreur.code === "P2002") return null; // stepIndex déjà réservé par un appel concurrent
+        // A32-FIX (diagnostic ATLAS, course concurrente) : une collision P2002
+        // sur @@unique([runId, stepIndex]) est tout aussi récupérable qu'un
+        // P2034 — l'INSERT d'un appelant perdant peut heurter la contrainte
+        // d'unicité avant même qu'un échec de sérialisation ne soit détecté
+        // (le contrôle d'unicité agit au niveau de l'index, au moment de
+        // l'INSERT, indépendamment du mécanisme de détection de conflit
+        // sérialisable). Avant ce correctif, P2002 était traité comme
+        // terminal (return null immédiat) : le perdant abandonnait sans
+        // jamais relire un stepIndex frais, perdant silencieusement son
+        // itération (symptôme observé : [1,2] au lieu de [1,2,3] sous deux
+        // itérations concurrentes). Chaque nouvelle tentative relit
+        // iterationCount dans une transaction entièrement fraîche (jamais de
+        // donnée périmée réutilisée) : aucun risque de doublon introduit.
+        if ((erreur.code === "P2034" || erreur.code === "P2002") && tentative < MAX_TENTATIVES - 1) continue;
+        if (erreur.code === "P2002") return null; // tentatives épuisées : comportement terminal inchangé (aucun créneau confirmé pour cet appelant)
       }
       throw erreur;
     }

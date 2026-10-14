@@ -271,13 +271,29 @@ test.describe("A34 — Confidence", () => {
   test("≥2 Missions comparables (même Client) + source VERIFIED -> confidence HIGH", async () => {
     let request = await connecter("ADMIN");
 
+    // Capability UNIQUE à cette exécution : compterMissionsComparables()
+    // (lib/learning-loop/recurrence.ts) compte TOUTE Mission TERMINEE
+    // partageant ce littéral, sans isolation par test ni par run — un
+    // littéral fixe partagé avec une exécution antérieure (y compris un
+    // retry Playwright de ce même test, qui laisse ses propres Missions en
+    // base) rend le compte non déterministe (constat direct : flakiness
+    // CI run #327, "MEDIUM" reçu au lieu de "HIGH"). Un suffixe unique
+    // élimine structurellement toute pollution croisée, dans les deux sens.
+    const capability = `QA-AUTOMATION-TEST-A34-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
     const client = await clientDemo();
     const missionA = await creerMissionTerminee();
     const missionB = await creerMissionTerminee();
-    await creerLienCapability(missionA.id, "QA-AUTOMATION-TEST-A34");
-    await creerLienCapability(missionB.id, "QA-AUTOMATION-TEST-A34");
-    // Mission comparable (B) doit elle-même porter un signal jugé.
+    const missionC = await creerMissionTerminee();
+    await creerLienCapability(missionA.id, capability);
+    await creerLienCapability(missionB.id, capability);
+    await creerLienCapability(missionC.id, capability);
+    // DEUX Missions comparables (B et C) doivent elles-mêmes porter un
+    // signal jugé : le seuil HIGH exige ≥2 Missions comparables (contrat
+    // A34 §10/§16), jamais une seule — les fournir explicitement ici
+    // retire toute dépendance à un état accumulé implicite.
     await creerOutcome(missionB.id, "OBTENU");
+    await creerOutcome(missionC.id, "OBTENU");
 
     await creerChaineFactuelle(missionA.id, { confianceEvidence: "VERIFIE" });
     await creerOutcome(missionA.id, "OBTENU");
@@ -354,6 +370,13 @@ test.describe("A34 — Contradiction", () => {
   test("Un candidat contredisant un Learning existant est tout de même proposé, trace la contradiction, aucun winner choisi", async () => {
     let request = await connecter("ADMIN");
 
+    // Capability UNIQUE à cette exécution — même raison et même constat
+    // que le test "≥2 Missions comparables... -> confidence HIGH" ci-dessus
+    // (voir son commentaire) : un littéral fixe partagé entre exécutions
+    // rend compterMissionsComparables() non déterministe (flakiness CI
+    // run #327, "LESSON" reçu au lieu de "BEST_PRACTICE").
+    const capability = `PIPELINE-CI-A34-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
     const client = await clientDemo();
     const missionExistante = await creerMissionTerminee();
     // A35.7-FIX (contrat A35 F5) : le contexte comparable exige désormais
@@ -362,7 +385,7 @@ test.describe("A34 — Contradiction", () => {
     // ici pour préserver l'intention originale du test (une contradiction
     // RÉELLEMENT comparable doit toujours être tracée) sous le contrat F5
     // durci.
-    await creerLienCapability(missionExistante.id, "PIPELINE-CI-A34");
+    await creerLienCapability(missionExistante.id, capability);
     const titrePartage = "Pipeline CI QA A34 CONTRADICTION";
     const learningExistant = await prisma.learning.create({
       data: {
@@ -380,9 +403,20 @@ test.describe("A34 — Contradiction", () => {
 
     const missionA = await creerMissionTerminee();
     const missionB = await creerMissionTerminee();
-    await creerLienCapability(missionA.id, "PIPELINE-CI-A34");
-    await creerLienCapability(missionB.id, "PIPELINE-CI-A34");
+    const missionD = await creerMissionTerminee();
+    await creerLienCapability(missionA.id, capability);
+    await creerLienCapability(missionB.id, capability);
+    await creerLienCapability(missionD.id, capability);
     await creerOutcome(missionB.id, "OBTENU");
+    // missionExistante ne porte qu'un Learning manuel, aucun Outcome/
+    // FinancialResult/QualityGate : elle n'est jamais comptée par
+    // compterMissionsComparables() (aucun signal exploitable, voir
+    // recurrence.ts). Seule missionB fournit un vrai comparable — une
+    // deuxième Mission (D) est donc nécessaire ici pour atteindre, de
+    // façon déterministe et sans dépendre d'un état accumulé implicite,
+    // le seuil ≥2 Missions comparables exigé par determinerType() pour
+    // BEST_PRACTICE (contrat A34 §10).
+    await creerOutcome(missionD.id, "OBTENU");
     await creerChaineFactuelle(missionA.id, { contenuEvidence: `Résultat positif observé : ${titrePartage}.` });
     // OUTCOME_ASSESSMENT reste prioritaire sur DELIVERY_EVIDENCE pour la
     // sélection du fait principal (lib/ai/provider.ts) — le mot-clé partagé

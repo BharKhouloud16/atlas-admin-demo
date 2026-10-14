@@ -732,35 +732,47 @@ function FormulaireCreation({ demandeId, entreesEligibles, onCree }: { demandeId
     onCree();
   }
 
-  if (entreesEligibles.length === 0) {
-    return <p style={{ fontSize: 12, color: "#888" }}>Aucune entrée retenue éligible à une nouvelle proposition pour l&apos;instant.</p>;
-  }
-
+  // A36.9-FIX (course erreur/refetch, audit ATLAS) : le refetch déclenché
+  // par onCree() après un échec (409 compris) peut retirer l'entrée
+  // choisie de entreesEligibles (devenue inéligible entre le clic et la
+  // réponse du serveur). Le message d'erreur ne doit JAMAIS dépendre de
+  // ce rendu conditionnel pour rester visible — `erreur` est donc rendu
+  // UNE SEULE FOIS, hors de la branche entreesEligibles.length === 0,
+  // jamais perdu quel que soit l'état de cette liste après le refetch.
+  // setErreur(null) au début de creer() (inchangé) continue de garantir
+  // qu'aucun message obsolète ne survit à une nouvelle tentative ou à une
+  // création réussie.
   return (
     <div style={{ borderTop: `1px solid ${bordure}`, paddingTop: 12 }}>
-      <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600 }}>Créer une proposition</p>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <select
-          aria-label="Candidat retenu éligible"
-          value={candidateFinalDecisionEntreeId}
-          onChange={(e) => setCandidateFinalDecisionEntreeId(e.target.value)}
-          style={{ ...champStyle, width: 260 }}
-        >
-          <option value="">Choisir un candidat retenu…</option>
-          {entreesEligibles.map(({ entree, nomCandidat }) => (
-            <option key={entree.id} value={entree.id}>
-              {nomCandidat}
-            </option>
-          ))}
-        </select>
-        <button
-          onClick={creer}
-          disabled={creation || !candidateFinalDecisionEntreeId}
-          style={{ fontSize: 13, padding: "8px 16px", background: bleu, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
-        >
-          {creation ? "Création…" : "Créer (brouillon)"}
-        </button>
-      </div>
+      {entreesEligibles.length === 0 ? (
+        <p style={{ fontSize: 12, color: "#888" }}>Aucune entrée retenue éligible à une nouvelle proposition pour l&apos;instant.</p>
+      ) : (
+        <>
+          <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600 }}>Créer une proposition</p>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <select
+              aria-label="Candidat retenu éligible"
+              value={candidateFinalDecisionEntreeId}
+              onChange={(e) => setCandidateFinalDecisionEntreeId(e.target.value)}
+              style={{ ...champStyle, width: 260 }}
+            >
+              <option value="">Choisir un candidat retenu…</option>
+              {entreesEligibles.map(({ entree, nomCandidat }) => (
+                <option key={entree.id} value={entree.id}>
+                  {nomCandidat}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={creer}
+              disabled={creation || !candidateFinalDecisionEntreeId}
+              style={{ fontSize: 13, padding: "8px 16px", background: bleu, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
+            >
+              {creation ? "Création…" : "Créer (brouillon)"}
+            </button>
+          </div>
+        </>
+      )}
       {erreur && <p style={{ color: rouge, fontSize: 13, margin: "8px 0 0" }}>{erreur}</p>}
     </div>
   );

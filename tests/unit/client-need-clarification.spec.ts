@@ -7,7 +7,7 @@ import type { ResultatRegle } from "@/lib/client-need/coherence";
 // faits importants manquants en une liste de clarifications actionnables,
 // priorisées, plafonnées, sans jamais rien inventer.
 
-// Les 6 clés jugées importantes (CLES_IMPORTANTES_SI_ABSENTES, LOT 2) —
+// Les 7 clés jugées importantes (CLES_IMPORTANTES_SI_ABSENTES, LOT 2) —
 // toutes présentes ici pour isoler, dans chaque test, le seul signal
 // réellement testé (contradiction ou clarification) sans qu'un manque
 // non lié à parasite l'assertion.
@@ -18,6 +18,7 @@ const TOUS_LES_IMPORTANTS_PRESENTS: [string, { valeur: string; statut: string }]
   ["LOCALISATION", { valeur: "France", statut: "DECLARE" }],
   ["DISPONIBILITE", { valeur: "Immédiate", statut: "DECLARE" }],
   ["DUREE", { valeur: "6 mois", statut: "DECLARE" }],
+  ["RESULTAT_ATTENDU", { valeur: "Réduire le délai de recrutement de 30%", statut: "DECLARE" }],
 ];
 
 test.describe("COMPANY ATLAS LOT 3 — prioriserClarifications", () => {
@@ -86,7 +87,7 @@ test.describe("COMPANY ATLAS LOT 3 — prioriserClarifications", () => {
   });
 
   test("plafond : jamais plus de 5 clarifications visibles, même si davantage de manques existent", () => {
-    // Aucun des 6 faits importants n'est présent -> 6 manques potentiels,
+    // Aucun des 7 faits importants n'est présent -> 7 manques potentiels,
     // mais jamais plus de 5 affichés (ne jamais poser 20 questions).
     const resultat = prioriserClarifications(new Map(), []);
     expect(resultat.length).toBeLessThanOrEqual(5);

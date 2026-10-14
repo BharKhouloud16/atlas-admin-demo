@@ -120,7 +120,90 @@ test.describe("Admin — Propositions commerciales CandidateProposal (A36.1)", (
     });
 
     await section.getByRole("button", { name: "Créer (brouillon)" }).click();
+
+    // A36.9-FIX (course erreur/refetch) : le refetch déclenché après ce 409
+    // retire bien l'entrée de entreesEligibles (plus aucune entrée éligible
+    // sur cette demande — un seul candidat retenu ici) — le formulaire
+    // bascule donc sur son état "aucune entrée éligible". Le message
+    // d'erreur doit rester visible EN MÊME TEMPS que ce basculement :
+    // avant le correctif, le second rendu (déclenché par le refetch)
+    // effaçait le premier (erreur non rendue dans cette branche), de façon
+    // non déterministe selon le timing exact des deux promesses.
+    await expect(section.getByText("Aucune entrée retenue éligible à une nouvelle proposition pour l'instant.")).toBeVisible();
     await expect(section.getByText(/une proposition active existe déjà pour cette entrée/i)).toBeVisible();
+  });
+
+  test("A36.9-FIX — récupération : après un conflit sur une entrée, une création réussie sur une AUTRE entrée efface l'ancien message d'erreur", async ({
+    page,
+  }) => {
+    // Deux entrées RETENU sur la MÊME demande (un seul CandidateFinalDecision,
+    // deux entrees) — nécessaire pour qu'une entrée reste éligible après
+    // que la première ait été rendue inéligible par le conflit simulé.
+    const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
+    if (!client) throw new Error("Client Démo introuvable (seed prisma/seed.ts).");
+    const s = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+    const demande = await prisma.demandeTalent.create({
+      data: { clientId: client.id, description: `Besoin E2E A36.1 Admin recuperation ${s}` },
+    });
+    const profilA = await prisma.profil.create({ data: { nom: `CandidatA361AdminRecupA${s}`, prenom: "Test", cvValide: true } });
+    const profilB = await prisma.profil.create({ data: { nom: `CandidatA361AdminRecupB${s}`, prenom: "Test", cvValide: true } });
+    const shortlistA = await prisma.shortlistEntree.create({
+      data: { demandeId: demande.id, profilId: profilA.id, score: 80, confiance: 0.9, motifs: [], statut: "VALIDEE" },
+    });
+    const shortlistB = await prisma.shortlistEntree.create({
+      data: { demandeId: demande.id, profilId: profilB.id, score: 75, confiance: 0.85, motifs: [], statut: "VALIDEE" },
+    });
+    const selectionA = await prisma.candidateSelection.create({
+      data: { demandeTalentId: demande.id, shortlistEntreeId: shortlistA.id, selectedByEmail: "client-demo@example.com" },
+    });
+    const selectionB = await prisma.candidateSelection.create({
+      data: { demandeTalentId: demande.id, shortlistEntreeId: shortlistB.id, selectedByEmail: "client-demo@example.com" },
+    });
+    const decision = await prisma.candidateFinalDecision.create({
+      data: {
+        demandeTalentId: demande.id,
+        decideParEmail: "client-demo@example.com",
+        entrees: {
+          create: [
+            { candidateSelectionId: selectionA.id, statut: "RETENU" },
+            { candidateSelectionId: selectionB.id, statut: "RETENU" },
+          ],
+        },
+      },
+      include: { entrees: true },
+    });
+    const entreeA = decision.entrees.find((e) => e.candidateSelectionId === selectionA.id)!;
+    const nomA = `${profilA.prenom} ${profilA.nom}`;
+    const nomB = `${profilB.prenom} ${profilB.nom}`;
+
+    await page.goto(`/admin/talent/${demande.id}`);
+    const section = page.getByRole("heading", { name: "Propositions commerciales" }).locator("xpath=ancestor::div[1]");
+
+    await section.getByLabel("Candidat retenu éligible").selectOption({ label: nomA });
+
+    // Conflit sur l'entrée A uniquement — l'entrée B reste éligible.
+    await prisma.candidateProposal.create({
+      data: {
+        candidateFinalDecisionEntreeId: entreeA.id,
+        demandeTalentId: demande.id,
+        clientId: client.id,
+        statut: "BROUILLON",
+        createdByEmail: "admin-concurrent@example.com",
+      },
+    });
+
+    await section.getByRole("button", { name: "Créer (brouillon)" }).click();
+    await expect(section.getByText(/une proposition active existe déjà pour cette entrée/i)).toBeVisible();
+
+    // Récupération : l'entrée B est toujours proposée (jamais affectée par
+    // le conflit sur A) — une nouvelle création réussie doit effacer
+    // l'ancien message d'erreur, jamais le laisser affiché à tort après un
+    // succès (A36.9-FIX).
+    await section.getByLabel("Candidat retenu éligible").selectOption({ label: nomB });
+    await section.getByRole("button", { name: "Créer (brouillon)" }).click();
+    await expect(section.getByText(/une proposition active existe déjà pour cette entrée/i)).toHaveCount(0);
+    await expect(section.getByText("Pas encore émise (brouillon)")).toBeVisible();
   });
 
   test("émet une proposition brouillon avec un snapshot valide (confirmation explicite requise)", async ({ page }) => {

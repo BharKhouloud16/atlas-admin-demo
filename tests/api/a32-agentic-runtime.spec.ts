@@ -292,6 +292,28 @@ test.describe("A32 — Iterations", () => {
     expect(run.iterationCount).toBe(3);
   });
 
+  test("concurrent iteration (A32-FIX, non-régression) : trois itérations concurrentes avec budget suffisant réussissent toutes les trois sans perte", async () => {
+    // Durcit la couverture du correctif A32-FIX (reserverProchaineStep,
+    // lib/agentic/runtime.ts) au-delà des deux appelants déjà testés
+    // ci-dessus : avec 3 appelants simultanés, le dernier à obtenir son
+    // créneau peut avoir besoin de ses 3 tentatives (MAX_TENTATIVES) pour y
+    // parvenir — exactement la limite garantie par le mécanisme actuel.
+    // Avant le correctif, une collision P2002 abandonnait immédiatement
+    // (aucun retry) : ce test aurait échoué de façon quasi certaine avec
+    // moins de 4 steps créés.
+    let request = await connecter("ADMIN");
+    const corps = await creerRunViaApi(request, { maxIterations: 5 });
+    await startRun(request, corps.id); // itération 1
+
+    await Promise.all([executerIteration(corps.id), executerIteration(corps.id), executerIteration(corps.id)]);
+
+    const steps = await prisma.agenticStep.findMany({ where: { runId: corps.id } });
+    const indices = steps.map((s) => s.stepIndex).sort((a, b) => a - b);
+    expect(indices).toEqual([1, 2, 3, 4]); // aucun doublon (contrainte unique) ni perte (retry)
+    const run = await prisma.agenticRun.findUniqueOrThrow({ where: { id: corps.id } });
+    expect(run.iterationCount).toBe(4);
+  });
+
   test("max iteration race : deux itérations concurrentes pour UN seul créneau restant -> une seule gagne", async () => {
     let request = await connecter("ADMIN");
     const corps = await creerRunViaApi(request, { maxIterations: 2 });

@@ -29,7 +29,7 @@ const ACTIONS_VALIDES = ["READ", "WRITE", "EXECUTE", "PROPOSE", "REPORT", "ANALY
 const SCOPES_VALIDES = ["TALENT", "SECURITY", "COMPANY_OS", "PRINCIPAL"];
 
 test.describe("COMPANY ATLAS B20 — Permission Registry (API)", () => {
-  test("le registre contient exactement les 5 permissions justifiées (2 B20 + 2 PROPOSE B21.1/M1 + 1 WRITE B32-PERM), aucune implicite pour PRINCIPAL ni COMPANY_OS", async ({
+  test("le registre contient exactement les 6 permissions justifiées (2 B20 + 2 PROPOSE B21.1/M1 + 1 WRITE B32-PERM + 1 ANALYZE A34-PERM), aucune implicite pour PRINCIPAL ni COMPANY_OS", async ({
     request,
   }) => {
     request = await connecter("ADMIN");
@@ -38,12 +38,14 @@ test.describe("COMPANY ATLAS B20 — Permission Registry (API)", () => {
     const { permissions } = await reponse.json();
     // B21.1 (M1) a ajouté 2 permissions PROPOSE (ATLAS_TALENT, ATLAS_OS_SERVICES)
     // aux 2 permissions B20 d'origine, puis B32-PERM a ajouté 1 permission
-    // WRITE (ATLAS_TALENT uniquement) — voir prisma/migrations/
-    // 20260913010000_b21_1_strategic_hardening et
-    // 20260915050000_b32_perm_atlas_talent_write_talent. .find() par agentId
+    // WRITE (ATLAS_TALENT uniquement), puis A34-PERM a ajouté 1 permission
+    // ANALYZE (ATLAS_TALENT, scope TALENT, pour le Learning Loop) — voir
+    // prisma/migrations/20260913010000_b21_1_strategic_hardening,
+    // 20260915050000_b32_perm_atlas_talent_write_talent et
+    // 20261006090000_a34_learning_loop_permission. .find() par agentId
     // seul ne suffit plus (un agent peut désormais porter plusieurs
     // permissions) : chaque recherche ci-dessous précise aussi l'action.
-    expect(permissions.length).toBe(5);
+    expect(permissions.length).toBe(6);
 
     const agents = await (await request.get("/api/security/agents")).json();
     const idParAgent: Record<string, string> = {};
@@ -87,6 +89,17 @@ test.describe("COMPANY ATLAS B20 — Permission Registry (API)", () => {
     expect(talentWrite).toBeTruthy();
     expect(talentWrite.scope).toBe("TALENT");
     expect(talentWrite.statut).toBe("ACTIVE");
+
+    // A34-PERM — permission ajoutée pour le Learning Loop
+    // (lib/learning-loop/) : autorise une analyse (jamais une écriture) des
+    // faits métier ATLAS TALENT, sans approbation B22 supplémentaire (voir
+    // prisma/migrations/20261006090000_a34_learning_loop_permission).
+    const talentAnalyzeLearningLoop = permissions.find(
+      (p: { agentId: string; action: string; scope: string }) =>
+        p.agentId === idParAgent["ATLAS_TALENT"] && p.action === "ANALYZE" && p.scope === "TALENT"
+    );
+    expect(talentAnalyzeLearningLoop).toBeTruthy();
+    expect(talentAnalyzeLearningLoop.statut).toBe("ACTIVE");
 
     // Aucune AUTRE permission WRITE nulle part dans le registre — ni pour
     // ATLAS_OS_SERVICES, ni COMPANY_OS, ni PRINCIPAL (directive B32-PERM,

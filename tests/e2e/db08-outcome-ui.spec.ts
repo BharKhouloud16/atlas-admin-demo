@@ -143,7 +143,16 @@ test.describe("Client — consultation en lecture seule de l'Outcome de sa missi
     const carte = page.locator("text=" + mission.repere!).locator("..").locator("..");
     await carte.getByRole("button", { name: /voir le résultat/i }).click();
 
-    await expect(page.getByText("Obtenu", { exact: true })).toBeVisible();
+    // Le statut "Obtenu" est rendu deux fois dans cette vue : une fois pour
+    // le statut global de la mission (MissionOutcomeSection.tsx, bloc
+    // "évalué le ...") et une fois pour le statut du critère individuel
+    // (la Card par critère) — les deux légitimes et corrects dès qu'une
+    // mission n'a qu'un seul critère, lui aussi OBTENU. On scope donc
+    // strictement sur le bloc de statut global (identifié par son texte
+    // voisin stable "évalué le"), même discipline que `blocStatutCourant`
+    // plus haut dans ce fichier pour le panneau Admin.
+    const blocStatutGlobal = page.getByText(/^évalué le/).locator("..");
+    await expect(blocStatutGlobal.getByText("Obtenu", { exact: true })).toBeVisible();
     await expect(page.getByText("Constat ATLAS E2E Client DB08")).toBeVisible();
 
     // Lecture strictement seule : aucun bouton de mutation Outcome n'est
