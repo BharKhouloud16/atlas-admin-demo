@@ -56,5 +56,19 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
   const talentIntelligence = construireTalentIntelligence(candidateIntelligence);
   const talentTrust = construireTalentTrust(candidateIntelligence, talentIntelligence);
 
-  return NextResponse.json({ profilId: profil.id, nom: profil.nom, prenom: profil.prenom, talentTrust });
+  // ATLAS PROFESSIONAL INTELLIGENCE CONSOLE — Phase 2A++ (28/09/2026) :
+  // candidateIntelligence/talentIntelligence étaient déjà calculés ci-dessus
+  // pour produire talentTrust, mais jamais renvoyés — la console Admin
+  // (/admin/profils/[id]) en a besoin pour afficher le détail par compétence
+  // (vérifié/déclaré/inféré, zones inconnues, contradictions). Aucune
+  // requête Prisma ni fonction de calcul supplémentaire : on expose
+  // simplement ce qui existait déjà en mémoire dans ce handler.
+  return NextResponse.json({
+    profilId: profil.id,
+    nom: profil.nom,
+    prenom: profil.prenom,
+    candidateIntelligence,
+    talentIntelligence,
+    talentTrust,
+  });
 }

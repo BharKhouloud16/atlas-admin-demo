@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 
 // COMPANY ATLAS — B18-FIX : registre structuré de rapports inter-agents
 // (RapportAgent, app/api/security/rapports), reconstruit sur AgentIdentity
@@ -10,9 +11,20 @@ import { test, expect, APIRequestContext } from "@playwright/test";
 // non-régression runtime B16/B17 et non-régression B19/B20, absence de
 // secrets.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function idAgent(request: APIRequestContext, nom: string): Promise<string> {
@@ -24,8 +36,8 @@ async function idAgent(request: APIRequestContext, nom: string): Promise<string>
 }
 
 test.describe("COMPANY ATLAS B18-FIX — registre de rapports agents (API)", () => {
-  test("un Admin peut créer un rapport référencé par agentId ; il est relisible par correlationId", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("un Admin peut créer un rapport référencé par agentId ; il est relisible par correlationId", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const correlationId = `b18fix-creation-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
@@ -54,7 +66,7 @@ test.describe("COMPANY ATLAS B18-FIX — registre de rapports agents (API)", () 
   test("chaque rapport créé est associé à un agentId qui existe réellement dans AgentIdentity (jointure vérifiée)", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_OS_SERVICES");
     const correlationId = `b18fix-jointure-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
@@ -72,7 +84,7 @@ test.describe("COMPANY ATLAS B18-FIX — registre de rapports agents (API)", () 
   test("plusieurs rapports liés par le même correlationId sont tous retrouvés (traçabilité transverse, Charte E.3)", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const correlationId = `b18fix-chaine-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const idTalent = await idAgent(request, "ATLAS_TALENT");
     const idSecurity = await idAgent(request, "ATLAS_OS_SERVICES");
@@ -91,8 +103,8 @@ test.describe("COMPANY ATLAS B18-FIX — registre de rapports agents (API)", () 
     expect(idsRecus).toEqual([idTalent, idSecurity].sort());
   });
 
-  test("un champ UNKNOWN explicite (inconnu) est conservé tel quel ; absent, il reste null (Charte E.5)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("un champ UNKNOWN explicite (inconnu) est conservé tel quel ; absent, il reste null (Charte E.5)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "PRINCIPAL");
     const correlationId = `b18fix-unknown-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
@@ -118,8 +130,8 @@ test.describe("COMPANY ATLAS B18-FIX — registre de rapports agents (API)", () 
     expect(sansUnknown.inconnu).toBeNull();
   });
 
-  test("un texte trop long est plafonné plutôt que stocké intégralement", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("un texte trop long est plafonné plutôt que stocké intégralement", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "COMPANY_OS");
     const correlationId = `b18fix-plafond-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const texteLong = "a".repeat(10000);
@@ -133,24 +145,24 @@ test.describe("COMPANY ATLAS B18-FIX — registre de rapports agents (API)", () 
     expect(rapports[0].analyse.length).toBeLessThan(texteLong.length);
   });
 
-  test("validation : un agentId inexistant est rejeté (400), jamais un rapport orphelin créé", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("validation : un agentId inexistant est rejeté (400), jamais un rapport orphelin créé", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.post("/api/security/rapports", {
       data: { agentId: "agent-invente-qui-nexiste-pas", typeRapport: "audit", objectif: "x", statut: "COMPLETE" },
     });
     expect(reponse.status()).toBe(400);
   });
 
-  test("validation : agentId manquant est rejeté (400), jamais un crash serveur", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("validation : agentId manquant est rejeté (400), jamais un crash serveur", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.post("/api/security/rapports", {
       data: { typeRapport: "audit", objectif: "x", statut: "COMPLETE" },
     });
     expect(reponse.status()).toBe(400);
   });
 
-  test("validation : objectif manquant est rejeté (400), jamais un crash serveur", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("validation : objectif manquant est rejeté (400), jamais un crash serveur", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "PRINCIPAL");
     const reponse = await request.post("/api/security/rapports", {
       data: { agentId, typeRapport: "audit", statut: "COMPLETE" },
@@ -158,8 +170,8 @@ test.describe("COMPANY ATLAS B18-FIX — registre de rapports agents (API)", () 
     expect(reponse.status()).toBe(400);
   });
 
-  test("SÉCURITÉ : un CLIENT et un INGENIEUR n'ont jamais accès au registre de rapports (403)", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("SÉCURITÉ : un CLIENT et un INGENIEUR n'ont jamais accès au registre de rapports (403)", async () => {
+    let request = await connecter("CLIENT");
     const refusGet = await request.get("/api/security/rapports");
     expect(refusGet.status()).toBe(403);
     const refusPost = await request.post("/api/security/rapports", {
@@ -167,7 +179,7 @@ test.describe("COMPANY ATLAS B18-FIX — registre de rapports agents (API)", () 
     });
     expect(refusPost.status()).toBe(403);
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     const refusGet2 = await request.get("/api/security/rapports");
     expect(refusGet2.status()).toBe(403);
   });
@@ -175,7 +187,7 @@ test.describe("COMPANY ATLAS B18-FIX — registre de rapports agents (API)", () 
   test("NON-RÉGRESSION : un rapport de gouvernance n'apparaît jamais dans /api/security/runtime ni /api/security/evenements (table séparée d'EvenementSecurite)", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_OS_SERVICES");
     const marqueurUnique = `MARQUEUR-B18FIX-NONREG-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
@@ -198,7 +210,7 @@ test.describe("COMPANY ATLAS B18-FIX — registre de rapports agents (API)", () 
   test("NON-RÉGRESSION B19/B20 : /api/security/agents et /api/security/permissions restent inchangés et fonctionnels", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const agents = await request.get("/api/security/agents");
     expect(agents.ok()).toBeTruthy();
     const { agents: liste } = await agents.json();
@@ -208,13 +220,15 @@ test.describe("COMPANY ATLAS B18-FIX — registre de rapports agents (API)", () 
     expect(permissions.ok()).toBeTruthy();
     const { permissions: listePermissions } = await permissions.json();
     // B21.1 (M1) a ajouté 2 permissions PROPOSE au registre B20 (2 -> 4),
-    // puis B32-PERM a ajouté 1 permission WRITE (4 -> 5) — voir
-    // tests/api/b20-permission-registry.spec.ts pour le détail complet.
-    expect(listePermissions.length).toBe(5);
+    // puis B32-PERM a ajouté 1 permission WRITE (4 -> 5), puis A34-PERM a
+    // ajouté 1 permission ANALYZE pour ATLAS_TALENT/TALENT, au bénéfice du
+    // Learning Loop (5 -> 6) — voir tests/api/b20-permission-registry.spec.ts
+    // pour le détail complet.
+    expect(listePermissions.length).toBe(6);
   });
 
-  test("absence de secrets : aucun champ du modèle n'accepte un identifiant de type mot de passe/token", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("absence de secrets : aucun champ du modèle n'accepte un identifiant de type mot de passe/token", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "PRINCIPAL");
     const correlationId = `b18fix-nosecret-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 

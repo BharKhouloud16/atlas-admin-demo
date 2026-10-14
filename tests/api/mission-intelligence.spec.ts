@@ -1,13 +1,25 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 
 // ATLAS TALENT — Mission Intelligence V1 (Batch 9) — chemin API : RBAC,
 // isolation, absence de crash, déterminisme. LEÇON DES BATCHES 4/5/6/7/8 :
 // ce fichier reste strictement lecture seule — aucune écriture sur le
 // profil "Ingénieur Démo" partagé.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function idProfilIngenieurDemo(request: APIRequestContext): Promise<string> {
@@ -20,8 +32,8 @@ async function idProfilIngenieurDemo(request: APIRequestContext): Promise<string
 }
 
 test.describe("ATLAS TALENT — Mission Intelligence V1 — API", () => {
-  test("32. candidat sans mission : réponse 200, aucun crash, statistiques INSUFFISANTE/null plutôt qu'inventées", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("32. candidat sans mission : réponse 200, aucun crash, statistiques INSUFFISANTE/null plutôt qu'inventées", async () => {
+    let request = await connecter("ADMIN");
     const liste = await request.get("/api/profils");
     const { profils } = await liste.json();
     const profilVide = profils.find((p: { nom: string }) => p.nom === "Nouvel Ingénieur (test)");
@@ -36,8 +48,8 @@ test.describe("ATLAS TALENT — Mission Intelligence V1 — API", () => {
     expect(missionIntelligence.competencesUtilisees).toEqual([]);
   });
 
-  test("33. structure cohérente sur un profil avec historique réel, jamais un crash", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("33. structure cohérente sur un profil avec historique réel, jamais un crash", async () => {
+    let request = await connecter("ADMIN");
     const profilId = await idProfilIngenieurDemo(request);
     const reponse = await request.get(`/api/profils/${profilId}/mission-intelligence`);
     expect(reponse.ok(), await reponse.text()).toBeTruthy();
@@ -49,27 +61,27 @@ test.describe("ATLAS TALENT — Mission Intelligence V1 — API", () => {
     expect(missionIntelligence.avertissement.length).toBeGreaterThan(0);
   });
 
-  test("34. isolation RBAC : Mission Intelligence n'est accessible qu'à l'Admin", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("34. isolation RBAC : Mission Intelligence n'est accessible qu'à l'Admin", async () => {
+    let request = await connecter("ADMIN");
     const profilId = await idProfilIngenieurDemo(request);
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const refusClient = await request.get(`/api/profils/${profilId}/mission-intelligence`);
     expect(refusClient.status()).toBe(403);
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     const refusIngenieur = await request.get(`/api/profils/${profilId}/mission-intelligence`);
     expect(refusIngenieur.status()).toBe(403);
   });
 
-  test("35. profil inexistant : 404, jamais un crash serveur", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("35. profil inexistant : 404, jamais un crash serveur", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/profils/inexistant-xyz/mission-intelligence");
     expect(reponse.status()).toBe(404);
   });
 
-  test("36. déterminisme : deux appels consécutifs renvoient le même résultat", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("36. déterminisme : deux appels consécutifs renvoient le même résultat", async () => {
+    let request = await connecter("ADMIN");
     const profilId = await idProfilIngenieurDemo(request);
     const r1 = await request.get(`/api/profils/${profilId}/mission-intelligence`);
     const r2 = await request.get(`/api/profils/${profilId}/mission-intelligence`);

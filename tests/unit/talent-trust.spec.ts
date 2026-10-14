@@ -57,8 +57,8 @@ test.describe("Talent Trust V2 (lib/talent/talent-trust)", () => {
     profil.paysResidence = "Paris";
     profil.competencesGraph = [{ competence: "Java", statut: "VERIFIE", niveau: 4, confiance: "HAUTE", contexte: null, preuves: [preuve("ADMIN", 10, 4)] }];
     profil.missions = [
-      { statut: "Terminée", nbJours: 20, createdAt: new Date("2025-01-01") },
-      { statut: "Terminée", nbJours: 15, createdAt: new Date("2025-06-01") },
+      { statut: "TERMINEE", nbJours: 20, createdAt: new Date("2025-01-01") },
+      { statut: "TERMINEE", nbJours: 15, createdAt: new Date("2025-06-01") },
     ];
     profil.evaluations = [{ note: 5, createdAt: new Date("2025-06-01") }, { note: 4, createdAt: new Date("2025-12-01") }];
     const t = trust(profil);
@@ -95,11 +95,11 @@ test.describe("Talent Trust V2 (lib/talent/talent-trust)", () => {
 
   test("7. historique de missions : une seule mission terminée -> MOYENNE, aucune terminée -> BASSE (jamais INCONNUE si des missions existent)", () => {
     const profilUne = profilVide("p7a");
-    profilUne.missions = [{ statut: "Terminée", nbJours: 10, createdAt: new Date("2025-01-01") }];
+    profilUne.missions = [{ statut: "TERMINEE", nbJours: 10, createdAt: new Date("2025-01-01") }];
     expect(trust(profilUne).composants.historiqueMissions.niveau).toBe("MOYENNE");
 
     const profilEnCours = profilVide("p7b");
-    profilEnCours.missions = [{ statut: "En cours", nbJours: 10, createdAt: new Date("2026-01-01") }];
+    profilEnCours.missions = [{ statut: "EN_COURS", nbJours: 10, createdAt: new Date("2026-01-01") }];
     expect(trust(profilEnCours).composants.historiqueMissions.niveau).toBe("BASSE");
   });
 

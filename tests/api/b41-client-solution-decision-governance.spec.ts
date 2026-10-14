@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 
 // COMPANY ATLAS — V2.1-E (16/09/2026) : audit/vérification des règles de
@@ -12,9 +13,20 @@ import { prisma } from "@/lib/prisma";
 // complète de chaque décision, et absence STRUCTURELLE (pas seulement
 // comportementale) de toute création de DemandeTalent depuis ce domaine.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function creerBesoinValide(clientId: string, faits: { cle: string; valeur: string; statut: string }[] = []) {
@@ -46,12 +58,12 @@ async function creerProfilCandidatDeTest(suffixe: string) {
 }
 
 test.describe("V2.1-E — Gouvernance de décision (vérification)", () => {
-  test("une DECISION conserve intégralement : option choisie, client, timestamp, provenance", async ({ request }) => {
+  test("une DECISION conserve intégralement : option choisie, client, timestamp, provenance", async () => {
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     await creerProfilCandidatDeTest(`${Date.now()}-tracabilite`);
     const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-    await connecter(request, "client-demo@example.com");
+    let request = await connecter("CLIENT");
     const generation = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
     const recommandationId = generation.recommandation.id;
 
@@ -80,7 +92,7 @@ test.describe("V2.1-E — Gouvernance de décision (vérification)", () => {
     await creerProfilCandidatDeTest(`${Date.now()}-nodt`);
     const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const generation = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
     expect(generation.recommandation.typeSolution).toBe("TALENT");
 
@@ -105,7 +117,7 @@ test.describe("V2.1-E — Gouvernance de décision (vérification)", () => {
     await creerProfilCandidatDeTest(`${Date.now()}-immutable`);
     const need = await creerBesoinValide(client!.id, [{ cle: "COMPETENCE", valeur: "Kubernetes", statut: "DECLARE" }]);
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const generation = await (await request.get(`/api/client/besoins/${need.id}/solutions`)).json();
     const recommandationId = generation.recommandation.id;
 

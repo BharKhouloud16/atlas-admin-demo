@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 
 // COMPANY ATLAS — LOT 3 : Client Need Validation & Clarification (15/09/2026).
@@ -7,9 +8,20 @@ import { prisma } from "@/lib/prisma";
 // cohérence, la transition automatique A_CLARIFIER pilotée par le serveur,
 // et l'isolation client/IDOR/BOLA — via les routes réelles.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 type BesoinAvecFaits = {
@@ -45,8 +57,8 @@ async function repondre(
 
 test.describe("COMPANY ATLAS LOT 3 — Client Need Validation & Clarification (API)", () => {
   test.describe("Historique additif — jamais d'écrasement", () => {
-    test("CORRIGER crée une nouvelle ligne, l'ancienne valeur reste en base", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("CORRIGER crée une nouvelle ligne, l'ancienne valeur reste en base", async () => {
+      let request = await connecter("CLIENT");
       const besoin = await creerBesoin(request, "Nous cherchons un développeur React confirmé.");
       const avant = besoin.faits.length;
 
@@ -65,8 +77,8 @@ test.describe("COMPANY ATLAS LOT 3 — Client Need Validation & Clarification (A
       expect(relu.faits.length).toBe(avant + 1);
     });
 
-    test("CONFIRMER crée une nouvelle preuve statut VERIFIE, source client_confirmation, valeur inchangée", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("CONFIRMER crée une nouvelle preuve statut VERIFIE, source client_confirmation, valeur inchangée", async () => {
+      let request = await connecter("CLIENT");
       const besoin = await creerBesoin(request, "Nous cherchons un profil senior en Java.");
       const seniorite = besoin.faits.find((f) => f.cle === "SENIORITE");
       expect(seniorite?.valeur).toBe("Senior");
@@ -80,8 +92,8 @@ test.describe("COMPANY ATLAS LOT 3 — Client Need Validation & Clarification (A
       expect(nouveauFait.statut).toBe("VERIFIE");
     });
 
-    test("dernière valeur correctement déterminée après plusieurs corrections successives sur la même clé", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("dernière valeur correctement déterminée après plusieurs corrections successives sur la même clé", async () => {
+      let request = await connecter("CLIENT");
       // REMOTE n'est pas dans CLES_IMPORTANTES_SI_ABSENTES : aucune ligne
       // INCONNU n'est créée à la création, on part d'un historique vide
       // pour cette clé — isole strictement le comportement testé ici.
@@ -99,23 +111,23 @@ test.describe("COMPANY ATLAS LOT 3 — Client Need Validation & Clarification (A
   });
 
   test.describe("Validation — aucune valeur inventée", () => {
-    test("CORRIGER sans valeur est refusé (400)", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("CORRIGER sans valeur est refusé (400)", async () => {
+      let request = await connecter("CLIENT");
       const besoin = await creerBesoin(request, "Nous cherchons un développeur.");
       const reponse = await repondre(request, besoin.id, "ROLE", "CORRIGER");
       expect(reponse.status()).toBe(400);
     });
 
-    test("CONFIRMER sur une clé sans valeur actuelle est refusé (400) — rien à confirmer", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("CONFIRMER sur une clé sans valeur actuelle est refusé (400) — rien à confirmer", async () => {
+      let request = await connecter("CLIENT");
       const besoin = await creerBesoin(request, "Nous cherchons un développeur.");
       // BUDGET_FREQUENCE n'est jamais extraite par l'heuristique locale.
       const reponse = await repondre(request, besoin.id, "BUDGET_FREQUENCE", "CONFIRMER");
       expect(reponse.status()).toBe(400);
     });
 
-    test("clé répétable ou hors vocabulaire est refusée (400) — périmètre LOT 3 strictement limité", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("clé répétable ou hors vocabulaire est refusée (400) — périmètre LOT 3 strictement limité", async () => {
+      let request = await connecter("CLIENT");
       const besoin = await creerBesoin(request, "Nous cherchons un développeur Java.");
       const repetable = await repondre(request, besoin.id, "COMPETENCE", "CORRIGER", "Python");
       expect(repetable.status()).toBe(400);
@@ -125,15 +137,15 @@ test.describe("COMPANY ATLAS LOT 3 — Client Need Validation & Clarification (A
   });
 
   test.describe("Recalcul de cohérence et pilotage automatique de A_CLARIFIER", () => {
-    test("la création reste inchangée (LOT 2, toujours SOUMIS) — le pilotage automatique de A_CLARIFIER n'intervient qu'après une réponse (périmètre LOT 3)", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("la création reste inchangée (LOT 2, toujours SOUMIS) — le pilotage automatique de A_CLARIFIER n'intervient qu'après une réponse (périmètre LOT 3)", async () => {
+      let request = await connecter("CLIENT");
       const besoin = await creerBesoin(request, "Je veux un profil junior avec 10 ans d'expérience.");
       expect(besoin.coherenceStatut).toBe("INCONSISTENT");
       expect(besoin.statut).toBe("SOUMIS");
     });
 
-    test("le premier appel à /faits fait passer un besoin incohérent en A_CLARIFIER — jamais une incohérence silencieuse une fois la boucle de clarification engagée", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("le premier appel à /faits fait passer un besoin incohérent en A_CLARIFIER — jamais une incohérence silencieuse une fois la boucle de clarification engagée", async () => {
+      let request = await connecter("CLIENT");
       const besoin = await creerBesoin(request, "Je veux un profil junior avec 10 ans d'expérience.");
       expect(besoin.statut).toBe("SOUMIS");
 
@@ -147,8 +159,8 @@ test.describe("COMPANY ATLAS LOT 3 — Client Need Validation & Clarification (A
       expect(misAJour.statut).toBe("A_CLARIFIER");
     });
 
-    test("correction résolvant la contradiction fait disparaître la règle INCONSISTENT du diagnostic", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("correction résolvant la contradiction fait disparaître la règle INCONSISTENT du diagnostic", async () => {
+      let request = await connecter("CLIENT");
       const besoin = await creerBesoin(request, "Je veux un profil junior avec 10 ans d'expérience.");
 
       const reponse = await repondre(request, besoin.id, "SENIORITE", "CORRIGER", "Senior");
@@ -158,8 +170,8 @@ test.describe("COMPANY ATLAS LOT 3 — Client Need Validation & Clarification (A
       expect((misAJour.coherenceDetail ?? []).some((r: { regle: string; statut: string }) => r.regle === "SENIORITE_EXPERIENCE" && r.statut === "INCONSISTENT")).toBe(false);
     });
 
-    test("sortie automatique de A_CLARIFIER une fois toutes les clarifications résolues", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("sortie automatique de A_CLARIFIER une fois toutes les clarifications résolues", async () => {
+      let request = await connecter("CLIENT");
       const besoin = await creerBesoin(request, "Je veux un profil junior avec 10 ans d'expérience.");
       expect(besoin.statut).toBe("SOUMIS"); // inchangé à la création (LOT 2)
 
@@ -170,7 +182,13 @@ test.describe("COMPANY ATLAS LOT 3 — Client Need Validation & Clarification (A
       await repondre(request, besoin.id, "BUDGET_MONTANT", "CORRIGER", "500");
       await repondre(request, besoin.id, "LOCALISATION", "CORRIGER", "France");
       await repondre(request, besoin.id, "DISPONIBILITE", "CORRIGER", "Immédiate");
-      const derniere = await repondre(request, besoin.id, "DUREE", "CORRIGER", "6 mois");
+      await repondre(request, besoin.id, "DUREE", "CORRIGER", "6 mois");
+      // A6.1 — Outcome Foundation : RESULTAT_ATTENDU rejoint désormais
+      // CLES_IMPORTANTES_SI_ABSENTES (lib/client-need/extraction.ts) — sa
+      // résolution fait maintenant partie des manques importants à
+      // clarifier avant la sortie automatique de A_CLARIFIER, au même
+      // titre que les clés ci-dessus.
+      const derniere = await repondre(request, besoin.id, "RESULTAT_ATTENDU", "CORRIGER", "Renforcer l'équipe QA sur le projet.");
       expect(derniere.status(), await derniere.text()).toBe(201);
 
       const final = await relire(request, besoin.id);
@@ -179,8 +197,8 @@ test.describe("COMPANY ATLAS LOT 3 — Client Need Validation & Clarification (A
       expect(final.coherenceStatut).not.toBe("NEEDS_CLARIFICATION");
     });
 
-    test("une correction peut aussi FAIRE APPARAÎTRE une contradiction (jamais silencieuse), et repasser le besoin en A_CLARIFIER", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("une correction peut aussi FAIRE APPARAÎTRE une contradiction (jamais silencieuse), et repasser le besoin en A_CLARIFIER", async () => {
+      let request = await connecter("CLIENT");
       const besoin = await creerBesoin(request, "Nous cherchons un développeur.");
 
       // Résout d'abord tous les manques importants pour atteindre un état
@@ -191,7 +209,9 @@ test.describe("COMPANY ATLAS LOT 3 — Client Need Validation & Clarification (A
       await repondre(request, besoin.id, "BUDGET_MONTANT", "CORRIGER", "500");
       await repondre(request, besoin.id, "LOCALISATION", "CORRIGER", "France");
       await repondre(request, besoin.id, "DISPONIBILITE", "CORRIGER", "Immédiate");
-      const complet = await repondre(request, besoin.id, "DUREE", "CORRIGER", "6 mois");
+      await repondre(request, besoin.id, "DUREE", "CORRIGER", "6 mois");
+      // A6.1 — Outcome Foundation : voir commentaire équivalent ci-dessus.
+      const complet = await repondre(request, besoin.id, "RESULTAT_ATTENDU", "CORRIGER", "Renforcer l'équipe de développement.");
       expect(complet.status(), await complet.text()).toBe(201);
       const avant = (await complet.json()).besoin;
       expect(avant.statut).toBe("SOUMIS");
@@ -205,14 +225,21 @@ test.describe("COMPANY ATLAS LOT 3 — Client Need Validation & Clarification (A
       expect(misAJour.statut).toBe("A_CLARIFIER");
     });
 
-    test("un besoin VALIDE n'est jamais automatiquement repassé en A_CLARIFIER par une correction", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("un besoin VALIDE n'est jamais automatiquement repassé en A_CLARIFIER par une correction", async () => {
+      let request = await connecter("CLIENT");
       const besoin = await creerBesoin(request, "Nous cherchons un développeur.");
       const valide = await request.fetch(`/api/client/besoins/${besoin.id}`, { method: "PATCH", data: { statut: "VALIDE" } });
       expect(valide.status()).toBe(200);
 
-      await repondre(request, besoin.id, "SENIORITE", "CORRIGER", "Junior");
-      const reponse = await repondre(request, besoin.id, "ANNEES_EXPERIENCE_MIN", "CORRIGER", "10");
+      // A5.2 — Need Versioning Core : VALIDATED + current + CORRIGER déclenche
+      // un fork (V1 -> V2), V1 devenant historique. La seconde correction
+      // doit donc viser la nouvelle version courante retournée par la
+      // première réponse, jamais l'id d'origine (devenu historique).
+      const premiereCorrection = await repondre(request, besoin.id, "SENIORITE", "CORRIGER", "Junior");
+      expect(premiereCorrection.status(), await premiereCorrection.text()).toBe(201);
+      const { besoin: v2 } = await premiereCorrection.json();
+
+      const reponse = await repondre(request, v2.id, "ANNEES_EXPERIENCE_MIN", "CORRIGER", "10");
       expect(reponse.status(), await reponse.text()).toBe(201);
       const { besoin: misAJour } = await reponse.json();
 
@@ -222,8 +249,8 @@ test.describe("COMPANY ATLAS LOT 3 — Client Need Validation & Clarification (A
   });
 
   test.describe("Le client ne peut jamais forcer A_CLARIFIER directement", () => {
-    test("PATCH statut=A_CLARIFIER est refusé (400) — exclusivement piloté par le serveur", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("PATCH statut=A_CLARIFIER est refusé (400) — exclusivement piloté par le serveur", async () => {
+      let request = await connecter("CLIENT");
       const besoin = await creerBesoin(request, "Nous cherchons un développeur.");
       const reponse = await request.fetch(`/api/client/besoins/${besoin.id}`, { method: "PATCH", data: { statut: "A_CLARIFIER" } });
       expect(reponse.status()).toBe(400);
@@ -231,7 +258,7 @@ test.describe("COMPANY ATLAS LOT 3 — Client Need Validation & Clarification (A
   });
 
   test.describe("Sécurité — isolation client / IDOR / BOLA", () => {
-    test("répondre à une clarification du besoin d'un autre client est refusé (404), aucune fuite, aucune écriture", async ({ request }) => {
+    test("répondre à une clarification du besoin d'un autre client est refusé (404), aucune fuite, aucune écriture", async () => {
       const autreClient = await prisma.client.create({ data: { nom: `Client LOT3 Isolation ${Date.now()}` } });
       const autreBesoin = await prisma.clientNeed.create({
         data: {
@@ -244,7 +271,7 @@ test.describe("COMPANY ATLAS LOT 3 — Client Need Validation & Clarification (A
         include: { faits: true },
       });
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const reponse = await repondre(request, autreBesoin.id, "ROLE", "CONFIRMER");
       expect(reponse.status()).toBe(404);
 
@@ -258,15 +285,15 @@ test.describe("COMPANY ATLAS LOT 3 — Client Need Validation & Clarification (A
       expect(sansSession.status()).toBe(403);
     });
 
-    test("ADMIN / INGENIEUR : 403 sur POST /api/client/besoins/[id]/faits — aucun accès client implicite", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("ADMIN / INGENIEUR : 403 sur POST /api/client/besoins/[id]/faits — aucun accès client implicite", async () => {
+      let request = await connecter("CLIENT");
       const besoin = await creerBesoin(request, "Nous cherchons un développeur.");
 
-      await connecter(request, "admin-demo@example.com");
+      request = await connecter("ADMIN");
       const admin = await repondre(request, besoin.id, "ROLE", "CONFIRMER");
       expect(admin.status()).toBe(403);
 
-      await connecter(request, "ingenieur-demo@example.com");
+      request = await connecter("INGENIEUR");
       const ingenieur = await repondre(request, besoin.id, "ROLE", "CONFIRMER");
       expect(ingenieur.status()).toBe(403);
     });

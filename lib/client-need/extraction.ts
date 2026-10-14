@@ -23,6 +23,17 @@ export async function extraireBesoinClient(texteOriginal: string): Promise<Resul
 // deviner. Les autres clés non détectées restent simplement absentes
 // (aucune ligne) : ni l'un ni l'autre ne représente jamais une valeur
 // inventée.
+//
+// A6.1 — Outcome Foundation (01/10/2026) : RESULTAT_ATTENDU rejoint cette
+// liste — son absence devient une clarification RECOMMANDÉE (priorité
+// MANQUANT, jamais bloquante pour VALIDATED, voir A6 §A6.9 Option B et le
+// rapport final A6.1) au même titre que ROLE/SENIORITE/etc. ci-dessous.
+// CRITERE_REUSSITE reste volontairement absent de cette liste : clé
+// répétable, hors périmètre de la boucle de clarification CONFIRMER/
+// CORRIGER par décision explicite LOT 3 (voir CLES_CLARIFIABLES,
+// lib/client-need/clarification.ts) — ajouter ici produirait un
+// "MANQUANT" sur une clé que le client ne pourrait jamais corriger via
+// cette route, ce qui serait trompeur.
 export const CLES_IMPORTANTES_SI_ABSENTES: CleFaitBesoinExtractible[] = [
   "ROLE",
   "SENIORITE",
@@ -30,4 +41,5 @@ export const CLES_IMPORTANTES_SI_ABSENTES: CleFaitBesoinExtractible[] = [
   "LOCALISATION",
   "DISPONIBILITE",
   "DUREE",
+  "RESULTAT_ATTENDU",
 ];

@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 
 // COMPANY ATLAS — V2.2-C (17/09/2026) : Billing — Facturation opérationnelle.
@@ -21,9 +22,20 @@ import { prisma } from "@/lib/prisma";
 // construit directement via Prisma, jamais via une chaîne de connexions/
 // changements de rôle pour rejouer le circuit CRA déjà testé ailleurs.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function idProfilIngenieurDemo(): Promise<string> {
@@ -110,9 +122,9 @@ async function factureDeTest(mois: string, statut: "BROUILLON" | "VALIDEE" | "EN
 }
 
 test.describe("V2.2-C — Concurrence sur les transitions de statut (mandat CEO section 21)", () => {
-  test("deux validations simultanées de la même Facture BROUILLON -> une seule réussit, l'autre est refusée (409), jamais les deux", async ({ request }) => {
+  test("deux validations simultanées de la même Facture BROUILLON -> une seule réussit, l'autre est refusée (409), jamais les deux", async () => {
     const { factureId } = await factureDeTest("2028-02", "BROUILLON");
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
 
     const [r1, r2] = await Promise.all([
       request.patch(`/api/factures/${factureId}/transition`, { data: { action: "valider" } }),
@@ -126,9 +138,9 @@ test.describe("V2.2-C — Concurrence sur les transitions de statut (mandat CEO 
     expect(enBase!.dateEmission).not.toBeNull();
   });
 
-  test("deux émissions simultanées de la même Facture VALIDEE -> une seule réussit, l'autre est refusée (409)", async ({ request }) => {
+  test("deux émissions simultanées de la même Facture VALIDEE -> une seule réussit, l'autre est refusée (409)", async () => {
     const { factureId } = await factureDeTest("2028-03", "VALIDEE");
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
 
     const [r1, r2] = await Promise.all([
       request.patch(`/api/factures/${factureId}/transition`, { data: { action: "envoyer" } }),
@@ -142,9 +154,9 @@ test.describe("V2.2-C — Concurrence sur les transitions de statut (mandat CEO 
     expect(enBase!.dateEnvoi).not.toBeNull();
   });
 
-  test("émission et annulation simultanées depuis VALIDEE -> jamais un état corrompu, même quand les deux réussissent légitimement", async ({ request }) => {
+  test("émission et annulation simultanées depuis VALIDEE -> jamais un état corrompu, même quand les deux réussissent légitimement", async () => {
     const { factureId } = await factureDeTest("2028-04", "VALIDEE");
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
 
     // Note de conception : contrairement aux tests précédents (même action
     // répétée), "envoyer" et "annuler" ne sont PAS mutuellement exclusifs au
@@ -189,9 +201,9 @@ test.describe("V2.2-C — Concurrence sur les transitions de statut (mandat CEO 
     }
   });
 
-  test("trois tentatives de validation en rafale sur la même Facture -> exactement une seule Facture VALIDEE, jamais un double comptage d'échéance", async ({ request }) => {
+  test("trois tentatives de validation en rafale sur la même Facture -> exactement une seule Facture VALIDEE, jamais un double comptage d'échéance", async () => {
     const { factureId } = await factureDeTest("2028-05", "BROUILLON");
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
 
     const reponses = await Promise.all([
       request.patch(`/api/factures/${factureId}/transition`, { data: { action: "valider" } }),
@@ -206,9 +218,9 @@ test.describe("V2.2-C — Concurrence sur les transitions de statut (mandat CEO 
 });
 
 test.describe("V2.2-C — Concurrence sur la génération documentaire (mandat CEO section 21)", () => {
-  test("deux générations simultanées du document -> un seul Document persisté et lié, jamais deux PDF divergents", async ({ request }) => {
+  test("deux générations simultanées du document -> un seul Document persisté et lié, jamais deux PDF divergents", async () => {
     const { factureId } = await factureDeTest("2028-06", "VALIDEE");
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
 
     const [d1, d2] = await Promise.all([request.get(`/api/factures/${factureId}/document`), request.get(`/api/factures/${factureId}/document`)]);
     expect(d1.status()).toBe(200);
@@ -238,7 +250,7 @@ test.describe("V2.2-C — Concurrence sur la génération documentaire (mandat C
 });
 
 test.describe("V2.2-C — Sécurité complémentaire (mandat CEO section 20)", () => {
-  test("IDOR — le Client A ne peut jamais lister les paiements d'une Facture ENVOYEE du Client B (404)", async ({ request }) => {
+  test("IDOR — le Client A ne peut jamais lister les paiements d'une Facture ENVOYEE du Client B (404)", async () => {
     const clientB = await creerClientDeTest(`${Date.now()}-paiements`);
     try {
       const { factureId } = await factureDeTest("2028-07", "ENVOYEE");
@@ -251,7 +263,7 @@ test.describe("V2.2-C — Sécurité complémentaire (mandat CEO section 20)", (
         data: { factureId, montant: 100, devise: "EUR", datePaiement: new Date(), reference: `REF-${Date.now()}`, methode: "Virement", statut: "CONFIRME" },
       });
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const lecture = await request.get(`/api/factures/${factureId}/paiements`);
       expect(lecture.status()).toBe(404);
     } finally {
@@ -261,13 +273,13 @@ test.describe("V2.2-C — Sécurité complémentaire (mandat CEO section 20)", (
     }
   });
 
-  test("IDOR — le Client A ne peut jamais télécharger le document d'une Facture ENVOYEE du Client B (404)", async ({ request }) => {
+  test("IDOR — le Client A ne peut jamais télécharger le document d'une Facture ENVOYEE du Client B (404)", async () => {
     const clientB = await creerClientDeTest(`${Date.now()}-document`);
     try {
       const { factureId } = await factureDeTest("2028-08", "ENVOYEE");
       await prisma.facture.update({ where: { id: factureId }, data: { clientId: clientB.id } });
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const document = await request.get(`/api/factures/${factureId}/document`);
       expect(document.status()).toBe(404);
     } finally {
@@ -276,9 +288,9 @@ test.describe("V2.2-C — Sécurité complémentaire (mandat CEO section 20)", (
     }
   });
 
-  test("un Ingénieur n'a jamais accès aux paiements ni au document d'une Facture, quelle qu'elle soit", async ({ request }) => {
+  test("un Ingénieur n'a jamais accès aux paiements ni au document d'une Facture, quelle qu'elle soit", async () => {
     const { factureId } = await factureDeTest("2028-09", "VALIDEE");
-    await connecter(request, "ingenieur-demo@example.com");
+    let request = await connecter("INGENIEUR");
     expect((await request.get(`/api/factures/${factureId}/paiements`)).status()).toBe(403);
     expect((await request.get(`/api/factures/${factureId}/document`)).status()).toBe(403);
   });

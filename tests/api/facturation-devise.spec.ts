@@ -1,5 +1,6 @@
 import zlib from "zlib";
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 
 // pdf-lib compresse les flux de contenu (FlateDecode) : chercher le code
 // devise directement dans les octets bruts du PDF ne fonctionne pas — il
@@ -48,9 +49,20 @@ function extraireTexteBrutPdf(pdfBytes: Buffer): string {
 // Demo1234 — voir prisma/seed.ts), comme le permet le fait que chaque appel
 // n'a besoin que de la session la plus récente.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function idProfilIngenieurDemo(request: APIRequestContext): Promise<string> {
@@ -90,7 +102,7 @@ async function idPremierClient(request: APIRequestContext): Promise<string> {
 // Fait avancer une mission jusqu'à la facture disponible et renvoie les
 // octets du PDF généré.
 async function factureDeMissionTest(request: APIRequestContext, mois: string, tjmVente: number, deviseVente: string) {
-  await connecter(request, "admin-demo@example.com");
+  request = await connecter("ADMIN");
   const clientId = await idPremierClient(request);
   const profilId = await idProfilIngenieurDemo(request);
 
@@ -101,26 +113,26 @@ async function factureDeMissionTest(request: APIRequestContext, mois: string, tj
   const mission = await creation.json();
   expect(mission.deviseVente).toBe(deviseVente);
 
-  await connecter(request, "ingenieur-demo@example.com");
+  request = await connecter("INGENIEUR");
   const soumission = await request.post("/api/feuilles-de-temps", {
     data: { missionId: mission.id, mois, joursTravailles: 5, heuresSupplementaires: 0, soumettre: true },
   });
   expect(soumission.status(), "soumission du CRA").toBe(201);
   const feuille = await soumission.json();
 
-  await connecter(request, "admin-demo@example.com");
+  request = await connecter("ADMIN");
   const validationAdmin = await request.patch("/api/feuilles-de-temps", {
     data: { id: feuille.id, action: "validerAdmin" },
   });
   expect(validationAdmin.ok(), "validation Admin du CRA").toBeTruthy();
 
-  await connecter(request, "client-demo@example.com");
+  request = await connecter("CLIENT");
   const validationClient = await request.patch("/api/feuilles-de-temps", {
     data: { id: feuille.id, action: "validerClient" },
   });
   expect(validationClient.ok(), "validation Client du CRA").toBeTruthy();
 
-  await connecter(request, "admin-demo@example.com");
+  request = await connecter("ADMIN");
   const facture = await request.get(`/api/feuilles-de-temps/facture?feuilleId=${feuille.id}`);
   expect(facture.status(), "génération de la facture PDF").toBe(200);
   expect(facture.headers()["content-type"]).toContain("application/pdf");

@@ -6,6 +6,7 @@ import type { Realisation } from "@/app/api/ingenieur/realisations/route";
 import type { BadgeConfiance } from "@/lib/scoring";
 import { Card, Section, EmptyState, Bouton, Badge } from "@/components/client/primitives";
 import EvaluationsAFaire, { type MissionEvaluable } from "@/components/client/EvaluationsAFaire";
+import MissionOutcomeSection from "./MissionOutcomeSection";
 
 // LOT 1 — Client Workspace Foundation (15/09/2026) : rubrique "Missions",
 // extraite de l'ancien dashboard (app/client/page.tsx) — même appel API
@@ -21,7 +22,6 @@ type ProfilVitrine = {
   prenom: string | null;
   realisations: Realisation[] | null;
   badge: BadgeConfiance;
-  aVideo: boolean;
 };
 
 type SourceDemande = { id: string; titre: string | null };
@@ -44,9 +44,23 @@ export default function MissionsClientPage() {
   const [chargement, setChargement] = useState(true);
   const [missionsEvaluables, setMissionsEvaluables] = useState<MissionEvaluable[]>([]);
   const [ouvertes, setOuvertes] = useState<Set<string>>(new Set());
+  // DB-08 — Outcome UI : état séparé de `ouvertes` (vitrine du profil),
+  // même discipline que app/admin/missions/page.tsx (outcomeOuvert distinct
+  // de revueOuverte) — ne jamais fusionner deux panneaux sans rapport dans
+  // un seul état.
+  const [outcomesOuverts, setOutcomesOuverts] = useState<Set<string>>(new Set());
 
   function basculer(id: string) {
     setOuvertes((prev) => {
+      const suivant = new Set(prev);
+      if (suivant.has(id)) suivant.delete(id);
+      else suivant.add(id);
+      return suivant;
+    });
+  }
+
+  function basculerOutcome(id: string) {
+    setOutcomesOuverts((prev) => {
       const suivant = new Set(prev);
       if (suivant.has(id)) suivant.delete(id);
       else suivant.add(id);
@@ -84,7 +98,7 @@ export default function MissionsClientPage() {
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {missions.map((m) => {
             const ouverte = ouvertes.has(m.id);
-            const aVitrine = (m.profil.realisations?.length ?? 0) > 0 || Boolean(m.profil.badge) || m.profil.aVideo;
+            const aVitrine = (m.profil.realisations?.length ?? 0) > 0 || Boolean(m.profil.badge);
             return (
               <Card key={m.id}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
@@ -116,13 +130,27 @@ export default function MissionsClientPage() {
                       </div>
                     )}
                   </div>
-                  {aVitrine && (
-                    <Bouton variant="secondary" onClick={() => basculer(m.id)}>
-                      {ouverte ? "Masquer le profil" : "Voir le profil"}
-                    </Bouton>
-                  )}
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {aVitrine && (
+                      <Bouton variant="secondary" onClick={() => basculer(m.id)}>
+                        {ouverte ? "Masquer le profil" : "Voir le profil"}
+                      </Bouton>
+                    )}
+                    {/* DB-08 — Outcome UI : affiché uniquement une fois la
+                        mission TERMINEE (seul état où le backend autorise la
+                        création d'un Outcome, A6.1 — avant cela la lecture
+                        renverrait toujours outcome=null) — même gating que
+                        le bouton "Résultat attendu (Outcome)" côté Admin
+                        (app/admin/missions/page.tsx). */}
+                    {m.statut === "TERMINEE" && (
+                      <Bouton variant="secondary" onClick={() => basculerOutcome(m.id)}>
+                        {outcomesOuverts.has(m.id) ? "Masquer le résultat" : "Voir le résultat"}
+                      </Bouton>
+                    )}
+                  </div>
                 </div>
                 {ouverte && <ProfilVitrineDetail profil={m.profil} />}
+                {outcomesOuverts.has(m.id) && <MissionOutcomeSection missionId={m.id} />}
               </Card>
             );
           })}
@@ -133,24 +161,14 @@ export default function MissionsClientPage() {
 }
 
 // Aperçu "vitrine" du profil de l'ingénieur, côté client : portfolio de
-// réalisations et vidéo de présentation, en lecture seule — jamais de score
-// de matching ni de TJM (réservés à l'Admin, voir /api/client/missions).
+// réalisations, en lecture seule — jamais de score de matching ni de TJM
+// (réservés à l'Admin, voir /api/client/missions).
 // Reprise à l'identique de l'ancien app/client/page.tsx.
 function ProfilVitrineDetail({ profil }: { profil: ProfilVitrine }) {
   const realisations = profil.realisations ?? [];
 
   return (
     <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #eee", display: "flex", flexDirection: "column", gap: 12 }}>
-      {profil.aVideo && (
-        <div>
-          <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 6px" }}>Vidéo de présentation</p>
-          <video
-            src={`/api/ingenieur/video/fichier?profilId=${profil.id}`}
-            controls
-            style={{ maxWidth: 320, borderRadius: 8, border: "1px solid #eee" }}
-          />
-        </div>
-      )}
       <div>
         <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 6px" }}>Réalisations</p>
         {realisations.length === 0 ? (

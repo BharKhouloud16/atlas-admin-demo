@@ -1,0 +1,32 @@
+-- COMPANY ATLAS — A34-PERM (06/10/2026) : Permission Registry — extension
+-- minimale, exact même précédent que B32-PERM
+-- (20260915050000_b32_perm_atlas_talent_write_talent) : un INSERT additif
+-- unique, jamais une deuxième façon de seeder une AgentPermission.
+--
+-- Aucune modification de schéma (table AgentPermission déjà en place
+-- depuis B20) : ce fichier ne contient qu'un INSERT additif.
+--
+-- Justification (moindre privilège, même discipline que B20/B32-PERM) :
+-- le Learning Loop (A34) a besoin d'une classification OBSERVATION (lecture/
+-- analyse, lib/control-plane/commitment.ts, ANALYZE -> OBSERVATION) pour
+-- que ses deux Steps (fact collection, puis classification + proposition
+-- d'un Learning PROPOSE) s'exécutent sans passer par une approbation B22
+-- supplémentaire, distincte et non montrée par le contrat A34 §3 (la seule
+-- validation humaine prévue reste A30 : Learning PROPOSE -> Admin ->
+-- validerLearning() -> VALIDATED). (READ, TALENT) est déjà occupé par le
+-- Tool diagnostique PING de A32 (lib/agentic/tools.ts) — un registre de
+-- Tools ne peut jamais porter deux entrées pour le même couple
+-- action/scope (contrat A32 §17). (ANALYZE, TALENT) était libre, et décrit
+-- exactement le travail réel du Learning Loop : lire/analyser des faits
+-- déjà écrits (Mission/Need/WorkItem/Deliverable/Evidence/Quality/Outcome/
+-- FinancialResult), jamais les modifier — seule exception, documentée et
+-- intentionnelle : la création d'un Learning PROPOSE, un enregistrement
+-- provisoire sans aucun effet jusqu'à validation humaine explicite (même
+-- précédent que la création directe d'un Learning PROPOSE par A30, qui ne
+-- passe elle-même jamais par une AuthorizationRequest B22).
+--
+-- Strictement UNE seule ligne ajoutée : ATLAS_TALENT + ANALYZE + TALENT.
+-- Aucun autre agent, aucun autre scope, aucune autre action, aucune
+-- modification/suppression d'une ligne existante.
+INSERT INTO "AgentPermission" ("id", "agentId", "action", "scope", "statut", "description", "createdAt", "updatedAt") VALUES
+('perm-atlas-talent-analyze-talent', 'agent-atlas-talent', 'ANALYZE', 'TALENT', 'ACTIVE', 'A34-PERM — autorise le Learning Loop (lib/learning-loop/) à analyser les faits de la plateforme métier ATLAS TALENT (Mission/Need/WorkItem/Deliverable/Evidence/Quality/Outcome/FinancialResult) et à proposer un Learning (statut PROPOSE uniquement, jamais VALIDATED) sans approbation B22 supplémentaire. Ne couvre aucune autre écriture hors de ce périmètre.', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);

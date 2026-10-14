@@ -33,7 +33,7 @@ function profilVide(overrides: Partial<ProfilPourIntelligence> = {}): ProfilPour
 test.describe("Intelligence Foundation V1 (lib/talent/intelligence-foundation)", () => {
   test("1. délégation fidèle : chaque bloc est identique à un appel direct des modules existants", () => {
     const profil = profilVide();
-    const missions: MissionPourAnalytics[] = [{ statut: "Terminée", nbJours: 10, createdAt: new Date("2025-01-01") }];
+    const missions: MissionPourAnalytics[] = [{ statut: "TERMINEE", nbJours: 10, createdAt: new Date("2025-01-01") }];
     const evaluations: EvaluationPourAnalytics[] = [{ note: 4, createdAt: new Date("2025-01-01") }];
 
     const r = construireIntelligenceFoundation(profil, missions, evaluations);
@@ -70,9 +70,9 @@ test.describe("Intelligence Foundation V1 (lib/talent/intelligence-foundation)",
 
   test("5. historique de missions et évaluations suffisant : le bloc Mission Intelligence le reflète correctement au sein de la fondation", () => {
     const missions: MissionPourAnalytics[] = [
-      { statut: "Terminée", nbJours: 10, createdAt: new Date("2025-01-01") },
-      { statut: "Terminée", nbJours: 15, createdAt: new Date("2025-02-01") },
-      { statut: "Terminée", nbJours: 20, createdAt: new Date("2025-03-01") },
+      { statut: "TERMINEE", nbJours: 10, createdAt: new Date("2025-01-01") },
+      { statut: "TERMINEE", nbJours: 15, createdAt: new Date("2025-02-01") },
+      { statut: "TERMINEE", nbJours: 20, createdAt: new Date("2025-03-01") },
     ];
     const r = construireIntelligenceFoundation(profilVide(), missions, []);
     expect(r.missionIntelligence.duree.moyenneJours.statut).toBe("SUFFISANTE");

@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { bleu, bordure, grisTexte } from "@/lib/theme";
+import InterviewsAdmin from "./InterviewsAdmin";
+import CandidateProposalsAdmin from "./CandidateProposalsAdmin";
 
 type Motif = { critere: string; poidsPct?: number; detail: string };
 
@@ -188,6 +190,10 @@ export default function TalentAdminDetailPage() {
           </li>
         ))}
       </ul>
+
+      <InterviewsAdmin demandeId={demande.id} />
+
+      <CandidateProposalsAdmin demandeId={demande.id} />
 
       <CreerMission demande={demande} shortlist={shortlist} />
     </div>

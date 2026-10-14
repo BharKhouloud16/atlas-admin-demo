@@ -38,7 +38,7 @@ export type CompetencePourIntelligence = {
 };
 
 export type MissionPourIntelligence = {
-  statut: string; // "En cours" | "Terminée" | "Annulée" (Mission.statut, texte libre existant)
+  statut: string; // "EN_COURS" | "TERMINEE" | "ANNULEE" (Mission.statut, enum StatutMission depuis Lot 16.2)
   nbJours: number;
   secteur?: string | null; // aucun champ équivalent aujourd'hui sur Mission — toujours undefined/null pour l'instant, jamais fabriqué
   createdAt: Date;
@@ -209,8 +209,8 @@ function construireBlocMissions(missions: MissionPourIntelligence[]): BlocMissio
   if (missions.length === 0) {
     return { statut: "INCONNU", total: 0, terminees: 0, enCours: 0, joursCumules: 0, secteurs: [] };
   }
-  const terminees = missions.filter((m) => m.statut === "Terminée").length;
-  const enCours = missions.filter((m) => m.statut === "En cours").length;
+  const terminees = missions.filter((m) => m.statut === "TERMINEE").length;
+  const enCours = missions.filter((m) => m.statut === "EN_COURS").length;
   const joursCumules = missions.reduce((total, m) => total + m.nbJours, 0);
   const secteurs = Array.from(new Set(missions.map((m) => m.secteur).filter((s): s is string => !!s)));
   return { statut: "DECLARE", total: missions.length, terminees, enCours, joursCumules, secteurs };

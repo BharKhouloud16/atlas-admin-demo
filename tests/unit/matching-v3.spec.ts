@@ -81,7 +81,7 @@ test.describe("Matching Engine V3 : Context & Trust (lib/talent/matching-v3)", (
 
   test("4. historique de missions réel : signal non fabriqué, reflète les données réelles", () => {
     const profil = profilVide("p4");
-    profil.missions = [{ statut: "Terminée", nbJours: 15, createdAt: new Date("2025-01-01") }];
+    profil.missions = [{ statut: "TERMINEE", nbJours: 15, createdAt: new Date("2025-01-01") }];
     const matchingProfil: ProfilPourMatching = { id: "p4", competences: [], seniorite: null, disponibilite: null, cvValide: true, tjmEstime: null, anneesExperience: null, paysResidence: null, competencesGraph: [] };
     const { v3 } = enrichir(profil, matchingProfil);
     expect(v3.signalHistoriqueMissions).not.toBeNull();
@@ -150,7 +150,7 @@ test.describe("Matching Engine V3 : Context & Trust (lib/talent/matching-v3)", (
     const matchingA: ProfilPourMatching = { id: "pA", competences: [], seniorite: null, disponibilite: null, cvValide: true, tjmEstime: null, anneesExperience: null, paysResidence: null, competencesGraph: [{ competence: "Java", statut: "VERIFIE", niveau: 4, confiance: "HAUTE", anneesExperience: null, contexte: null, provenancePrincipale: "ADMIN" }] };
 
     const profilB = profilVide("pB");
-    profilB.missions = [{ statut: "Terminée", nbJours: 5, createdAt: new Date("2025-01-01") }];
+    profilB.missions = [{ statut: "TERMINEE", nbJours: 5, createdAt: new Date("2025-01-01") }];
     const matchingB: ProfilPourMatching = { id: "pB", competences: [], seniorite: null, disponibilite: null, cvValide: true, tjmEstime: null, anneesExperience: null, paysResidence: null, competencesGraph: [] };
 
     const { v3: v3A } = enrichir(profilA, matchingA);

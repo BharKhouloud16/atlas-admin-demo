@@ -16,9 +16,11 @@ jobs:
     runs-on: ubuntu-latest
 
     # Base Postgres jetable pour ce run uniquement (jamais la base de
-    # production) — nécessaire car `npm run build` exécute
-    # `prisma migrate deploy` (voir package.json), et les tests E2E ont
-    # besoin de données réelles (voir prisma/seed.ts).
+    # production) — les migrations sont appliquées explicitement ci-dessous
+    # (voir "Migrations (base CI jetable)" ; `npm run build` ne les exécute
+    # plus automatiquement, voir package.json et la note du 24/09/2026 plus
+    # bas), et les tests E2E ont besoin de données réelles (voir
+    # prisma/seed.ts).
     services:
       postgres:
         image: postgres:16
@@ -37,7 +39,6 @@ jobs:
     env:
       DATABASE_URL: postgresql://atlas:atlas@localhost:5432/atlas_ci
       SESSION_SECRET: ci-secret-uniquement-pour-les-tests-jamais-en-production
-      SEED_TOKEN: ci-secret-uniquement-pour-les-tests
       # Toutes les requêtes de test partagent la même IP locale ("inconnue",
       # voir lib/rate-limit.ts) : sans ce relèvement, la suite API+E2E
       # complète (bien plus de 20 connexions au total) déclenche le
@@ -76,7 +77,17 @@ jobs:
       - name: Vérification des types TypeScript
         run: npx tsc --noEmit
 
-      - name: Build (génère le client Prisma, applique les migrations sur la base CI, build Next.js)
+      # FIX (24/09/2026) — `npm run build` (donc aussi tout build Vercel,
+      # Preview comme Production) n'exécute plus `prisma migrate deploy`
+      # automatiquement : un build ne doit jamais pouvoir appliquer des
+      # migrations à l'insu de qui le déclenche, surtout si un environnement
+      # Preview partage un jour une base avec la Production. Les migrations
+      # restent une étape explicite et contrôlée — ici, appliquées
+      # volontairement à la base CI jetable créée pour ce run uniquement.
+      - name: Migrations (base CI jetable)
+        run: npm run migrate:deploy
+
+      - name: Build (génère le client Prisma, build Next.js)
         run: npm run build
 
       - name: Données de démo (pour les tests E2E)

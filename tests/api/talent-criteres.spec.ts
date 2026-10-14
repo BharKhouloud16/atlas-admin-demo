@@ -1,18 +1,30 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 
 // ATLAS TALENT V1 — révision des critères de matching par l'Admin avant
 // de lancer le Matching Engine (voir PATCH /api/talent/demandes/[id]).
 // Complète tests/api/talent-fondations.spec.ts (RBAC + chemin heureux de
 // base) sans le dupliquer.
 
-async function connecter(request: import("@playwright/test").APIRequestContext, email: string) {
-  const reponse = await request.post("/api/auth/login", { data: { email, password: "Demo1234" } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 test.describe("ATLAS TALENT — critères de matching (révision Admin)", () => {
-  test("l'Admin peut vérifier/modifier les critères, le Client ne peut pas, et le matching relit bien les valeurs enregistrées", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("l'Admin peut vérifier/modifier les critères, le Client ne peut pas, et le matching relit bien les valeurs enregistrées", async () => {
+    let request = await connecter("CLIENT");
     const creation = await request.post("/api/talent/demandes", {
       data: { description: "Recherche un développeur, compétence Docker, budget 400 EUR/jour." },
     });
@@ -26,7 +38,7 @@ test.describe("ATLAS TALENT — critères de matching (révision Admin)", () => 
     });
     expect(refusClient.status()).toBe(403);
 
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
 
     // Validation stricte : une valeur hors bornes est rejetée (400), pas
     // silencieusement tronquée.
@@ -74,8 +86,8 @@ test.describe("ATLAS TALENT — critères de matching (révision Admin)", () => 
     expect(relue.senioriteSouhaitee).toBe("Expert");
   });
 
-  test("le Matching Engine V2 (score/motifs/TJM interne) n'est jamais exposé au Client", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("le Matching Engine V2 (score/motifs/TJM interne) n'est jamais exposé au Client", async () => {
+    let request = await connecter("CLIENT");
     const creation = await request.post("/api/talent/demandes", {
       data: { description: "Recherche un développeur Kubernetes." },
     });

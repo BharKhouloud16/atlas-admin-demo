@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 
 // ATLAS OS SECURITY INTELLIGENCE FOUNDATION V1 (Batch 13.9) — chemin API
 // GET /api/security. RBAC, forme de la réponse, absence de crash, absence
@@ -6,24 +7,35 @@ import { test, expect, APIRequestContext } from "@playwright/test";
 // (ce lot n'en produit aucun, voir lib/security/risk.ts, Batch 13.8),
 // uniquement sur la STRUCTURE que la route garantit.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 test.describe("ATLAS OS Security Intelligence Foundation V1 — API (GET /api/security)", () => {
-  test("1. isolation RBAC : /api/security n'est accessible qu'à l'Admin", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("1. isolation RBAC : /api/security n'est accessible qu'à l'Admin", async () => {
+    let request = await connecter("CLIENT");
     const refusClient = await request.get("/api/security");
     expect(refusClient.status()).toBe(403);
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     const refusIngenieur = await request.get("/api/security");
     expect(refusIngenieur.status()).toBe(403);
   });
 
-  test("2. Admin : réponse 200, structure complète, jamais un crash", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("2. Admin : réponse 200, structure complète, jamais un crash", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/security");
     expect(reponse.ok(), await reponse.text()).toBeTruthy();
     const corps = await reponse.json();
@@ -42,8 +54,8 @@ test.describe("ATLAS OS Security Intelligence Foundation V1 — API (GET /api/se
     expect(typeof corps.analyse.parDomaine).toBe("object");
   });
 
-  test("3. les 13 domaines Security sont toujours présents dans analyse.parDomaine", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("3. les 13 domaines Security sont toujours présents dans analyse.parDomaine", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/security");
     const corps = await reponse.json();
     const domainesAttendus = [
@@ -64,8 +76,8 @@ test.describe("ATLAS OS Security Intelligence Foundation V1 — API (GET /api/se
     expect(Object.keys(corps.analyse.parDomaine).sort()).toEqual(domainesAttendus.sort());
   });
 
-  test("4. observations : une par contrôle connu, toutes PASS/CODE_REVIEW, jamais un statut décidé arbitrairement", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("4. observations : une par contrôle connu, toutes PASS/CODE_REVIEW, jamais un statut décidé arbitrairement", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/security");
     const corps = await reponse.json();
     expect(corps.observations.length).toBe(corps.controlesConnus.length);
@@ -76,8 +88,8 @@ test.describe("ATLAS OS Security Intelligence Foundation V1 — API (GET /api/se
     }
   });
 
-  test("5. aucune agrégation : jamais de score/verdict global dans la réponse", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("5. aucune agrégation : jamais de score/verdict global dans la réponse", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/security");
     const corps = await reponse.json();
     expect(corps).not.toHaveProperty("score");
@@ -87,8 +99,8 @@ test.describe("ATLAS OS Security Intelligence Foundation V1 — API (GET /api/se
     expect(corps.analyse).not.toHaveProperty("score");
   });
 
-  test("6. toutes les observations PASS -> aucun Finding/RootCause/Impact/Risque fabriqué (rien à signaler)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("6. toutes les observations PASS -> aucun Finding/RootCause/Impact/Risque fabriqué (rien à signaler)", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/security");
     const corps = await reponse.json();
     expect(corps.findings).toEqual([]);
@@ -97,8 +109,8 @@ test.describe("ATLAS OS Security Intelligence Foundation V1 — API (GET /api/se
     expect(corps.risques).toEqual([]);
   });
 
-  test("7. déterminisme structurel : deux appels consécutifs renvoient la même forme de réponse", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("7. déterminisme structurel : deux appels consécutifs renvoient la même forme de réponse", async () => {
+    let request = await connecter("ADMIN");
     const r1 = await request.get("/api/security");
     const r2 = await request.get("/api/security");
     const j1 = await r1.json();
@@ -107,8 +119,8 @@ test.describe("ATLAS OS Security Intelligence Foundation V1 — API (GET /api/se
     expect(j1.observations.length).toBe(j2.observations.length);
   });
 
-  test("8. méthode HTTP non autorisée (POST) -> 405, jamais un traitement silencieux", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("8. méthode HTTP non autorisée (POST) -> 405, jamais un traitement silencieux", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.post("/api/security");
     expect(reponse.status()).toBe(405);
   });
@@ -120,8 +132,8 @@ test.describe("ATLAS OS Security Intelligence Foundation V1 — API (GET /api/se
     await contexteAnonyme.dispose();
   });
 
-  test("10. aucune fuite de secret/jeton dans la réponse, quel que soit son contenu", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("10. aucune fuite de secret/jeton dans la réponse, quel que soit son contenu", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/security");
     const corpsBrut = (await reponse.text()).toLowerCase();
     expect(corpsBrut).not.toContain("ghp_");
@@ -130,15 +142,15 @@ test.describe("ATLAS OS Security Intelligence Foundation V1 — API (GET /api/se
     expect(corpsBrut).not.toContain("session_secret");
   });
 
-  test("11. l'avertissement de portée (revue statique, pas d'audit dynamique) est bien présent, jamais omis", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("11. l'avertissement de portée (revue statique, pas d'audit dynamique) est bien présent, jamais omis", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/security");
     const corps = await reponse.json();
     expect(corps.avertissement.toLowerCase()).toContain("statique");
   });
 
-  test("12. non-régression B1-B12 : /api/security n'importe et n'expose rien de lib/talent/ ni lib/scoring.ts", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("12. non-régression B1-B12 : /api/security n'importe et n'expose rien de lib/talent/ ni lib/scoring.ts", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/security");
     const corps = await reponse.json();
     expect(corps).not.toHaveProperty("talentTrust");

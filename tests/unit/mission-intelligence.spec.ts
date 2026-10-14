@@ -29,8 +29,8 @@ test.describe("Mission Intelligence V1 (lib/talent/mission-intelligence)", () =>
 
   test("3. échantillon sous le seuil fiable : la valeur réelle reste affichée mais marquée INSUFFISANTE, jamais cachée", () => {
     const missions: MissionPourAnalytics[] = [
-      { statut: "Terminée", nbJours: 20, createdAt: new Date("2025-01-01") },
-      { statut: "Terminée", nbJours: 30, createdAt: new Date("2025-06-01") },
+      { statut: "TERMINEE", nbJours: 20, createdAt: new Date("2025-01-01") },
+      { statut: "TERMINEE", nbJours: 30, createdAt: new Date("2025-06-01") },
     ];
     const r = construireMissionIntelligence("p3", missions, []);
     expect(r.duree.moyenneJours.valeur).toBe(25);
@@ -40,9 +40,9 @@ test.describe("Mission Intelligence V1 (lib/talent/mission-intelligence)", () =>
 
   test("4. échantillon au-dessus du seuil fiable : statut SUFFISANTE", () => {
     const missions: MissionPourAnalytics[] = [
-      { statut: "Terminée", nbJours: 10, createdAt: new Date("2025-01-01") },
-      { statut: "Terminée", nbJours: 15, createdAt: new Date("2025-02-01") },
-      { statut: "Terminée", nbJours: 20, createdAt: new Date("2025-03-01") },
+      { statut: "TERMINEE", nbJours: 10, createdAt: new Date("2025-01-01") },
+      { statut: "TERMINEE", nbJours: 15, createdAt: new Date("2025-02-01") },
+      { statut: "TERMINEE", nbJours: 20, createdAt: new Date("2025-03-01") },
     ];
     const r = construireMissionIntelligence("p4", missions, []);
     expect(r.duree.moyenneJours.statut).toBe("SUFFISANTE");
@@ -53,12 +53,12 @@ test.describe("Mission Intelligence V1 (lib/talent/mission-intelligence)", () =>
 
   test("5. taux de réussite : missions en cours ne comptent ni pour ni contre, seules terminées/annulées entrent dans le calcul", () => {
     const missions: MissionPourAnalytics[] = [
-      { statut: "Terminée", nbJours: 10, createdAt: new Date("2025-01-01") },
-      { statut: "Terminée", nbJours: 10, createdAt: new Date("2025-02-01") },
-      { statut: "Terminée", nbJours: 10, createdAt: new Date("2025-03-01") },
-      { statut: "Annulée", nbJours: 5, createdAt: new Date("2025-04-01") },
-      { statut: "Annulée", nbJours: 5, createdAt: new Date("2025-05-01") },
-      { statut: "En cours", nbJours: 5, createdAt: new Date("2026-01-01") },
+      { statut: "TERMINEE", nbJours: 10, createdAt: new Date("2025-01-01") },
+      { statut: "TERMINEE", nbJours: 10, createdAt: new Date("2025-02-01") },
+      { statut: "TERMINEE", nbJours: 10, createdAt: new Date("2025-03-01") },
+      { statut: "ANNULEE", nbJours: 5, createdAt: new Date("2025-04-01") },
+      { statut: "ANNULEE", nbJours: 5, createdAt: new Date("2025-05-01") },
+      { statut: "EN_COURS", nbJours: 5, createdAt: new Date("2026-01-01") },
     ];
     const r = construireMissionIntelligence("p5", missions, []);
     expect(r.activite.tauxReussite.valeur).toBe(0.6);
@@ -98,7 +98,7 @@ test.describe("Mission Intelligence V1 (lib/talent/mission-intelligence)", () =>
   });
 
   test("9. déterminisme strict : même entrée -> même résultat", () => {
-    const missions: MissionPourAnalytics[] = [{ statut: "Terminée", nbJours: 20, createdAt: new Date("2025-01-01") }];
+    const missions: MissionPourAnalytics[] = [{ statut: "TERMINEE", nbJours: 20, createdAt: new Date("2025-01-01") }];
     const evaluations: EvaluationPourAnalytics[] = [{ note: 4, createdAt: new Date("2025-01-01") }];
     const r1 = construireMissionIntelligence("p9", missions, evaluations);
     const r2 = construireMissionIntelligence("p9", missions, evaluations);
@@ -107,9 +107,9 @@ test.describe("Mission Intelligence V1 (lib/talent/mission-intelligence)", () =>
 
   test("10. isolation entre profils : les statistiques d'un candidat ne contaminent jamais celles d'un autre", () => {
     const missionsA: MissionPourAnalytics[] = [
-      { statut: "Terminée", nbJours: 10, createdAt: new Date("2025-01-01") },
-      { statut: "Terminée", nbJours: 10, createdAt: new Date("2025-02-01") },
-      { statut: "Terminée", nbJours: 10, createdAt: new Date("2025-03-01") },
+      { statut: "TERMINEE", nbJours: 10, createdAt: new Date("2025-01-01") },
+      { statut: "TERMINEE", nbJours: 10, createdAt: new Date("2025-02-01") },
+      { statut: "TERMINEE", nbJours: 10, createdAt: new Date("2025-03-01") },
     ];
     const rA = construireMissionIntelligence("pA", missionsA, []);
     const rB = construireMissionIntelligence("pB", [], []);

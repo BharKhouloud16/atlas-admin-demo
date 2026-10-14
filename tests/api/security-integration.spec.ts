@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 
 // ATLAS OS SECURITY INTELLIGENCE FOUNDATION V1 (Batch 13.10) — chemin API,
 // tests d'INTÉGRATION complémentaires à tests/api/security.spec.ts (B13.9).
@@ -10,14 +11,25 @@ import { test, expect, APIRequestContext } from "@playwright/test";
 // stricte des parcours B1-B12 (connexion, /api/profils) à côté de
 // /api/security nouvellement introduit.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 test.describe("ATLAS OS Security Intelligence Foundation V1 — intégration API", () => {
-  test("1. entrée superflue (query string, corps JSON) ignorée sans crash : la route ne lit aucun paramètre d'entrée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("1. entrée superflue (query string, corps JSON) ignorée sans crash : la route ne lit aucun paramètre d'entrée", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/security?domaine=AUTHENTICATION&actif=inexistant&%3Cscript%3E=1", {
       data: { ceci: "ne devrait jamais être lu par une route GET" },
     });
@@ -26,8 +38,8 @@ test.describe("ATLAS OS Security Intelligence Foundation V1 — intégration API
     expect(Array.isArray(corps.controlesConnus)).toBe(true);
   });
 
-  test("2. méthodes non prévues (PUT/DELETE/PATCH) : jamais un traitement silencieux, jamais un 200", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("2. méthodes non prévues (PUT/DELETE/PATCH) : jamais un traitement silencieux, jamais un 200", async () => {
+    let request = await connecter("ADMIN");
     for (const methode of ["put", "delete", "patch"] as const) {
       const reponse = await request[methode]("/api/security");
       expect(reponse.status(), `méthode ${methode}`).not.toBe(200);
@@ -35,8 +47,8 @@ test.describe("ATLAS OS Security Intelligence Foundation V1 — intégration API
     }
   });
 
-  test("3. isolation tenant stricte : aucun identifiant Client/Ingénieur/Mission/Profil dans la réponse, quelle que soit sa forme", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("3. isolation tenant stricte : aucun identifiant Client/Ingénieur/Mission/Profil dans la réponse, quelle que soit sa forme", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/security");
     const corpsBrut = await reponse.text();
     for (const champInterdit of ["clientId", "profilId", "missionId", "ingenieurId", "\"nom\":", "\"email\":"]) {
@@ -44,8 +56,8 @@ test.describe("ATLAS OS Security Intelligence Foundation V1 — intégration API
     }
   });
 
-  test("4. cohabitation avec /api/quality (B12) : les deux routes Admin-only répondent indépendamment, sans référence croisée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("4. cohabitation avec /api/quality (B12) : les deux routes Admin-only répondent indépendamment, sans référence croisée", async () => {
+    let request = await connecter("ADMIN");
     const [rSecurity, rQuality] = await Promise.all([request.get("/api/security"), request.get("/api/quality")]);
     expect(rSecurity.ok(), await rSecurity.text()).toBeTruthy();
     expect(rQuality.ok(), await rQuality.text()).toBeTruthy();
@@ -57,16 +69,16 @@ test.describe("ATLAS OS Security Intelligence Foundation V1 — intégration API
     expect(corpsQuality).not.toHaveProperty("avertissement"); // champ propre à /api/security
   });
 
-  test("5. RBAC exhaustif sur toutes les méthodes exposées : seul GET+ADMIN passe, tout le reste échoue proprement", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("5. RBAC exhaustif sur toutes les méthodes exposées : seul GET+ADMIN passe, tout le reste échoue proprement", async () => {
+    let request = await connecter("CLIENT");
     const getRefuse = await request.get("/api/security");
     const postRefuse = await request.post("/api/security");
     expect(getRefuse.status()).toBe(403);
     expect([403, 405]).toContain(postRefuse.status());
   });
 
-  test("6. non-régression B1-B12 : /api/security nouvellement introduit ne casse ni la connexion ni /api/profils (Batch 5/8)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("6. non-régression B1-B12 : /api/security nouvellement introduit ne casse ni la connexion ni /api/profils (Batch 5/8)", async () => {
+    let request = await connecter("ADMIN");
     const reponseSecurity = await request.get("/api/security");
     const reponseProfils = await request.get("/api/profils");
     expect(reponseSecurity.ok()).toBeTruthy();
@@ -75,8 +87,8 @@ test.describe("ATLAS OS Security Intelligence Foundation V1 — intégration API
     expect(Array.isArray(profils)).toBe(true);
   });
 
-  test("7. déterminisme structurel sous charge légère : cinq appels consécutifs renvoient tous la même forme de réponse", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("7. déterminisme structurel sous charge légère : cinq appels consécutifs renvoient tous la même forme de réponse", async () => {
+    let request = await connecter("ADMIN");
     const reponses = await Promise.all(Array.from({ length: 5 }, () => request.get("/api/security")));
     const corps = await Promise.all(reponses.map((r) => r.json()));
     const clesReference = Object.keys(corps[0]).sort();
@@ -86,8 +98,8 @@ test.describe("ATLAS OS Security Intelligence Foundation V1 — intégration API
     }
   });
 
-  test("8. aucun UNKNOWN ne devient un FAIL/CONFIRMED côté API : les Findings exposés (s'il y en a) ne contiennent jamais CONFIRMED, les RootCauses/Impacts/Risques jamais IDENTIFIED", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("8. aucun UNKNOWN ne devient un FAIL/CONFIRMED côté API : les Findings exposés (s'il y en a) ne contiennent jamais CONFIRMED, les RootCauses/Impacts/Risques jamais IDENTIFIED", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/security");
     const corps = await reponse.json();
     for (const f of corps.findings as { confiance: string }[]) {

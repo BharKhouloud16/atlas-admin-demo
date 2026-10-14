@@ -1,3 +1,5 @@
+import { resoudreCompetencesDepuisTexte } from "@/lib/talent/skill-resolution";
+
 // Abstraction provider-neutre pour toute fonctionnalité IA d'ATLAS TALENT
 // (AI Request Analyzer, et plus tard Matching Engine / Talent Agent — voir
 // lib/talent/). But : le système doit être "AI-native" (conçu pour l'IA dès
@@ -21,18 +23,33 @@ export type SuggestionAnalyse = {
   budgetTjmMax: number | null;
   budgetDevise: string | null;
   confiance: number; // 0-1 — jamais 1.0 pour un provider heuristique/local
+  // LOT 11 — ATLAS SKILL INTELLIGENCE V1 : détail de la méthode de détection
+  // PAR compétence (voir lib/talent/skill-resolution.ts), en plus de la
+  // liste plate `competences` ci-dessus (conservée telle quelle pour la
+  // compatibilité des appelants existants, ex. lib/talent/analyseur.ts qui
+  // ne lit jamais ce champ). Optionnel : un futur provider tiers qui ne
+  // l'implémenterait pas reste pleinement compatible (repli documenté dans
+  // lib/talent/skill-graph.ts::construireCompetencesInferees).
+  detailCompetences?: { competence: string; methode: "EXACT" | "ALIAS" }[];
 };
 
 // COMPANY ATLAS — LOT 2 : Client Need Intelligence Foundation (15/09/2026).
 //
 // Vocabulaire des clés de fait EXTRACTIBLES — sous-ensemble volontaire de
 // ClientNeedFaitCle (prisma/schema.prisma) : les clés purement déclaratives/
-// répétitives sans heuristique fiable (CONTRAINTE, CRITERE_REUSSITE,
-// PRIORITE, RISQUE, PREFERENCE) ne sont PAS extraites par le provider local
-// — un heuristique par mots-clés ne peut pas les détecter honnêtement, donc
-// il ne prétend pas le faire (ne jamais inventer une extraction, directive
-// de la mission). Recopié ici en chaîne (pas un import de @prisma/client) :
-// ce module reste indépendant de Prisma, comme SuggestionAnalyse ci-dessus.
+// répétitives sans heuristique fiable (CONTRAINTE, PRIORITE, RISQUE,
+// PREFERENCE) ne sont PAS extraites par le provider local — un heuristique
+// par mots-clés ne peut pas les détecter honnêtement, donc il ne prétend
+// pas le faire (ne jamais inventer une extraction, directive de la
+// mission). Recopié ici en chaîne (pas un import de @prisma/client) : ce
+// module reste indépendant de Prisma, comme SuggestionAnalyse ci-dessus.
+//
+// A6.1 — Outcome Foundation (01/10/2026) : RESULTAT_ATTENDU (singleton) et
+// CRITERE_REUSSITE (répétable) rejoignent ce vocabulaire — même discipline
+// que les autres clés ci-dessous : uniquement sur signal explicite dans le
+// texte, jamais une déduction ni une valeur générique. CRITERE_REUSSITE
+// reste répétable (plusieurs lignes possibles par extraction) exactement
+// comme COMPETENCE ; voir extraireBesoin() ci-dessous pour le détail.
 export type CleFaitBesoinExtractible =
   | "OBJECTIF"
   | "ROLE"
@@ -48,6 +65,8 @@ export type CleFaitBesoinExtractible =
   | "DISPONIBILITE"
   | "LOCALISATION"
   | "REMOTE"
+  | "RESULTAT_ATTENDU"
+  | "CRITERE_REUSSITE"
   | "HYPOTHESE_DOMAINE_SOLUTION";
 
 export type FaitBesoinExtrait = {
@@ -66,6 +85,67 @@ export type SuggestionBesoin = {
   confiance: number; // 0-1 — jamais 1.0 pour un provider heuristique/local
 };
 
+// COMPANY ATLAS — A34 : Learning Loop Runtime (06/10/2026).
+//
+// Pointeur de fait — jamais une copie du contenu source (même discipline
+// que Learning.source*Id, A30) : un identifiant + le type de source + le
+// palier de preuve déjà porté par CE fait dans son propre modèle d'origine
+// (contrat A33 §12/A34 §12, vocabulaire RAW_DATA/BUSINESS_FACT/
+// VERIFIED_RESULT/DECLARATION/INFERENCE — jamais un nouvel enum de
+// provenance, voir lib/learning-loop/facts.ts pour le mapping exact depuis
+// A26/A27/A29/A30) + un résumé court factuel (jamais le contenu brut).
+export type LearningSourceType =
+  | "MISSION"
+  | "NEED"
+  | "NEED_FACT"
+  | "SOLUTION_DECISION"
+  | "WORK_ITEM"
+  | "DELIVERABLE"
+  | "DELIVERABLE_VERSION"
+  | "DELIVERY_EVIDENCE"
+  | "QUALITY_GATE"
+  | "OUTCOME_ASSESSMENT"
+  | "FINANCIAL_RESULT";
+
+export type PalierPreuve = "RAW_DATA" | "BUSINESS_FACT" | "VERIFIED_RESULT" | "DECLARATION" | "INFERENCE";
+
+export type PointeurFait = {
+  sourceType: LearningSourceType;
+  id: string;
+  palier: PalierPreuve;
+  resume: string;
+};
+
+// Suggestion BRUTE — jamais écrite telle quelle (contrat A34 §23, pipeline
+// obligatoire) : le serveur (lib/learning-loop/classification.ts) recalcule
+// systématiquement type/scope/provenance/confidence selon les règles
+// déterministes A33/A34, quelle que soit la valeur suggérée ici. Ce type
+// documente uniquement la FORME que le provider peut proposer — jamais un
+// droit d'écriture direct.
+export type SuggestionLearning = {
+  type: "LESSON" | "PATTERN" | "BEST_PRACTICE" | "ANTI_PATTERN" | "RECOMMENDATION" | "INSIGHT";
+  scope: "MISSION" | "CLIENT" | "DOMAIN" | "CAPABILITY" | "ATLAS"; // suggestion uniquement — le serveur impose MISSION (contrat A34 §21)
+  titre: string;
+  statement: string;
+  confianceSuggeree: "LOW" | "MEDIUM" | "HIGH"; // suggestion uniquement — le serveur recalcule (contrat A34 §20)
+  justification: string;
+  pointeurFaitPrincipal: PointeurFait | null;
+};
+
+export type ContexteApprentissage = {
+  missionId: string;
+  faits: PointeurFait[];
+  // Calculé par le moteur déterministe AVANT l'appel au provider (jamais
+  // par le provider lui-même) — voir lib/learning-loop/recurrence.ts.
+  missionsComparablesCount: number;
+};
+
+export type SuggestionApprentissage = {
+  candidats: SuggestionLearning[];
+  incertitudes: string[];
+  contradictionsDetectees: string[];
+};
+
 export interface AiProvider {
   readonly nom: string; // "local" | "anthropic" | "openai" | "gemini" ...
   analyserTexte(texte: string, competencesConnues: string[]): Promise<SuggestionAnalyse>;
@@ -73,6 +153,15 @@ export interface AiProvider {
   // en tête de fichier : brancher un vrai provider ne doit demander qu'une
   // implémentation de cette méthode, jamais un changement des appelants).
   extraireBesoin(texte: string, competencesConnues: string[], paysConnus: string[]): Promise<SuggestionBesoin>;
+  // A34 — additive à l'interface existante, même principe. Entrée fermée
+  // (ContexteApprentissage, jamais un texte libre concaténé — contrat A34
+  // §25 : toute donnée métier reste DATA, jamais une instruction) ; sortie
+  // fermée (SuggestionApprentissage, jamais `any`/JSON arbitraire — contrat
+  // A34 §22). Purement ADVISORY (contrat A34 §23) : aucun appelant ne
+  // persiste directement cette sortie, toujours revalidée/reclassifiée
+  // server-side (lib/learning-loop/classification.ts) avant tout appel à
+  // creerLearningAvecRetry (A30).
+  proposerApprentissage(contexte: ContexteApprentissage): Promise<SuggestionApprentissage>;
 }
 
 // Provider par défaut, sans aucune dépendance réseau ni clé API : extraction
@@ -88,12 +177,16 @@ class AiProviderLocal implements AiProvider {
   async analyserTexte(texte: string, competencesConnues: string[]): Promise<SuggestionAnalyse> {
     const normalise = texte.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
-    const competences = competencesConnues.filter((c) => {
-      const cNormalise = c.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-      // une compétence composite ("Selenium WebDriver" n'existe pas ici,
-      // mais "TestNG / JUnit" oui) : on matche si l'un des segments "/" est présent
-      return cNormalise.split(" / ").some((segment) => normalise.includes(segment.trim()));
-    });
+    // LOT 11 -- remplace l'ancienne recherche de sous-chaine brute
+    // (`normalise.includes(segment)`) par lib/talent/skill-resolution.ts :
+    // correspondance par mot entier (elimine le faux positif "PostgreSQL"
+    // -> "SQL" documente au Lot 10) + reconnaissance explicite de quelques
+    // variantes d'ecriture usuelles (K8s, JS, TS, React.js, ReactJS).
+    const detailCompetences = resoudreCompetencesDepuisTexte(texte, competencesConnues).map((r) => ({
+      competence: r.competence,
+      methode: r.methode,
+    }));
+    const competences = detailCompetences.map((d) => d.competence);
 
     const SENIORITES: { motCle: string; valeur: string }[] = [
       { motCle: "junior", valeur: "Junior" },
@@ -118,7 +211,7 @@ class AiProviderLocal implements AiProvider {
     // l'Admin doit revoir avant tout matching (voir statut ANALYSEE).
     const confiance = competences.length > 0 || seniorite ? 0.4 : 0.15;
 
-    return { competences, seniorite, budgetTjmMax, budgetDevise, confiance };
+    return { competences, seniorite, budgetTjmMax, budgetDevise, confiance, detailCompetences };
   }
 
   // LOT 2 — Client Need Intelligence Foundation. Extraction heuristique
@@ -229,6 +322,57 @@ class AiProviderLocal implements AiProvider {
       else if (/abonnement/.test(normalise)) ajouter("BUDGET_TYPE", "ABONNEMENT");
     }
 
+    // A6.1 — Outcome Foundation (01/10/2026). RESULTAT_ATTENDU — signal
+    // explicite uniquement ("nous voulons/souhaitons/cherchons à...",
+    // "l'objectif est de..."), jamais une déduction du sujet général du
+    // texte : capture uniquement ce qui suit le signal, jusqu'à la
+    // ponctuation de fin (. ! ? ; ou fin de texte) — jamais un résumé, une
+    // reformulation ou une invention. Opère sur `texte` (pas `normalise`)
+    // pour préserver la casse/accents d'origine dans la valeur capturée.
+    // Si aucun signal n'est trouvé, RESULTAT_ATTENDU reste absent (jamais
+    // de valeur par défaut) — son absence est ensuite traitée comme une
+    // clarification recommandée, jamais bloquante (voir
+    // CLES_IMPORTANTES_SI_ABSENTES, lib/client-need/extraction.ts).
+    const SIGNAUX_RESULTAT_ATTENDU = [
+      /nous (?:voulons|souhaitons|aimerions|cherchons [aà])\s+([^.!?;\n]{5,200})/i,
+      /(?:l[' ]objectif|notre objectif|le but)\s+est\s+de\s+([^.!?;\n]{5,200})/i,
+    ];
+    for (const regex of SIGNAUX_RESULTAT_ATTENDU) {
+      const m = texte.match(regex);
+      if (m && m[1].trim().length >= 5) {
+        ajouter("RESULTAT_ATTENDU", m[1].trim().slice(0, 200));
+        break;
+      }
+    }
+
+    // CRITERE_REUSSITE — répétable, même discipline : uniquement sur
+    // signal explicite ("critère(s) de réussite/succès...", "on saura que
+    // c'est réussi si...", "le succès sera mesuré par..."), jamais une
+    // déduction. Le texte capturé est découpé en instances distinctes sur
+    // les séparateurs d'énumération usuels (point-virgule, virgule, " et ")
+    // — simple découpage mécanique du texte littéral, jamais une
+    // compréhension de son contenu (ne construit pas un moteur NLP,
+    // directive de la mission A6.1 §7). Plafonné à 5 instances pour éviter
+    // une sur-segmentation artificielle d'une phrase mal ponctuée.
+    const SIGNAUX_CRITERE_REUSSITE = [
+      /crit[eè]res?\s+de\s+r[ée]ussite\s*:?\s*([^.!?\n]{5,300})/i,
+      /crit[eè]res?\s+de\s+succ[eè]s\s*:?\s*([^.!?\n]{5,300})/i,
+      /on\s+saura\s+que\s+c.?est\s+r[ée]ussi\s+si\s+([^.!?\n]{5,300})/i,
+      /le\s+succ[eè]s\s+sera\s+mesur[ée]\s+par\s+([^.!?\n]{5,300})/i,
+    ];
+    for (const regex of SIGNAUX_CRITERE_REUSSITE) {
+      const m = texte.match(regex);
+      if (m) {
+        const instances = m[1]
+          .split(/;|,| et /i)
+          .map((s) => s.trim())
+          .filter((s) => s.length >= 3)
+          .slice(0, 5);
+        for (const instance of instances) ajouter("CRITERE_REUSSITE", instance.slice(0, 200));
+        break;
+      }
+    }
+
     // HYPOTHESE_DOMAINE_SOLUTION — TOUJOURS INFERE, jamais DECLARE : c'est
     // par construction une déduction, jamais une lecture directe. Signal
     // Talent = rôle/compétence/séniorité détecté ; signal ATLAS OS = mots-
@@ -243,6 +387,72 @@ class AiProviderLocal implements AiProvider {
     const confianceBesoin = faits.filter((f) => f.cle !== "HYPOTHESE_DOMAINE_SOLUTION").length >= 3 ? 0.4 : 0.2;
 
     return { faits, confiance: confianceBesoin };
+  }
+
+  // A34 — Learning Loop Runtime (06/10/2026). Heuristique locale,
+  // déterministe, zéro dépendance réseau/clé API (contrat A34 §19) :
+  // sélectionne le fait le plus fort du dossier (priorité Outcome >
+  // FinancialResult > Quality > Evidence > reste) et en dérive UN candidat
+  // textuel, construit par simple gabarit à partir du `resume` déjà
+  // factuel du pointeur — jamais une paraphrase/interprétation nouvelle.
+  // PUREMENT CONSULTATIF (contrat A34 §18/§23) : type/scope/confiance
+  // suggérés ici sont TOUJOURS recalculés server-side
+  // (lib/learning-loop/classification.ts) avant toute persistance ; ce
+  // provider ne décide jamais de la vérité.
+  async proposerApprentissage(contexte: ContexteApprentissage): Promise<SuggestionApprentissage> {
+    const PRIORITE_SOURCE: Record<LearningSourceType, number> = {
+      OUTCOME_ASSESSMENT: 7,
+      FINANCIAL_RESULT: 6,
+      QUALITY_GATE: 5,
+      DELIVERY_EVIDENCE: 4,
+      DELIVERABLE_VERSION: 3,
+      DELIVERABLE: 2,
+      SOLUTION_DECISION: 2,
+      NEED_FACT: 1,
+      NEED: 1,
+      WORK_ITEM: 1,
+      MISSION: 0,
+    };
+
+    const faitsExploitables = contexte.faits.filter((f) => f.sourceType !== "MISSION" && f.palier !== "RAW_DATA");
+    if (faitsExploitables.length === 0) {
+      return {
+        candidats: [],
+        incertitudes: ["Aucun fait suffisamment solide (au-delà d'une simple donnée brute) pour proposer un Learning."],
+        contradictionsDetectees: [],
+      };
+    }
+
+    const faitPrincipal = [...faitsExploitables].sort((a, b) => PRIORITE_SOURCE[b.sourceType] - PRIORITE_SOURCE[a.sourceType])[0];
+
+    const confianceSuggeree: "LOW" | "MEDIUM" | "HIGH" =
+      contexte.missionsComparablesCount >= 2 && faitPrincipal.palier === "VERIFIED_RESULT"
+        ? "HIGH"
+        : contexte.missionsComparablesCount >= 2 || faitPrincipal.palier === "VERIFIED_RESULT"
+          ? "MEDIUM"
+          : "LOW";
+
+    const type: SuggestionLearning["type"] = contexte.missionsComparablesCount >= 2 ? "PATTERN" : "LESSON";
+
+    return {
+      candidats: [
+        {
+          type,
+          scope: "MISSION",
+          // Dérivé du contenu réel du fait (jamais un gabarit id-only) —
+          // sinon la détection de doublon/contradiction par recoupement de
+          // titre (lib/learning-loop/duplicates.ts, contradictions.ts)
+          // n'aurait structurellement jamais aucun mot à comparer.
+          titre: faitPrincipal.resume.slice(0, 200),
+          statement: faitPrincipal.resume,
+          confianceSuggeree,
+          justification: `Fait principal : ${faitPrincipal.sourceType}:${faitPrincipal.id} (palier ${faitPrincipal.palier}). ${contexte.missionsComparablesCount} mission(s) comparable(s) détectée(s).`,
+          pointeurFaitPrincipal: faitPrincipal,
+        },
+      ],
+      incertitudes: [],
+      contradictionsDetectees: [],
+    };
   }
 }
 

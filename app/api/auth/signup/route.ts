@@ -66,6 +66,14 @@ export async function POST(req: NextRequest) {
         emailVerificationExpire: expirationToken,
         consentementRgpd: true,
         consentementRgpdLe: new Date(),
+        // ENGINEER ACCESS & TRUST (09/10/2026) — persiste la MÊME adresse IP
+        // déjà calculée ci-dessus pour le rate limiting (`ip`), jamais une
+        // seconde collecte : seul signal Access Integrity reposant sur
+        // l'environnement réellement disponible aujourd'hui (contrat §9,
+        // "selon les données réellement disponibles") — jamais de
+        // géolocalisation précise, jamais de détection VPN/proxy (aucun
+        // mécanisme fiable n'existe, voir lib/engineer-access/integrity.ts).
+        inscriptionIp: ip,
       },
     });
     const nomComplet = prenom ? `${prenom} ${nom}` : nom;

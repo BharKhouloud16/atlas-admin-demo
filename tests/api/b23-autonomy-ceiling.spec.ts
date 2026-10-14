@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 
 // COMPANY ATLAS — B23 LOT 2 : READ-ONLY AUTONOMY CEILING API
@@ -10,9 +11,20 @@ import { prisma } from "@/lib/prisma";
 // tests/api/b22-control-plane.spec.ts (connecter/idAgent, manipulation
 // DIRECTE via prisma réservée au SETUP, toujours restaurée en try/finally).
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function idAgent(request: APIRequestContext, nom: string): Promise<string> {
@@ -39,24 +51,24 @@ test.describe("COMPANY ATLAS B23 Lot 2 — Autonomy Ceiling API (GET /api/contro
     expect(reponse.status()).toBe(403);
   });
 
-  test("RBAC : CLIENT -> 403", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("RBAC : CLIENT -> 403", async () => {
+    let request = await connecter("CLIENT");
     const reponse = await request.get(
       "/api/control-plane/autonomy/ceiling?agentId=x&action=READ&scope=TALENT&requestedAutonomyLevel=L1_ANALYZE"
     );
     expect(reponse.status()).toBe(403);
   });
 
-  test("RBAC : INGENIEUR -> 403", async ({ request }) => {
-    await connecter(request, "ingenieur-demo@example.com");
+  test("RBAC : INGENIEUR -> 403", async () => {
+    let request = await connecter("INGENIEUR");
     const reponse = await request.get(
       "/api/control-plane/autonomy/ceiling?agentId=x&action=READ&scope=TALENT&requestedAutonomyLevel=L1_ANALYZE"
     );
     expect(reponse.status()).toBe(403);
   });
 
-  test("RBAC : ADMIN -> accès (200)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("RBAC : ADMIN -> accès (200)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const reponse = await request.get(
       `/api/control-plane/autonomy/ceiling?agentId=${agentId}&action=READ&scope=TALENT&requestedAutonomyLevel=L1_ANALYZE`
@@ -67,8 +79,8 @@ test.describe("COMPANY ATLAS B23 Lot 2 — Autonomy Ceiling API (GET /api/contro
   // ==========================================================================
   // Fonctionnement — cas nominal, niveaux L0-L4, L5/L6 plafonnés.
 
-  test("cas nominal : permission active, aucune restriction -> autonomyCeiling = requestedAutonomy, jamais bloqué", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("cas nominal : permission active, aucune restriction -> autonomyCeiling = requestedAutonomy, jamais bloqué", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const reponse = await request.get(
       `/api/control-plane/autonomy/ceiling?agentId=${agentId}&action=READ&scope=TALENT&requestedAutonomyLevel=L4_EXECUTE_WITH_APPROVAL`
@@ -85,8 +97,8 @@ test.describe("COMPANY ATLAS B23 Lot 2 — Autonomy Ceiling API (GET /api/contro
   });
 
   for (const niveau of ["L0_OBSERVE", "L1_ANALYZE", "L2_RECOMMEND", "L3_PREPARE", "L4_EXECUTE_WITH_APPROVAL"]) {
-    test(`${niveau} demandé, contexte nominal -> autonomyCeiling = ${niveau}`, async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test(`${niveau} demandé, contexte nominal -> autonomyCeiling = ${niveau}`, async () => {
+      let request = await connecter("ADMIN");
       const agentId = await idAgent(request, "ATLAS_TALENT");
       const reponse = await request.get(
         `/api/control-plane/autonomy/ceiling?agentId=${agentId}&action=READ&scope=TALENT&requestedAutonomyLevel=${niveau}`
@@ -99,8 +111,8 @@ test.describe("COMPANY ATLAS B23 Lot 2 — Autonomy Ceiling API (GET /api/contro
   }
 
   for (const niveau of ["L5_EXECUTE_WITH_GUARDRAILS", "L6_AUTONOMOUS"]) {
-    test(`${niveau} demandé -> ACCEPTÉ en entrée (jamais 400), mais toujours ramené à L4 maximum`, async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test(`${niveau} demandé -> ACCEPTÉ en entrée (jamais 400), mais toujours ramené à L4 maximum`, async () => {
+      let request = await connecter("ADMIN");
       const agentId = await idAgent(request, "ATLAS_TALENT");
       const reponse = await request.get(
         `/api/control-plane/autonomy/ceiling?agentId=${agentId}&action=READ&scope=TALENT&requestedAutonomyLevel=${niveau}`
@@ -113,8 +125,8 @@ test.describe("COMPANY ATLAS B23 Lot 2 — Autonomy Ceiling API (GET /api/contro
     });
   }
 
-  test("requestedAutonomyLevel manquant ou hors vocabulaire -> 400", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("requestedAutonomyLevel manquant ou hors vocabulaire -> 400", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const sansNiveau = await request.get(`/api/control-plane/autonomy/ceiling?agentId=${agentId}&action=READ&scope=TALENT`);
     expect(sansNiveau.status()).toBe(400);
@@ -124,14 +136,14 @@ test.describe("COMPANY ATLAS B23 Lot 2 — Autonomy Ceiling API (GET /api/contro
     expect(niveauInvalide.status()).toBe(400);
   });
 
-  test("agentId manquant -> 400", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("agentId manquant -> 400", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/control-plane/autonomy/ceiling?action=READ&scope=TALENT&requestedAutonomyLevel=L1_ANALYZE");
     expect(reponse.status()).toBe(400);
   });
 
-  test("permission correcte + scope correct -> PERMISSION non bloquante", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("permission correcte + scope correct -> PERMISSION non bloquante", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const reponse = await request.get(
       `/api/control-plane/autonomy/ceiling?agentId=${agentId}&action=READ&scope=TALENT&requestedAutonomyLevel=L1_ANALYZE`
@@ -142,8 +154,8 @@ test.describe("COMPANY ATLAS B23 Lot 2 — Autonomy Ceiling API (GET /api/contro
     expect(corps.blocked).toBe(false);
   });
 
-  test("scope incorrect (agent n'a READ que sur TALENT, pas SECURITY) -> PERMISSION bloquante, blocked=true", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("scope incorrect (agent n'a READ que sur TALENT, pas SECURITY) -> PERMISSION bloquante, blocked=true", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const reponse = await request.get(
       `/api/control-plane/autonomy/ceiling?agentId=${agentId}&action=READ&scope=SECURITY&requestedAutonomyLevel=L1_ANALYZE`
@@ -156,8 +168,8 @@ test.describe("COMPANY ATLAS B23 Lot 2 — Autonomy Ceiling API (GET /api/contro
     expect(raison?.bloquant).toBe(true);
   });
 
-  test("scope invalide/inconnu -> fail-closed, jamais une correspondance implicite", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("scope invalide/inconnu -> fail-closed, jamais une correspondance implicite", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const reponse = await request.get(
       `/api/control-plane/autonomy/ceiling?agentId=${agentId}&action=READ&scope=SUPER_GLOBAL_SCOPE&requestedAutonomyLevel=L1_ANALYZE`
@@ -170,8 +182,8 @@ test.describe("COMPANY ATLAS B23 Lot 2 — Autonomy Ceiling API (GET /api/contro
     expect(raison?.detail).toContain("scope invalide");
   });
 
-  test("permission inactive (DISABLED entre-temps) -> PERMISSION bloquante", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("permission inactive (DISABLED entre-temps) -> PERMISSION bloquante", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { permissions } = await (await request.get("/api/security/permissions")).json();
     const permissionReadTalent = permissions.find(
@@ -194,8 +206,8 @@ test.describe("COMPANY ATLAS B23 Lot 2 — Autonomy Ceiling API (GET /api/contro
     }
   });
 
-  test("Emergency Stop actif (GLOBAL) -> blocked=true, court-circuit total", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("Emergency Stop actif (GLOBAL) -> blocked=true, court-circuit total", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
 
     const activation = await request.post("/api/control-plane/emergency-stops", {
@@ -220,8 +232,8 @@ test.describe("COMPANY ATLAS B23 Lot 2 — Autonomy Ceiling API (GET /api/contro
     }
   });
 
-  test("evidenceQuality UNKNOWN -> plafond réduit à L1_ANALYZE", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("evidenceQuality UNKNOWN -> plafond réduit à L1_ANALYZE", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const reponse = await request.get(
       `/api/control-plane/autonomy/ceiling?agentId=${agentId}&action=READ&scope=TALENT&requestedAutonomyLevel=L4_EXECUTE_WITH_APPROVAL&evidenceQuality=UNKNOWN`
@@ -230,8 +242,8 @@ test.describe("COMPANY ATLAS B23 Lot 2 — Autonomy Ceiling API (GET /api/contro
     expect(corps.autonomyCeiling).toBe("L1_ANALYZE");
   });
 
-  test("evidenceQuality invalide (hors vocabulaire fermé) -> fail-closed, jamais L4 par défaut", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("evidenceQuality invalide (hors vocabulaire fermé) -> fail-closed, jamais L4 par défaut", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const reponse = await request.get(
       `/api/control-plane/autonomy/ceiling?agentId=${agentId}&action=READ&scope=TALENT&requestedAutonomyLevel=L4_EXECUTE_WITH_APPROVAL&evidenceQuality=TOTALLY_SURE`
@@ -249,8 +261,8 @@ test.describe("COMPANY ATLAS B23 Lot 2 — Autonomy Ceiling API (GET /api/contro
     CRITICAL: "L1_ANALYZE",
   };
   for (const risque of Object.keys(PLAFOND_ATTENDU)) {
-    test(`risk ${risque} -> plafond RISK = ${PLAFOND_ATTENDU[risque]}`, async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test(`risk ${risque} -> plafond RISK = ${PLAFOND_ATTENDU[risque]}`, async () => {
+      let request = await connecter("ADMIN");
       const agentId = await idAgent(request, "ATLAS_TALENT");
       const reponse = await request.get(
         `/api/control-plane/autonomy/ceiling?agentId=${agentId}&action=READ&scope=TALENT&requestedAutonomyLevel=L4_EXECUTE_WITH_APPROVAL&riskLevel=${risque}`
@@ -261,8 +273,8 @@ test.describe("COMPANY ATLAS B23 Lot 2 — Autonomy Ceiling API (GET /api/contro
     });
   }
 
-  test("riskLevel invalide (hors vocabulaire fermé) -> fail-closed, jamais L4 par défaut", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("riskLevel invalide (hors vocabulaire fermé) -> fail-closed, jamais L4 par défaut", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const reponse = await request.get(
       `/api/control-plane/autonomy/ceiling?agentId=${agentId}&action=READ&scope=TALENT&requestedAutonomyLevel=L4_EXECUTE_WITH_APPROVAL&riskLevel=SUPER_DANGEROUS`
@@ -273,8 +285,8 @@ test.describe("COMPANY ATLAS B23 Lot 2 — Autonomy Ceiling API (GET /api/contro
     expect(corps.blocked).toBe(false);
   });
 
-  test("action inconnue/malformée -> classifiée COMMITMENT (Commitment Lock, fail-closed)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("action inconnue/malformée -> classifiée COMMITMENT (Commitment Lock, fail-closed)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const reponse = await request.get(
       `/api/control-plane/autonomy/ceiling?agentId=${agentId}&action=DELETE_EVERYTHING&scope=TALENT&requestedAutonomyLevel=L4_EXECUTE_WITH_APPROVAL`
@@ -285,8 +297,8 @@ test.describe("COMPANY ATLAS B23 Lot 2 — Autonomy Ceiling API (GET /api/contro
     expect(raison?.detail).toContain("COMMITMENT");
   });
 
-  test("correlationId valide -> accepté, renvoyé tel quel dans la réponse", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("correlationId valide -> accepté, renvoyé tel quel dans la réponse", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const correlationId = "b23-lot2-test-correlation-id";
     const reponse = await request.get(
@@ -297,8 +309,8 @@ test.describe("COMPANY ATLAS B23 Lot 2 — Autonomy Ceiling API (GET /api/contro
     expect(corps.correlationId).toBe(correlationId);
   });
 
-  test("correlationId de 300 caractères -> accepté, conservé strictement à l'identique", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("correlationId de 300 caractères -> accepté, conservé strictement à l'identique", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const correlationId = "c".repeat(300);
     const reponse = await request.get(
@@ -310,8 +322,8 @@ test.describe("COMPANY ATLAS B23 Lot 2 — Autonomy Ceiling API (GET /api/contro
     expect(corps.correlationId.length).toBe(300);
   });
 
-  test("correlationId de 301 caractères -> 400, jamais tronqué", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("correlationId de 301 caractères -> 400, jamais tronqué", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const correlationId = "c".repeat(301);
     const reponse = await request.get(
@@ -320,8 +332,8 @@ test.describe("COMPANY ATLAS B23 Lot 2 — Autonomy Ceiling API (GET /api/contro
     expect(reponse.status()).toBe(400);
   });
 
-  test("montantDemande non numérique -> 400", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("montantDemande non numérique -> 400", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const reponse = await request.get(
       `/api/control-plane/autonomy/ceiling?agentId=${agentId}&action=READ&scope=TALENT&requestedAutonomyLevel=L1_ANALYZE&montantDemande=pas-un-nombre`
@@ -329,8 +341,8 @@ test.describe("COMPANY ATLAS B23 Lot 2 — Autonomy Ceiling API (GET /api/contro
     expect(reponse.status()).toBe(400);
   });
 
-  test("delegationId inexistant -> 400", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("delegationId inexistant -> 400", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const reponse = await request.get(
       `/api/control-plane/autonomy/ceiling?agentId=${agentId}&action=READ&scope=TALENT&requestedAutonomyLevel=L1_ANALYZE&delegationId=inexistant`
@@ -341,8 +353,8 @@ test.describe("COMPANY ATLAS B23 Lot 2 — Autonomy Ceiling API (GET /api/contro
   // ==========================================================================
   // Invariants — aucune écriture DB, aucun appel B22, résultat déterministe.
 
-  test("invariant : aucune écriture DB, quel que soit le scénario (nominal, bloqué, Emergency Stop, permission inactive)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("invariant : aucune écriture DB, quel que soit le scénario (nominal, bloqué, Emergency Stop, permission inactive)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
 
     const compter = async () => ({
@@ -367,8 +379,8 @@ test.describe("COMPANY ATLAS B23 Lot 2 — Autonomy Ceiling API (GET /api/contro
     expect(apres).toEqual(avant);
   });
 
-  test("invariant : deux appels identiques produisent exactement le même résultat (déterminisme)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("invariant : deux appels identiques produisent exactement le même résultat (déterminisme)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const correlationId = "b23-lot2-determinisme";
     const url = `/api/control-plane/autonomy/ceiling?agentId=${agentId}&action=PROPOSE&scope=TALENT&requestedAutonomyLevel=L3_PREPARE&riskLevel=MEDIUM&correlationId=${correlationId}`;

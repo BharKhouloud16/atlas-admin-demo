@@ -101,18 +101,30 @@ export type FacteursMatching = {
   budget: FacteurScore;
 };
 
+// LOT 11 — ATLAS SKILL INTELLIGENCE V1 (§10-12 du mandat) : identifie la
+// provenance réelle des compétences utilisées pour CE calcul précis — le
+// Skill Graph structuré (VERIFIE/DECLARE tracés), ou le repli historique
+// `Profil.competences` (aucun statut, "comportement V1/V2 inchangé", voir
+// Lot 7/9). Additif et purement informatif : ne change ni le score ni la
+// formule de `scoreCompetences` (voir mandat §9/§21 — une pondération par
+// statut de preuve reste une décision produit distincte, non prise dans ce
+// lot, voir rapport final). Objectif unique : rendre le fallback
+// observable, jamais l'éliminer silencieusement.
+export type SourceCompetencesMatching = "SKILL_GRAPH" | "LEGACY_PROFILE_COMPETENCES";
+
 export type ResultatMatching = {
   profilId: string;
   score: number; // 0-100
   statut: StatutFacteur; // statut global, voir statutGlobal()
   confiance: number; // 0-1 — complétude des données disponibles, pas une note du profil
   facteurs: FacteursMatching;
-  motifs: MotifScore[]; // dérivé de `facteurs`, conservé pour compatibilité de stockage/affichage
+  motifs: MotifScore[]; // dérivé de `facteurs` + un motif d'observabilité additionnel (sourceCompetences), conservé pour compatibilité de stockage/affichage
   pointsForts: string[];
   pointsFaibles: string[];
   criteresBloquants: string[];
   informationsManquantes: string[];
   explication: string;
+  sourceCompetences: SourceCompetencesMatching;
 };
 
 const RANG_SENIORITE: Record<string, number> = { Junior: 1, Confirmé: 2, Senior: 3, Expert: 4 };
@@ -196,13 +208,15 @@ function scoreCompetences(recherchees: string[], possedees: string[], details?: 
 // lib/talent/skill-graph.ts telle quelle, jamais dupliquée ni réécrite ici) :
 // une compétence INFERE (IA) ou INCONNUE n'est donc jamais traitée comme un
 // fait établi pour le score, même si elle apparaît dans le Skill Graph.
-function competencesPourScoring(profil: ProfilPourMatching): { noms: string[]; details: Map<string, CompetenceGraphPourMatching> } {
+function competencesPourScoring(
+  profil: ProfilPourMatching
+): { noms: string[]; details: Map<string, CompetenceGraphPourMatching>; source: SourceCompetencesMatching } {
   if (!profil.competencesGraph || profil.competencesGraph.length === 0) {
-    return { noms: profil.competences, details: new Map() };
+    return { noms: profil.competences, details: new Map(), source: "LEGACY_PROFILE_COMPETENCES" };
   }
   const noms = versCompetencesPourMatching(profil.competencesGraph);
   const details = new Map(profil.competencesGraph.map((c) => [c.competence, c]));
-  return { noms, details };
+  return { noms, details, source: "SKILL_GRAPH" };
 }
 
 function scoreSeniorite(souhaitee: string | null, reelle: string | null): FacteurScore {
@@ -359,7 +373,7 @@ function statutGlobal(score: number, bloquants: string[], partFacteursConnus: nu
 }
 
 export function scorerProfil(profil: ProfilPourMatching, criteres: CriteresDemande): ResultatMatching {
-  const { noms: competencesEffectives, details: detailsSkillGraph } = competencesPourScoring(profil);
+  const { noms: competencesEffectives, details: detailsSkillGraph, source: sourceCompetences } = competencesPourScoring(profil);
   const competences = scoreCompetences(criteres.competencesRecherchees, competencesEffectives, detailsSkillGraph);
   const seniorite = scoreSeniorite(criteres.senioriteSouhaitee, profil.seniorite);
   const experience = scoreExperience(criteres.anneesExperienceMin, profil.anneesExperience);
@@ -401,7 +415,24 @@ export function scorerProfil(profil: ProfilPourMatching, criteres: CriteresDeman
   const confiance = Math.round((facteursConnus.length / entriesFacteurs.length) * 100) / 100;
   const statut = statutGlobal(score, criteresBloquants, facteursConnus.length / entriesFacteurs.length);
 
-  const motifs: MotifScore[] = entriesFacteurs.map(([, f]) => ({ critere: f.label, poids: f.poidsPct / 100, detail: f.detail }));
+  // Le motif "Source des compétences" est purement informatif (poids 0 —
+  // il ne participe jamais au calcul de `score`/`confiance` ci-dessus,
+  // déjà figés) : il rend visible, dans le même tableau `motifs` déjà
+  // persisté tel quel en ShortlistEntree.motifs (colonne Json existante,
+  // aucune migration Prisma requise), si CE calcul a utilisé le Skill
+  // Graph structuré ou le repli historique `Profil.competences` — voir
+  // SourceCompetencesMatching ci-dessus.
+  const motifs: MotifScore[] = [
+    ...entriesFacteurs.map(([, f]) => ({ critere: f.label, poids: f.poidsPct / 100, detail: f.detail })),
+    {
+      critere: "Source des compétences",
+      poids: 0,
+      detail:
+        sourceCompetences === "SKILL_GRAPH"
+          ? "Skill Graph structuré (ProfilCompetence)"
+          : "Repli historique Profil.competences (aucun Skill Graph construit pour ce profil)",
+    },
+  ];
 
   const explication =
     criteresBloquants.length > 0
@@ -410,7 +441,20 @@ export function scorerProfil(profil: ProfilPourMatching, criteres: CriteresDeman
         ? `Match probable mais information insuffisante sur ${informationsManquantes.length} critère(s) sur ${entriesFacteurs.length}`
         : `Score ${score}/100 — points forts : ${pointsForts.map((p) => p.split(" (")[0]).join(", ") || "aucun"}`;
 
-  return { profilId: profil.id, score, statut, confiance, facteurs, motifs, pointsForts, pointsFaibles, criteresBloquants, informationsManquantes, explication };
+  return {
+    profilId: profil.id,
+    score,
+    statut,
+    confiance,
+    facteurs,
+    motifs,
+    pointsForts,
+    pointsFaibles,
+    criteresBloquants,
+    informationsManquantes,
+    explication,
+    sourceCompetences,
+  };
 }
 
 // Classe tous les profils fournis par score décroissant. Ne filtre rien

@@ -23,11 +23,18 @@ import { SolutionsBesoin } from "@/components/client/SolutionsBesoin";
 
 type Fait = { id: string; cle: string; valeur: string; statut: "VERIFIE" | "DECLARE" | "INFERE" | "INCONNU"; source: string | null; createdAt: string };
 type ReglesCoherence = { regle: string; statut: string; explication: string }[];
+// LOT A — ATLAS FUNCTIONAL SPECIFICATION vFINAL (30/09/2026) : vocabulaire
+// canonique, en DUAL-READ avec `statut` ci-dessous (gate A0 §9) — `statut`
+// n'est pas retiré dans ce lot, les deux champs coexistent sur la même
+// réponse API (voir app/api/client/besoins/route.ts).
+type LifecycleStatut = "DRAFT" | "UNDERSTANDING" | "STRUCTURING" | "VALIDATED" | "ARCHIVED";
+
 type Besoin = {
   id: string;
   titre: string | null;
   texteOriginal: string;
   statut: "BROUILLON" | "SOUMIS" | "A_CLARIFIER" | "VALIDE" | "ARCHIVE";
+  lifecycleStatut: LifecycleStatut;
   coherenceStatut: "COHERENT" | "INCONSISTENT" | "NEEDS_CLARIFICATION" | "UNKNOWN";
   coherenceDetail: ReglesCoherence | null;
   createdAt: string;
@@ -59,6 +66,9 @@ const LABEL_CLE: Record<string, string> = {
   DISPONIBILITE: "Disponibilité",
   LOCALISATION: "Localisation",
   REMOTE: "Télétravail",
+  // A6.1 — Outcome Foundation : affiché dans "ATLAS comprend" comme toute
+  // autre clé singleton (dernierFaitParCle s'applique normalement).
+  RESULTAT_ATTENDU: "Résultat attendu",
   CONTRAINTE: "Contrainte",
   CRITERE_REUSSITE: "Critère de réussite",
   PRIORITE: "Priorité",
@@ -73,6 +83,16 @@ const LABEL_STATUT_BESOIN: Record<string, string> = {
   A_CLARIFIER: "À clarifier",
   VALIDE: "Validé",
   ARCHIVE: "Archivé",
+};
+
+// LOT A — vocabulaire canonique (gate A0 §2), affiché en complément du
+// libellé existant ci-dessus, jamais à sa place dans ce lot.
+const LABEL_LIFECYCLE: Record<LifecycleStatut, string> = {
+  DRAFT: "Brouillon",
+  UNDERSTANDING: "Compréhension en cours",
+  STRUCTURING: "Structuration",
+  VALIDATED: "Validé",
+  ARCHIVED: "Archivé",
 };
 
 const VARIANT_COHERENCE: Record<string, BadgeVariant> = {
@@ -230,7 +250,15 @@ function CarteBesoin({
   // mais n'est jamais montré tel quel dans l'Espace Client.
   const dernierParCle = dernierFaitParCle(besoin.faits);
   const faitsActuels = [...dernierParCle.values()];
-  const faitsConnus = faitsActuels.filter((f) => f.statut !== "INCONNU" && f.cle !== "HYPOTHESE_DOMAINE_SOLUTION");
+  // A6.1 — Outcome Foundation : CRITERE_REUSSITE est répétable (plusieurs
+  // instances possibles, jamais collapsées à une seule — voir
+  // lib/client-need/faits.ts::CLES_REPETABLES) — exclu ici de la liste
+  // "dernière valeur par clé" (qui n'en montrerait qu'une) et affiché à
+  // part ci-dessous, une ligne par instance réelle.
+  const faitsConnus = faitsActuels.filter(
+    (f) => f.statut !== "INCONNU" && f.cle !== "HYPOTHESE_DOMAINE_SOLUTION" && f.cle !== "CRITERE_REUSSITE"
+  );
+  const criteresReussite = besoin.faits.filter((f) => f.cle === "CRITERE_REUSSITE" && f.statut !== "INCONNU");
   const hypothese = dernierParCle.get("HYPOTHESE_DOMAINE_SOLUTION");
 
   const clarifications = prioriserClarifications(
@@ -247,6 +275,7 @@ function CarteBesoin({
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
           <Badge variant="info">{LABEL_STATUT_BESOIN[besoin.statut]}</Badge>
+          <Badge variant="neutral">{LABEL_LIFECYCLE[besoin.lifecycleStatut]}</Badge>
           <Badge variant={VARIANT_COHERENCE[besoin.coherenceStatut]}>{LABEL_COHERENCE[besoin.coherenceStatut]}</Badge>
           {besoin.missionEnCours ? (
             <Badge variant="success">Mission en cours</Badge>
@@ -271,6 +300,19 @@ function CarteBesoin({
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {criteresReussite.length > 0 && (
+            <div>
+              <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 6px" }}>Critères de réussite</p>
+              <ul style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 4 }}>
+                {criteresReussite.map((f) => (
+                  <li key={f.id} style={{ fontSize: 13 }}>
+                    {f.valeur}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
 

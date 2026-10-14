@@ -68,6 +68,71 @@ test.describe("Skill Graph V1 (lib/talent/skill-graph)", () => {
     expect(inferees).toEqual([]);
   });
 
+  // LOT 11 — ATLAS SKILL INTELLIGENCE V1 : construireCompetencesInferees
+  // consomme désormais lib/talent/skill-resolution.ts (via le provider) —
+  // vérifie que la méthode de détection réelle (EXACT/ALIAS) est reflétée
+  // dans la preuve produite, sans jamais changer le statut (toujours
+  // INFERE) ni fabriquer un niveau.
+  test("17. faux positif corrigé : \"PostgreSQL\" dans le CV ne produit plus une preuve indépendante \"SQL\"", async () => {
+    const inferees = await construireCompetencesInferees(
+      "5 ans d'expérience avec PostgreSQL en production.",
+      ["SQL", "Docker"]
+    );
+    expect(inferees.map((c) => c.competence)).not.toContain("SQL");
+  });
+
+  test("18. alias explicite (\"K8s\") : détecté, statut INFERE, confiance BASSE (jamais confondu avec une mention littérale)", async () => {
+    const inferees = await construireCompetencesInferees("Orchestration K8s en production.", ["Kubernetes"]);
+    const kubernetes = inferees.find((c) => c.competence === "Kubernetes");
+    expect(kubernetes?.statut).toBe("INFERE");
+    expect(kubernetes?.confiance).toBe("BASSE");
+    expect(kubernetes?.preuve.detail).toContain("méthode: ALIAS");
+  });
+
+  test("19. mention littérale exacte : statut INFERE, méthode EXACT tracée dans la preuve", async () => {
+    const inferees = await construireCompetencesInferees("Kubernetes en production depuis 3 ans.", ["Kubernetes"]);
+    const kubernetes = inferees.find((c) => c.competence === "Kubernetes");
+    expect(kubernetes?.statut).toBe("INFERE");
+    expect(kubernetes?.preuve.detail).toContain("méthode: EXACT");
+  });
+
+  // LOT 11.1 — DÉCISION 2 : PostgreSQL/SQL production data safety (§9 du
+  // mandat) — vérifié au niveau complet du pipeline CV -> INFERE.
+  test("20. Cas A — CV \"PostgreSQL\" : PostgreSQL=INFERE, jamais SQL=INFERE", async () => {
+    const inferees = await construireCompetencesInferees("5 ans d'expérience avec PostgreSQL en production.", ["SQL", "PostgreSQL"]);
+    const noms = inferees.map((c) => c.competence);
+    expect(noms).toContain("PostgreSQL");
+    expect(noms).not.toContain("SQL");
+  });
+
+  test("21. Cas B — CV \"Postgres\" : PostgreSQL=INFERE (alias, confiance BASSE), jamais SQL=INFERE", async () => {
+    const inferees = await construireCompetencesInferees("Base de données Postgres en production.", ["SQL", "PostgreSQL"]);
+    const postgresql = inferees.find((c) => c.competence === "PostgreSQL");
+    expect(postgresql?.statut).toBe("INFERE");
+    expect(postgresql?.confiance).toBe("BASSE");
+    expect(inferees.map((c) => c.competence)).not.toContain("SQL");
+  });
+
+  test("22. Cas C — CV \"SQL\" : SQL=INFERE, jamais PostgreSQL=INFERE", async () => {
+    const inferees = await construireCompetencesInferees("Requêtes SQL avancées.", ["SQL", "PostgreSQL"]);
+    expect(inferees.map((c) => c.competence)).toEqual(["SQL"]);
+  });
+
+  test("23. Cas D — CV \"Docker\" : Docker=INFERE, jamais Kubernetes=INFERE", async () => {
+    const inferees = await construireCompetencesInferees("Conteneurisation avec Docker.", ["Docker", "Kubernetes"]);
+    expect(inferees.map((c) => c.competence)).toEqual(["Docker"]);
+  });
+
+  test("24. Cas E — CV \"K8s\" : Kubernetes=INFERE (alias)", async () => {
+    const inferees = await construireCompetencesInferees("Orchestration K8s.", ["Kubernetes"]);
+    expect(inferees.map((c) => c.competence)).toEqual(["Kubernetes"]);
+  });
+
+  test("25. Cas F — CV vide : aucune compétence INFERE", async () => {
+    const inferees = await construireCompetencesInferees("", ["SQL", "PostgreSQL", "Docker", "Kubernetes"]);
+    expect(inferees).toEqual([]);
+  });
+
   test("8. donnée manquante : un score de confiance non déterminant reste BASSE, jamais surestimé", () => {
     expect(confianceDepuisScore(0)).toBe("BASSE");
     expect(confianceDepuisScore(0.15)).toBe("BASSE");

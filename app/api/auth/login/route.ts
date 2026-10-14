@@ -113,7 +113,15 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  if (!user.actif) {
+  // ENGINEER ACCESS & TRUST (09/10/2026) — contrat §2/§7 : "Email vérifié
+  // → Espace candidature limité" doit précéder "Décision d'accès", ce qui
+  // exige qu'un INGENIEUR non encore approuvé (actif=false) puisse malgré
+  // tout obtenir une session — jamais un accès complet, uniquement
+  // restreint par middleware.ts à l'espace candidature/CV (voir
+  // SessionUser.actif, lib/auth.ts). CLIENT et ADMIN restent bloqués
+  // exactement comme avant ce lot : aucun changement pour ces deux rôles,
+  // le chantier Commercial reste hors périmètre.
+  if (!user.actif && user.role !== "INGENIEUR") {
     await enregistrerEvenementSecurite({
       correlationId,
       action: "auth.login.compte_inactif",
@@ -183,17 +191,26 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ENGINEER ACCESS & TRUST — actif n'est signé dans la session QUE pour un
+  // INGENIEUR (seul rôle pouvant obtenir une session avec actif=false, voir
+  // ci-dessus) : jamais pour CLIENT/ADMIN, qui n'atteignent ce point qu'avec
+  // actif=true, pour ne jamais introduire une distinction nouvelle et
+  // inutile dans leur session (contrat §3 : chantier Commercial hors
+  // périmètre).
   await createSession({
     email: user.email,
     role: user.role,
     profilId: user.profilId,
     clientId: user.clientId,
     desactive: user.desactive,
+    ...(user.role === "INGENIEUR" ? { actif: user.actif } : {}),
   });
+
+  const accesCandidatLimite = user.role === "INGENIEUR" && !user.actif;
 
   await enregistrerEvenementSecurite({
     correlationId,
-    action: "auth.login.succes",
+    action: accesCandidatLimite ? "auth.login.acces_candidat_limite" : "auth.login.succes",
     resultat: "SUCCES",
     severite: "INFO",
     contexteIp: ip,
@@ -209,10 +226,15 @@ export async function POST(req: NextRequest) {
 
   // indique au front vers quel espace rediriger : un ingénieur ayant
   // temporairement désactivé son compte est redirigé vers l'écran de
-  // réactivation plutôt que son espace habituel (voir middleware.ts).
+  // réactivation plutôt que son espace habituel ; un ingénieur pas encore
+  // approuvé (nouveau, contrat Engineer Access & Trust) est redirigé vers
+  // l'espace candidature limité, jamais vers /admin/missions (voir
+  // middleware.ts).
   const redirect =
     user.role === "INGENIEUR" && user.desactive
       ? "/ingenieur/compte-desactive"
+      : accesCandidatLimite
+      ? "/ingenieur/candidature"
       : user.role === "CLIENT"
       ? "/client"
       : "/admin";

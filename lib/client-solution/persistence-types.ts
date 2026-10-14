@@ -40,4 +40,11 @@ export type SolutionOptionVue = {
   decideParEmail: string | null;
   decideLe: string | null;
   createdAt: string;
+  // LOT A — ATLAS FUNCTIONAL SPECIFICATION vFINAL (30/09/2026), A5 : version
+  // du Need à l'origine de cette ligne (signatureSource, ou "INCONNU" pour
+  // les lignes historiques sans signature exploitable — gate A0 §9, jamais
+  // une heuristique de substitution). Permet au client de comparer avec la
+  // version actuelle du Need et de détecter une comparaison obsolète (voir
+  // components/client/SolutionsBesoin.tsx).
+  versionLien: string;
 };

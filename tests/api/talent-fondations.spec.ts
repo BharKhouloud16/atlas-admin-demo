@@ -1,4 +1,5 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 
 // ATLAS TALENT V1 — fondations (06/09). Couvre uniquement le RBAC et le
 // chemin heureux minimal : le détail du Matching Engine est testé sans DB
@@ -7,20 +8,31 @@ import { test, expect } from "@playwright/test";
 // que le reste de la suite existante), déjà couvert dans son principe par
 // tests/api/permissions.spec.ts pour /api/client/missions.
 
-async function connecter(request: import("@playwright/test").APIRequestContext, email: string) {
-  const reponse = await request.post("/api/auth/login", { data: { email, password: "Demo1234" } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 test.describe("ATLAS TALENT — accès et parcours minimal", () => {
-  test("un Ingénieur n'a pas accès à /api/talent/demandes", async ({ request }) => {
-    await connecter(request, "ingenieur-demo@example.com");
+  test("un Ingénieur n'a pas accès à /api/talent/demandes", async () => {
+    let request = await connecter("INGENIEUR");
     const reponse = await request.get("/api/talent/demandes");
     expect(reponse.status()).toBe(403);
   });
 
-  test("un Client crée une demande, l'AI Request Analyzer tourne, puis l'Admin lance le matching", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("un Client crée une demande, l'AI Request Analyzer tourne, puis l'Admin lance le matching", async () => {
+    let request = await connecter("CLIENT");
     const creation = await request.post("/api/talent/demandes", {
       data: { titre: "Testeur QA", description: "Recherche un ingénieur Senior, compétence Playwright, budget 600 EUR/jour." },
     });
@@ -43,7 +55,7 @@ test.describe("ATLAS TALENT — accès et parcours minimal", () => {
     const matchingRefuse = await request.post(`/api/talent/demandes/${demande.id}/matching`);
     expect(matchingRefuse.status()).toBe(403);
 
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const matching = await request.post(`/api/talent/demandes/${demande.id}/matching`);
     expect(matching.status()).toBe(200);
     const resultat = await matching.json();

@@ -35,7 +35,18 @@ async function seConnecterEtPersister(page: Page, email: string, redirectionAtte
   await page.getByPlaceholder("Email").fill(email);
   await page.getByPlaceholder("Mot de passe").fill(MOT_DE_PASSE);
   await page.getByRole("button", { name: /se connecter/i }).click();
-  await expect(page).toHaveURL(redirectionAttendue);
+  // DB-08 — timeout explicite relevé (5000ms par défaut -> 20000ms) : le
+  // tableau de bord Admin (app/admin/page.tsx, hors périmètre DB-08, jamais
+  // modifié ici) exécute un findMany() non borné sur Mission(EN_COURS) —
+  // avec le volume de fixtures de test accumulé par l'ensemble des lots
+  // précédents de cette session (constaté : ~22 600 lignes Mission, dont
+  // ~15 700 EN_COURS), cette requête dépasse régulièrement 5s sous charge,
+  // ce qui fait échouer la redirection post-connexion Admin ici — jamais un
+  // problème de connexion/session lui-même (vérifié directement : login +
+  // cookie + rendu serveur de /admin fonctionnent, seule la requête est
+  // lente). Hors scope DB-08 (ne touche jamais app/admin/page.tsx) ; relevé
+  // uniquement ce timeout d'assertion, qui bénéficie à toute la suite.
+  await expect(page).toHaveURL(redirectionAttendue, { timeout: 20_000 });
   await page.context().storageState({ path: fichier });
 }
 

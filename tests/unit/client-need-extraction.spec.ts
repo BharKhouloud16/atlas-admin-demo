@@ -99,4 +99,57 @@ test.describe("COMPANY ATLAS LOT 2 — Extraction de besoin (AiProviderLocal.ext
     expect(resultat.confiance).toBeLessThan(1);
     expect(resultat.confiance).toBeGreaterThan(0);
   });
+
+  // A6.1 — Outcome Foundation (01/10/2026).
+  test("RESULTAT_ATTENDU — signal explicite \"nous voulons\" détecté, DECLARE, texte capturé tel quel", async () => {
+    const resultat = await extraire("Nous voulons réduire le taux de régression sous 2% d'ici la fin du trimestre.");
+    const attendu = resultat.faits.find((f) => f.cle === "RESULTAT_ATTENDU");
+    expect(attendu).toBeTruthy();
+    expect(attendu?.statut).toBe("DECLARE");
+    expect(attendu?.valeur).toContain("réduire le taux de régression");
+  });
+
+  test("RESULTAT_ATTENDU — signal explicite \"l'objectif est de\" également détecté", async () => {
+    const resultat = await extraire("L'objectif est de sécuriser notre API publique avant le prochain audit.");
+    const attendu = resultat.faits.find((f) => f.cle === "RESULTAT_ATTENDU");
+    expect(attendu?.valeur).toContain("sécuriser notre API publique");
+  });
+
+  test("RESULTAT_ATTENDU — aucun signal explicite -> absent, jamais déduit du sujet général du texte", async () => {
+    const resultat = await extraire("Nous cherchons un développeur senior pour un projet React.");
+    expect(resultat.faits.some((f) => f.cle === "RESULTAT_ATTENDU")).toBe(false);
+  });
+
+  test("CRITERE_REUSSITE — signal explicite \"critère de réussite\" avec une seule instance", async () => {
+    const resultat = await extraire("Critère de réussite : couverture de tests supérieure à 90%.");
+    const criteres = resultat.faits.filter((f) => f.cle === "CRITERE_REUSSITE");
+    expect(criteres).toHaveLength(1);
+    expect(criteres[0].valeur).toContain("couverture de tests supérieure à 90%");
+    expect(criteres[0].statut).toBe("DECLARE");
+  });
+
+  test("CRITERE_REUSSITE — plusieurs critères énumérés restent des instances DISTINCTES, jamais collapsées en un seul texte", async () => {
+    const resultat = await extraire(
+      "Critères de réussite : taux de couverture supérieur à 90%, aucun défaut critique ouvert et livraison avant fin janvier."
+    );
+    const criteres = resultat.faits.filter((f) => f.cle === "CRITERE_REUSSITE");
+    expect(criteres.length).toBeGreaterThanOrEqual(3);
+    expect(criteres.every((c) => c.statut === "DECLARE")).toBe(true);
+    expect(criteres.some((c) => c.valeur.includes("couverture"))).toBe(true);
+    expect(criteres.some((c) => c.valeur.includes("défaut critique"))).toBe(true);
+    expect(criteres.some((c) => c.valeur.includes("livraison"))).toBe(true);
+  });
+
+  test("CRITERE_REUSSITE — aucun signal explicite -> absent, jamais déduit", async () => {
+    const resultat = await extraire("Nous cherchons un profil QA compétent en Java et Playwright.");
+    expect(resultat.faits.some((f) => f.cle === "CRITERE_REUSSITE")).toBe(false);
+  });
+
+  test("RESULTAT_ATTENDU et CRITERE_REUSSITE peuvent coexister sans interférer l'un avec l'autre", async () => {
+    const resultat = await extraire(
+      "Nous voulons améliorer la fiabilité de notre plateforme. Critère de réussite : taux d'incident en production réduit de moitié."
+    );
+    expect(resultat.faits.find((f) => f.cle === "RESULTAT_ATTENDU")?.valeur).toContain("améliorer la fiabilité");
+    expect(resultat.faits.filter((f) => f.cle === "CRITERE_REUSSITE")).toHaveLength(1);
+  });
 });

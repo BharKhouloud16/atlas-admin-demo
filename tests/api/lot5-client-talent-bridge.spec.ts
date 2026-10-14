@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 
 // COMPANY ATLAS — LOT 5 : Client Intelligence → Talent Bridge (15/09/2026).
@@ -8,9 +9,20 @@ import { prisma } from "@/lib/prisma";
 // du besoin (jamais du corps), non-consommation silencieuse d'un fait
 // INFERE, et exposition minimale côté client (GET /api/client/besoins).
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function creerBesoinValide(clientId: string, faits: { cle: string; valeur: string; statut: string }[] = []) {
@@ -29,8 +41,8 @@ async function creerBesoinValide(clientId: string, faits: { cle: string; valeur:
 
 test.describe("COMPANY ATLAS LOT 5 — Client Intelligence → Talent Bridge (API)", () => {
   test.describe("GET /api/talent/besoins — liste Admin", () => {
-    test("un ADMIN voit un besoin qu'il vient de créer via fixture, avec son état de liaison", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("un ADMIN voit un besoin qu'il vient de créer via fixture, avec son état de liaison", async () => {
+      let request = await connecter("ADMIN");
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const need = await creerBesoinValide(client!.id);
 
@@ -47,24 +59,24 @@ test.describe("COMPANY ATLAS LOT 5 — Client Intelligence → Talent Bridge (AP
       expect(reponse.status()).toBe(403);
     });
 
-    test("CLIENT / INGENIEUR -> 403 (réservé Admin)", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("CLIENT / INGENIEUR -> 403 (réservé Admin)", async () => {
+      let request = await connecter("CLIENT");
       expect((await request.get("/api/talent/besoins")).status()).toBe(403);
 
-      await connecter(request, "ingenieur-demo@example.com");
+      request = await connecter("INGENIEUR");
       expect((await request.get("/api/talent/besoins")).status()).toBe(403);
     });
   });
 
   test.describe("GET /api/talent/besoins/[id] — détail Admin", () => {
-    test("besoin inexistant -> 404", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("besoin inexistant -> 404", async () => {
+      let request = await connecter("ADMIN");
       const reponse = await request.get("/api/talent/besoins/inexistant-xyz");
       expect(reponse.status()).toBe(404);
     });
 
-    test("agrège besoin + client + profil du BON client, jamais celui d'un autre", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("agrège besoin + client + profil du BON client, jamais celui d'un autre", async () => {
+      let request = await connecter("ADMIN");
 
       const creationClientA = await request.post("/api/clients", { data: { nom: `Client LOT5 A ${Date.now()}` } });
       const clientA = await creationClientA.json();
@@ -98,14 +110,14 @@ test.describe("COMPANY ATLAS LOT 5 — Client Intelligence → Talent Bridge (AP
 
       expect((await request.get(`/api/talent/besoins/${need.id}`)).status()).toBe(403);
 
-      await connecter(request, "client-demo@example.com");
+      request = await connecter("CLIENT");
       expect((await request.get(`/api/talent/besoins/${need.id}`)).status()).toBe(403);
     });
   });
 
   test.describe("POST /api/talent/besoins/[id]/creer-demande", () => {
-    test("besoin VALIDE -> 201, DemandeTalent créée avec sourceNeedId, clientId dérivé du besoin, aucun score inventé", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("besoin VALIDE -> 201, DemandeTalent créée avec sourceNeedId, clientId dérivé du besoin, aucun score inventé", async () => {
+      let request = await connecter("ADMIN");
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const need = await creerBesoinValide(client!.id, [{ cle: "ROLE", valeur: "Lead QA", statut: "DECLARE" }]);
 
@@ -122,8 +134,8 @@ test.describe("COMPANY ATLAS LOT 5 — Client Intelligence → Talent Bridge (AP
       expect(relu?.sourceNeedId).toBe(need.id);
     });
 
-    test("besoin non VALIDE (SOUMIS) -> 400, aucune DemandeTalent créée", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("besoin non VALIDE (SOUMIS) -> 400, aucune DemandeTalent créée", async () => {
+      let request = await connecter("ADMIN");
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const need = await prisma.clientNeed.create({
         data: { clientId: client!.id, correlationId: `lot5-incomplet-${Date.now()}`, texteOriginal: "Besoin encore incomplet.", statut: "SOUMIS" },
@@ -138,8 +150,8 @@ test.describe("COMPANY ATLAS LOT 5 — Client Intelligence → Talent Bridge (AP
       expect(compte).toBe(0);
     });
 
-    test("un fait INFERE du besoin source n'est jamais transformé en VERIFIE par la création", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("un fait INFERE du besoin source n'est jamais transformé en VERIFIE par la création", async () => {
+      let request = await connecter("ADMIN");
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const need = await creerBesoinValide(client!.id, [{ cle: "SENIORITE", valeur: "Senior", statut: "INFERE" }]);
 
@@ -152,8 +164,8 @@ test.describe("COMPANY ATLAS LOT 5 — Client Intelligence → Talent Bridge (AP
       expect(faitOriginal?.statut).toBe("INFERE"); // jamais réécrit par la création de la DemandeTalent
     });
 
-    test("double création (même besoin) -> la seconde échoue 409 avec l'id de la demande existante, une seule ligne en base", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("double création (même besoin) -> la seconde échoue 409 avec l'id de la demande existante, une seule ligne en base", async () => {
+      let request = await connecter("ADMIN");
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const need = await creerBesoinValide(client!.id);
 
@@ -170,8 +182,8 @@ test.describe("COMPANY ATLAS LOT 5 — Client Intelligence → Talent Bridge (AP
       expect(compte).toBe(1);
     });
 
-    test("concurrence — deux créations simultanées pour le même besoin produisent exactement une DemandeTalent", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("concurrence — deux créations simultanées pour le même besoin produisent exactement une DemandeTalent", async () => {
+      let request = await connecter("ADMIN");
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const need = await creerBesoinValide(client!.id);
 
@@ -186,8 +198,8 @@ test.describe("COMPANY ATLAS LOT 5 — Client Intelligence → Talent Bridge (AP
       expect(compte).toBe(1);
     });
 
-    test("besoin inexistant -> 404", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("besoin inexistant -> 404", async () => {
+      let request = await connecter("ADMIN");
       const reponse = await request.post("/api/talent/besoins/inexistant-xyz/creer-demande", { data: { description: "Peu importe." } });
       expect(reponse.status()).toBe(404);
     });
@@ -201,21 +213,21 @@ test.describe("COMPANY ATLAS LOT 5 — Client Intelligence → Talent Bridge (AP
       expect(await prisma.demandeTalent.count({ where: { sourceNeedId: need.id } })).toBe(0);
     });
 
-    test("CLIENT / INGENIEUR -> 403, aucune écriture", async ({ request }) => {
+    test("CLIENT / INGENIEUR -> 403, aucune écriture", async () => {
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const need = await creerBesoinValide(client!.id);
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       expect((await request.post(`/api/talent/besoins/${need.id}/creer-demande`, { data: { description: "Un client ne peut pas." } })).status()).toBe(403);
 
-      await connecter(request, "ingenieur-demo@example.com");
+      request = await connecter("INGENIEUR");
       expect((await request.post(`/api/talent/besoins/${need.id}/creer-demande`, { data: { description: "Un ingénieur ne peut pas." } })).status()).toBe(403);
 
       expect(await prisma.demandeTalent.count({ where: { sourceNeedId: need.id } })).toBe(0);
     });
 
-    test("description trop courte -> 400, aucune écriture (validation réutilisée, jamais dupliquée)", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("description trop courte -> 400, aucune écriture (validation réutilisée, jamais dupliquée)", async () => {
+      let request = await connecter("ADMIN");
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const need = await creerBesoinValide(client!.id);
 
@@ -226,8 +238,8 @@ test.describe("COMPANY ATLAS LOT 5 — Client Intelligence → Talent Bridge (AP
   });
 
   test.describe("GET /api/client/besoins — statut dérivé côté client", () => {
-    test("demarcheTalentEngagee passe à true une fois la DemandeTalent créée, sans exposer de donnée interne", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("demarcheTalentEngagee passe à true une fois la DemandeTalent créée, sans exposer de donnée interne", async () => {
+      let request = await connecter("CLIENT");
       const creation = await request.post("/api/client/besoins", { data: { texteOriginal: `Besoin LOT5 statut client ${Date.now()}` } });
       expect(creation.status()).toBe(201);
       const { besoin } = await creation.json();
@@ -239,11 +251,11 @@ test.describe("COMPANY ATLAS LOT 5 — Client Intelligence → Talent Bridge (AP
       expect(trouveAvant).not.toHaveProperty("demandeTalentCreee");
 
       await prisma.clientNeed.update({ where: { id: besoin.id }, data: { statut: "VALIDE" } });
-      await connecter(request, "admin-demo@example.com");
+      request = await connecter("ADMIN");
       const bridge = await request.post(`/api/talent/besoins/${besoin.id}/creer-demande`, { data: { description: "Création admin pour vérifier le retour client." } });
       expect(bridge.status()).toBe(201);
 
-      await connecter(request, "client-demo@example.com");
+      request = await connecter("CLIENT");
       const apres = await request.get("/api/client/besoins");
       const { besoins: besoinsApres } = await apres.json();
       const trouveApres = besoinsApres.find((b: { id: string }) => b.id === besoin.id);

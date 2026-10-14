@@ -15,6 +15,24 @@ import { marquerFilLu } from "@/lib/message-lecture";
 // Un test HTTP (via les routes POST /api/*/messages) ne pourrait pas
 // observer ce log, écrit dans le process du serveur Next.js séparé —
 // même limitation déjà rencontrée pour BLOB_READ_WRITE_TOKEN en V2.4.
+//
+// LOT 15.1 — EMAIL PRODUCTION SAFETY CLEANUP : lib/message-attention-email.ts
+// est désormais fail-closed sur EMAIL_APP_BASE_URL (voir
+// tests/unit/message-attention-email-url.spec.ts pour ce comportement
+// précis) — cette variable n'étant jamais configurée dans cet environnement
+// de test/CI (voir Lot 15, Environment Matrix), toute notification serait
+// silencieusement abandonnée sans elle, cassant les assertions ci-dessous
+// qui portent sur la logique de transition/préférence, pas sur l'URL. On la
+// fixe donc pour la durée de ce fichier (tests exécutés séquentiellement au
+// sein d'un même worker Playwright — aucune interférence avec d'autres
+// fichiers, chacun dans son propre process) plutôt que de dupliquer un
+// wrapper par appel.
+test.beforeEach(() => {
+  process.env.EMAIL_APP_BASE_URL = "https://atlas-test.example";
+});
+test.afterEach(() => {
+  delete process.env.EMAIL_APP_BASE_URL;
+});
 
 function espionnerConsoleLog(): { appels: string[]; restaurer: () => void } {
   const appels: string[] = [];

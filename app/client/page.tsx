@@ -70,7 +70,7 @@ export default function VueDEnsembleClient() {
   const faitsAConfirmer = faitsProfil.filter((f) => f.statut === "INFERE" || f.statut === "OBSERVE");
   const totalActions = feuillesAValider.length + missionsAEvaluer.length + faitsAConfirmer.length;
 
-  const missionsEnCours = missions.filter((m) => m.statut === "En cours");
+  const missionsEnCours = missions.filter((m) => m.statut === "EN_COURS");
   const demandesEnCours = demandes.filter((d) => d.statut !== "CLOTUREE");
 
   const activite: ActiviteItem[] = [

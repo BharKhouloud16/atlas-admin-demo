@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 
 // ATLAS TALENT — Talent Intelligence V1 (Batch 5) — chemin API : RBAC,
 // isolation, absence de crash, cohérence avec Candidate Intelligence.
@@ -9,9 +10,20 @@ import { test, expect, APIRequestContext } from "@playwright/test";
 // (remplacement complet) provoquent des échecs intermittents ailleurs. Ce
 // fichier reste strictement lecture seule.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function idProfilIngenieurDemo(request: APIRequestContext): Promise<string> {
@@ -24,8 +36,8 @@ async function idProfilIngenieurDemo(request: APIRequestContext): Promise<string
 }
 
 test.describe("ATLAS TALENT — Talent Intelligence V1 — API", () => {
-  test("11. candidat sans données : réponse 200, aucun crash, structure cohérente", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("11. candidat sans données : réponse 200, aucun crash, structure cohérente", async () => {
+    let request = await connecter("ADMIN");
     const liste = await request.get("/api/profils");
     const { profils } = await liste.json();
     const profilVide = profils.find((p: { nom: string }) => p.nom === "Nouvel Ingénieur (test)");
@@ -38,8 +50,8 @@ test.describe("ATLAS TALENT — Talent Intelligence V1 — API", () => {
     expect(talentIntelligence.performance.statut).toBe("INCONNU");
   });
 
-  test("12. cohérence avec Candidate Intelligence : mêmes zones inconnues, aucune divergence", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("12. cohérence avec Candidate Intelligence : mêmes zones inconnues, aucune divergence", async () => {
+    let request = await connecter("ADMIN");
     const profilId = await idProfilIngenieurDemo(request);
 
     const candidateReponse = await request.get(`/api/profils/${profilId}/intelligence`);
@@ -52,27 +64,27 @@ test.describe("ATLAS TALENT — Talent Intelligence V1 — API", () => {
     expect(talentIntelligence.inconnues).toEqual(intelligence.zonesInconnues);
   });
 
-  test("13. isolation RBAC : Talent Intelligence n'est accessible qu'à l'Admin", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("13. isolation RBAC : Talent Intelligence n'est accessible qu'à l'Admin", async () => {
+    let request = await connecter("ADMIN");
     const profilId = await idProfilIngenieurDemo(request);
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const refusClient = await request.get(`/api/profils/${profilId}/talent-intelligence`);
     expect(refusClient.status()).toBe(403);
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     const refusIngenieur = await request.get(`/api/profils/${profilId}/talent-intelligence`);
     expect(refusIngenieur.status()).toBe(403);
   });
 
-  test("14. profil inexistant : 404, jamais un crash serveur", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("14. profil inexistant : 404, jamais un crash serveur", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/profils/inexistant-xyz/talent-intelligence");
     expect(reponse.status()).toBe(404);
   });
 
-  test("15. déterminisme : deux appels consécutifs renvoient le même résultat", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("15. déterminisme : deux appels consécutifs renvoient le même résultat", async () => {
+    let request = await connecter("ADMIN");
     const profilId = await idProfilIngenieurDemo(request);
     const r1 = await request.get(`/api/profils/${profilId}/talent-intelligence`);
     const r2 = await request.get(`/api/profils/${profilId}/talent-intelligence`);

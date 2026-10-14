@@ -28,11 +28,19 @@ type SolutionVue = {
   decideParEmail: string | null;
   decideLe: string | null;
   createdAt: string;
+  // LOT A — ATLAS FUNCTIONAL SPECIFICATION vFINAL (30/09/2026), A5.
+  versionLien: string;
 };
 
 type ReponseSolutions =
   | { eligible: false; raison: string; options: []; recommandation: null; decisions: [] }
-  | { eligible: true; options: SolutionVue[]; recommandation: SolutionVue | null; decisions: SolutionVue[] };
+  | {
+      eligible: true;
+      options: SolutionVue[];
+      recommandation: SolutionVue | null;
+      decisions: SolutionVue[];
+      signatureActuelle: string;
+    };
 
 const LABEL_CONFIANCE: Record<NiveauConfiance, string> = {
   HAUTE: "Correspondance forte",
@@ -134,6 +142,18 @@ export function SolutionsBesoin({ besoinId, statutBesoin }: { besoinId: string; 
           <p style={{ margin: "4px 0 0", fontSize: 12, color: grisTexte }}>
             Décidé le {new Date(derniereDecision.decideLe!).toLocaleDateString("fr-FR")}
           </p>
+          {/* LOT A — A5, gate A0 §10 : signalement de désynchronisation de
+              version (vFINAL §8) — le besoin a changé depuis cette
+              décision. Jamais masqué silencieusement, jamais une
+              comparaison obsolète présentée comme à jour. La comparaison
+              actuelle (toujours régénérée, voir bloc "Recommandation
+              ATLAS" ci-dessous) reste consultable ; cette carte-ci, elle,
+              reste historisée à l'identique — jamais réécrite. */}
+          {derniereDecision.versionLien !== donnees.signatureActuelle && (
+            <p style={{ margin: "6px 0 0", fontSize: 12, color: "#b06a00" }}>
+              Votre besoin a changé depuis cette décision — consultez la recommandation actuelle ci-dessous.
+            </p>
+          )}
         </Card>
       )}
 

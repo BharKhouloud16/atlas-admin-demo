@@ -38,9 +38,6 @@ export async function GET() {
       competences: true,
       entretiensRealises: true,
       realisations: true,
-      videoUrl: true,
-      videoNomFichier: true,
-      videoImporteLe: true,
       createdAt: true,
       infosCv: { orderBy: { ordre: "asc" } },
       missions: {
@@ -71,7 +68,7 @@ export async function GET() {
     _avg: { note: true },
     _count: { note: true },
   });
-  const missionsTerminees = profil.missions.filter((m) => m.statut === "Terminée").length;
+  const missionsTerminees = profil.missions.filter((m) => m.statut === "TERMINEE").length;
 
   return NextResponse.json({
     ...profil,

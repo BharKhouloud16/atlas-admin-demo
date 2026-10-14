@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 
 // COMPANY ATLAS — B21 : STRATEGIC INTELLIGENCE FOUNDATION (API). Couvre le
 // cycle complet Veille -> Signal -> Analyse -> Recommandation ->
@@ -8,9 +9,20 @@ import { test, expect, APIRequestContext } from "@playwright/test";
 // est toujours l'ADMIN de la session serveur (jamais une valeur fournie
 // dans le corps de la requête).
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function idAgent(request: APIRequestContext, nom: string): Promise<string> {
@@ -38,7 +50,7 @@ test.describe("COMPANY ATLAS B21 — Strategic Intelligence Foundation (API)", (
   test("SÉCURITÉ (B21-FIX) : un CLIENT n'a jamais accès aux endpoints B21 (403 sur signaux, propositions, autorisation)", async ({
     request,
   }) => {
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
 
     const signaux = await request.get("/api/strategic/signaux");
     expect(signaux.status()).toBe(403);
@@ -55,7 +67,7 @@ test.describe("COMPANY ATLAS B21 — Strategic Intelligence Foundation (API)", (
   test("SÉCURITÉ (B21-FIX) : un INGENIEUR n'a jamais accès aux endpoints B21 (403 sur signaux, propositions, autorisation)", async ({
     request,
   }) => {
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
 
     const signaux = await request.get("/api/strategic/signaux");
     expect(signaux.status()).toBe(403);
@@ -72,7 +84,7 @@ test.describe("COMPANY ATLAS B21 — Strategic Intelligence Foundation (API)", (
   test("cycle complet : Signal -> Analyse -> Recommandation -> Proposition, tracé par un correlationId unique (autorisation legacy fermée depuis B24 Lot C1 — voir tests/api/b24-lot-c1-close-legacy-authorization.spec.ts)", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const correlationId = `b21-cycle-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
@@ -139,7 +151,7 @@ test.describe("COMPANY ATLAS B21 — Strategic Intelligence Foundation (API)", (
   test("B24 Lot C1 : l'autorisation legacy directe est refusée inconditionnellement, même pour une proposition jamais encore autorisée (aucune autorisation n'est jamais créée par ce chemin)", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_OS_SERVICES");
     const correlationId = `b21-reautorisation-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
@@ -176,7 +188,7 @@ test.describe("COMPANY ATLAS B21 — Strategic Intelligence Foundation (API)", (
   test("l'autorisation legacy reste refusée même sur une proposition inexistante — aucune fuite d'information distinguant existence et fermeture structurelle", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const reponse = await request.post("/api/strategic/propositions/inexistant/autoriser", { data: {} });
     expect(reponse.status()).toBe(403);
     const erreur = await reponse.json();
@@ -211,8 +223,8 @@ test.describe("COMPANY ATLAS B21 — Strategic Intelligence Foundation (API)", (
     return { recommendationId, correlationId, signalId, analysisId };
   }
 
-  test("M1 : ATLAS_TALENT (PROPOSE/TALENT, B21.1) peut créer une proposition", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("M1 : ATLAS_TALENT (PROPOSE/TALENT, B21.1) peut créer une proposition", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { recommendationId } = await idAgentEtRecommandation(request, "COMMERCIAL", "P2_IMPORTANT");
 
@@ -222,8 +234,8 @@ test.describe("COMPANY ATLAS B21 — Strategic Intelligence Foundation (API)", (
     expect(propRes.status(), await propRes.text()).toBe(201);
   });
 
-  test("M1 : ATLAS_OS_SERVICES (PROPOSE/SECURITY, B21.1) peut créer une proposition", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("M1 : ATLAS_OS_SERVICES (PROPOSE/SECURITY, B21.1) peut créer une proposition", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_OS_SERVICES");
     const { recommendationId } = await idAgentEtRecommandation(request, "SECURITY", "P2_IMPORTANT");
 
@@ -236,7 +248,7 @@ test.describe("COMPANY ATLAS B21 — Strategic Intelligence Foundation (API)", (
   test("M1 : PRINCIPAL n'a aucune permission PROPOSE — refusé (400), jamais d'auto-autorisation implicite de l'orchestrateur", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const agentId = await idAgent(request, "PRINCIPAL");
     const { recommendationId } = await idAgentEtRecommandation(request, "OPERATIONS", "P3_MONITOR");
 
@@ -248,8 +260,8 @@ test.describe("COMPANY ATLAS B21 — Strategic Intelligence Foundation (API)", (
     expect(erreur.error).toContain("PROPOSE");
   });
 
-  test("M1 : COMPANY_OS n'a aucune permission PROPOSE — refusé (400)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("M1 : COMPANY_OS n'a aucune permission PROPOSE — refusé (400)", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "COMPANY_OS");
     const { recommendationId } = await idAgentEtRecommandation(request, "FINANCE", "P3_MONITOR");
 
@@ -261,8 +273,8 @@ test.describe("COMPANY ATLAS B21 — Strategic Intelligence Foundation (API)", (
     expect(erreur.error).toContain("PROPOSE");
   });
 
-  test("M1 : un agentId inexistant est refusé (400), jamais une proposition orpheline créée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("M1 : un agentId inexistant est refusé (400), jamais une proposition orpheline créée", async () => {
+    let request = await connecter("ADMIN");
     const { recommendationId } = await idAgentEtRecommandation(request, "PRODUCT", "P3_MONITOR");
 
     const propRes = await request.post("/api/strategic/propositions", {
@@ -274,7 +286,7 @@ test.describe("COMPANY ATLAS B21 — Strategic Intelligence Foundation (API)", (
   test("M1 : aucune permission PROPOSE implicite — le Permission Registry (B20) ne contient PROPOSE que pour ATLAS_TALENT et ATLAS_OS_SERVICES", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const { permissions } = await (await request.get("/api/security/permissions")).json();
     const agents = await (await request.get("/api/security/agents")).json();
     const idParAgent: Record<string, string> = {};
@@ -297,7 +309,7 @@ test.describe("COMPANY ATLAS B21 — Strategic Intelligence Foundation (API)", (
   test("M2 : un correlationId de taille normale est accepté et conservé strictement à l'identique (signaux)", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const correlationId = `b21.1-m2-normal-${Date.now()}`;
 
     const signalRes = await request.post("/api/strategic/signaux", {
@@ -311,7 +323,7 @@ test.describe("COMPANY ATLAS B21 — Strategic Intelligence Foundation (API)", (
   test("M2 : un correlationId d'exactement 300 caractères est accepté et conservé à l'identique (signaux)", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const correlationId300 = `b21.1-m2-300-${"x".repeat(300 - "b21.1-m2-300-".length)}`;
     expect(correlationId300.length).toBe(300);
 
@@ -327,7 +339,7 @@ test.describe("COMPANY ATLAS B21 — Strategic Intelligence Foundation (API)", (
   test("M2 : un correlationId de 301 caractères est refusé (400), jamais tronqué ni enregistré (signaux)", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const correlationId301 = "x".repeat(301);
 
     const signalRes = await request.post("/api/strategic/signaux", {
@@ -342,8 +354,8 @@ test.describe("COMPANY ATLAS B21 — Strategic Intelligence Foundation (API)", (
     expect(signaux.some((s: { correlationId: string }) => s.correlationId.startsWith("x".repeat(300)))).toBe(false);
   });
 
-  test("M2 : un correlationId trop long (>300) est refusé (400) sur analyses et propositions également", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("M2 : un correlationId trop long (>300) est refusé (400) sur analyses et propositions également", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const correlationId301 = "y".repeat(301);
 
@@ -375,8 +387,8 @@ test.describe("COMPANY ATLAS B21 — Strategic Intelligence Foundation (API)", (
     expect(propRes.status()).toBe(400);
   });
 
-  test("M3 : correlationId se propage de façon déterministe de Signal à Opportunité/Menace/Recommandation", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("M3 : correlationId se propage de façon déterministe de Signal à Opportunité/Menace/Recommandation", async () => {
+    let request = await connecter("ADMIN");
     const correlationId = `b21.1-m3-propagation-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
     const signalRes = await request.post("/api/strategic/signaux", {

@@ -1,8 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
+import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { uploaderFichier } from "@/lib/storage";
-import { extraireInfosCV, modeleChampsVides, type ResultatExtractionCV } from "@/lib/cv-extraction";
+import { extraireInfosCV, resultatNeutre, type ResultatExtractionCV } from "@/lib/cv-extraction";
+
+// ENGINEER ACCESS & TRUST (09/10/2026) — contrat §8 : contrôles obligatoires
+// sur l'upload CV. Taille maximale raisonnable pour un CV PDF — aucune
+// limite n'existait avant ce lot (constat de l'audit), jamais une valeur
+// arbitrairement choisie sans rapport avec l'usage réel.
+const TAILLE_MAX_OCTETS = 10 * 1024 * 1024; // 10 Mo
+
+// Nom de fichier sûr pour le stockage (contrat §8 : "nom de fichier sûr",
+// "aucune confiance dans le nom de fichier") — jamais le nom fourni par
+// l'appelant utilisé tel quel dans la clé de stockage (voir
+// lib/storage.ts::uploaderFichier, qui l'interpole directement). Conserve
+// uniquement un sous-ensemble de caractères sûrs, plafonne la longueur, et
+// force toujours l'extension .pdf (seul type accepté par cette route) —
+// jamais déduite du nom fourni.
+function nomFichierSur(): string {
+  return `cv-${crypto.randomUUID()}.pdf`;
+}
 
 // Upload du CV par l'ingénieur connecté. Le contenu du fichier est envoyé à
 // l'IA (Claude) pour pré-remplir les champs InfoCV avec les informations
@@ -30,7 +48,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Format non supporté. Utilisez un PDF." }, { status: 400 });
   }
 
+  // ENGINEER ACCESS & TRUST — taille maximale vérifiée AVANT toute lecture
+  // complète/extraction IA (contrat §8), jamais après coup.
+  if (fichier.size > TAILLE_MAX_OCTETS) {
+    return NextResponse.json({ error: "Fichier trop volumineux (10 Mo maximum)." }, { status: 400 });
+  }
+
   const octets = await fichier.arrayBuffer();
+  // Empreinte du contenu EXACT du fichier — signal Access Integrity "CV
+  // identique" (contrat §9/§10, voir lib/engineer-access/integrity.ts),
+  // jamais une comparaison floue/IA inventée ici.
+  const cvHash = crypto.createHash("sha256").update(Buffer.from(octets)).digest("hex");
 
   // Extraction + vérification du secteur AVANT l'upload : un CV hors-sujet
   // (pas informatique/QA) est rejeté sans être stocké ni rattaché au profil.
@@ -43,7 +71,20 @@ export async function POST(req: NextRequest) {
     // champs seront simplement vides à saisir manuellement (et on ne peut
     // alors pas vérifier le secteur — l'import n'est pas bloqué pour autant).
     console.error("Extraction IA du CV impossible :", e.message ?? e);
-    resultat = { horsSecteur: false, secteurDetecte: "", champs: modeleChampsVides() };
+    resultat = resultatNeutre();
+  }
+
+  // LOT 11 — ATLAS SKILL INTELLIGENCE V1 : observabilité minimale (§19 du
+  // mandat) — signale une extraction sans contenu exploitable pour pouvoir
+  // diagnostiquer un pipeline CV silencieusement inefficace (Lot 10),
+  // jamais un blocage de l'import ni une donnée personnelle/le contenu du
+  // CV dans le log (seul l'identifiant de profil, déjà utilisé partout
+  // ailleurs dans les journaux ATLAS).
+  if (resultat.qualiteExtraction === "VIDE") {
+    console.warn("[cv] Extraction sans contenu exploitable (champs vides).", {
+      profilId: session.profilId,
+      extractionReussie: resultat.extractionReussie,
+    });
   }
 
   if (resultat.horsSecteur) {
@@ -64,10 +105,15 @@ export async function POST(req: NextRequest) {
 
   let url: string;
   try {
-    const uploade = await uploaderFichier(fichier.name, new Blob([octets], { type: fichier.type }), "cv");
+    const uploade = await uploaderFichier(nomFichierSur(), new Blob([octets], { type: fichier.type }), "cv");
     url = uploade.url;
   } catch (e: any) {
-    return NextResponse.json({ error: e.message ?? "Échec de l'upload" }, { status: 500 });
+    // LOT 12.1 — SECURITY HARDENING : ne jamais renvoyer e.message au
+    // client (message provider/stockage potentiellement interne) — message
+    // générique côté client, détail technique loggé côté serveur uniquement
+    // (identifiant de profil, jamais le contenu du fichier).
+    console.error("[cv] Échec de l'upload du CV.", { profilId: session.profilId, typeErreur: e?.constructor?.name ?? "Error" });
+    return NextResponse.json({ error: "Échec de l'upload du CV. Veuillez réessayer." }, { status: 500 });
   }
 
   // Historique des versions (voir prisma/schema.prisma, VersionCv) : avant
@@ -97,13 +143,21 @@ export async function POST(req: NextRequest) {
       where: { id: session.profilId },
       data: {
         cvUrl: url,
-        cvNomFichier: fichier.name,
+        // Nom affiché à l'utilisateur (jamais utilisé comme clé de
+        // stockage, voir nomFichierSur ci-dessus) — plafonné en longueur,
+        // jamais une confiance totale dans la valeur fournie.
+        cvNomFichier: fichier.name.slice(0, 200),
         cvImporteLe: new Date(),
         cvValide: false,
+        cvHash,
         infosCv: { create: champs },
       },
     }),
   ]);
 
-  return NextResponse.json({ ok: true, url });
+  // ATLAS ENGINEER INTELLIGENCE PROFILE — Phase 1 (28/09/2026) : signale
+  // explicitement à l'appelant si l'extraction IA a réellement fonctionné,
+  // pour qu'il puisse informer l'ingénieur plutôt que de lui présenter un
+  // profil vide comme si l'IA avait réussi (voir app/ingenieur/cv/page.tsx).
+  return NextResponse.json({ ok: true, url, extractionReussie: resultat.extractionReussie });
 }

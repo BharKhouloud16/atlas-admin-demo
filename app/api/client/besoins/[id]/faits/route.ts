@@ -4,7 +4,8 @@ import { getSession } from "@/lib/auth";
 import { dernierFaitParCle } from "@/lib/client-need/faits";
 import { CLES_CLARIFIABLES, prioriserClarifications } from "@/lib/client-need/clarification";
 import { evaluerCoherenceBesoin } from "@/lib/client-need/coherence";
-import type { ClientNeedFaitCle, ClientNeedStatut } from "@prisma/client";
+import { estVersionCourante, executerForkAvecRetry, forkerVersion, VersionNonCouranteError } from "@/lib/client-need/versioning";
+import type { ClientNeedFaitCle, ClientNeedStatut, NeedLifecycleStatut } from "@prisma/client";
 
 // COMPANY ATLAS — LOT 3 : Client Need Validation & Clarification (15/09/2026).
 //
@@ -34,6 +35,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const besoin = await prisma.clientNeed.findUnique({ where: { id: params.id }, include: { faits: true } });
   if (!besoin || besoin.clientId !== session.clientId) {
     return NextResponse.json({ error: "Besoin introuvable." }, { status: 404 });
+  }
+
+  // A5.2 — Need Versioning Core (gate A5.1 §19/§25) : une version
+  // historique refuse tout nouveau fait, même si son lifecycleStatut est
+  // encore VALIDATED — le critère d'historicité est needSuivantId.
+  if (!estVersionCourante(besoin)) {
+    return NextResponse.json({ error: "Cette version n'est plus la version courante — elle a été remplacée par une version plus récente." }, { status: 409 });
   }
 
   const body = await req.json().catch(() => null);
@@ -68,17 +76,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     source = "client_correction";
   }
 
-  const nouveauFait = await prisma.clientNeedFait.create({
-    data: {
-      needId: besoin.id,
-      cle: cle as ClientNeedFaitCle,
-      valeur: nouvelleValeur,
-      statut: "VERIFIE",
-      source,
-    },
-  });
-
-  const faitsMisAJour = [...faitsExistants, nouveauFait];
+  // A5.2 — Need Versioning Core : la cohérence est calculée sur l'état QUI
+  // RÉSULTERAIT de cette réponse (fait virtuel, pas encore persisté) —
+  // qu'elle finisse par être écrite sur Vn (in-place) ou sur V(n+1)
+  // (fork), c'est la MÊME logique de calcul, jamais dupliquée. Aucune
+  // écriture en base n'a encore eu lieu à ce stade.
+  const faitVirtuel = { cle, valeur: nouvelleValeur, statut: "VERIFIE", createdAt: new Date(), statutActivite: "ACTIVE" as const };
+  const faitsMisAJour = [...faitsExistants, faitVirtuel];
   const dernierParCle = dernierFaitParCle(faitsMisAJour);
 
   const faitsPourCoherence = [...dernierParCle.values()]
@@ -93,9 +97,52 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   // VALIDE/ARCHIVE/BROUILLON (le client garde le contrôle explicite de ces
   // statuts via PATCH /api/client/besoins/[id]).
   let statut: ClientNeedStatut = besoin.statut;
+  // LOT A : lifecycleStatut suit la même branche, dérivé des MÊMES valeurs
+  // déjà calculées ci-dessus (coherence, clarificationsRestantes) — aucune
+  // nouvelle règle : SOUMIS (>= 0 clarification restante) -> STRUCTURING,
+  // A_CLARIFIER -> UNDERSTANDING, exactement le recalcul verrouillé par le
+  // gate A0 §2, appliqué ici en continu plutôt qu'au seul backfill.
+  let lifecycleStatut: NeedLifecycleStatut | undefined;
   if (besoin.statut === "SOUMIS" || besoin.statut === "A_CLARIFIER") {
     statut = clarificationsRestantes.length > 0 ? "A_CLARIFIER" : "SOUMIS";
+    lifecycleStatut = clarificationsRestantes.length > 0 ? "UNDERSTANDING" : "STRUCTURING";
   }
+
+  // A5.2 — gate A5.1 §19/§25 : current + VALIDATED -> fork, jamais une
+  // écriture en place (sinon on romprait l'immutabilité de Vn). Le
+  // nouveau fait n'est alors JAMAIS créé sur Vn — il est posé directement
+  // sur V(n+1) par forkerVersion, dans la même transaction que la copie
+  // des faits ACTIVE existants.
+  if (besoin.lifecycleStatut === "VALIDATED") {
+    try {
+      const suivant = await executerForkAvecRetry((tx) =>
+        forkerVersion(tx, besoin, {
+          nouveauFait: { cle: cle as ClientNeedFaitCle, valeur: nouvelleValeur, statut: "VERIFIE", source },
+          coherenceStatut: coherence.statut,
+          coherenceDetail: coherence.detail,
+        })
+      );
+      return NextResponse.json({ ancienneVersion: { id: besoin.id, version: besoin.version }, besoin: suivant }, { status: 201 });
+    } catch (erreur) {
+      if (erreur instanceof VersionNonCouranteError) {
+        return NextResponse.json(
+          { error: "Cette version n'est plus la version courante — elle a été remplacée par une version plus récente." },
+          { status: 409 }
+        );
+      }
+      throw erreur;
+    }
+  }
+
+  await prisma.clientNeedFait.create({
+    data: {
+      needId: besoin.id,
+      cle: cle as ClientNeedFaitCle,
+      valeur: nouvelleValeur,
+      statut: "VERIFIE",
+      source,
+    },
+  });
 
   const besoinMisAJour = await prisma.clientNeed.update({
     where: { id: besoin.id },
@@ -103,6 +150,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       coherenceStatut: coherence.statut,
       coherenceDetail: coherence.detail,
       statut,
+      ...(lifecycleStatut ? { lifecycleStatut } : {}),
     },
     include: { faits: true },
   });
