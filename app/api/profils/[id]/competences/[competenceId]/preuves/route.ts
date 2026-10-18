@@ -3,8 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { journaliser } from "@/lib/audit";
 import { ajouterPreuveSchema, premierMessageZod } from "@/lib/validation";
-import { fusionnerCompetence, niveauxHistoriques } from "@/lib/talent/skill-graph";
-import { calculerConfianceCompetence } from "@/lib/talent/evidence-confidence";
+import { creerPreuveCompetence } from "@/lib/talent/skill-evidence-service";
 
 // ATLAS DYNAMIC SKILL GRAPH — ajoute une nouvelle preuve (SkillEvidence) à
 // une ProfilCompetence existante SANS JAMAIS supprimer ni écraser une preuve
@@ -42,39 +41,15 @@ export async function POST(
 
   const donnees = analyse.data;
 
-  // La nouvelle preuve est TOUJOURS créée, quelle que soit la suite —
-  // l'historique s'accumule, il ne se substitue jamais à ce qui précède.
-  await prisma.skillEvidence.create({
-    data: {
-      profilCompetenceId: params.competenceId,
-      source: donnees.source,
-      detail: donnees.detail ?? null,
-      niveau: donnees.niveauObserve ?? null,
-    },
-  });
-
-  // Fusion éventuelle du statut/niveau proposés avec l'existant — jamais de
-  // régression (voir fusionnerCompetence, lib/talent/skill-graph.ts).
-  // Lorsqu'aucun statutPropose n'est fourni, on ne compare qu'un niveau
-  // éventuel : le statut existant est réutilisé comme "nouvelle" entrée pour
-  // ne jamais le faire bouger involontairement.
-  const resultat = fusionnerCompetence(
-    { competence: existante.competence, statut: existante.statut, confiance: existante.confiance, niveau: existante.niveau },
-    {
-      competence: existante.competence,
-      statut: donnees.statutPropose ?? existante.statut,
-      confiance: existante.confiance,
-      niveau: donnees.niveauObserve ?? null,
-      anneesExperience: existante.anneesExperience,
-      contexte: existante.contexte,
-      secteur: existante.secteur,
-      preuve: { source: donnees.source, detail: donnees.detail ?? null, niveau: donnees.niveauObserve ?? null },
-    }
-  );
-
-  const apres = await prisma.profilCompetence.update({
-    where: { id: params.competenceId },
-    data: { statut: resultat.statut, confiance: resultat.confiance, niveau: resultat.niveau },
+  // Cœur de création extrait dans lib/talent/skill-evidence-service.ts
+  // (Phase 2B-1) — comportement strictement identique à l'ancien code
+  // inline : même création SkillEvidence, même fusionnerCompetence, même
+  // recalcul. Réutilisé aussi par la validation d'une MissionSkillProposal.
+  const resultat = await creerPreuveCompetence(prisma, existante, {
+    source: donnees.source,
+    detail: donnees.detail ?? null,
+    niveauObserve: donnees.niveauObserve ?? null,
+    statutPropose: donnees.statutPropose,
   });
 
   await journaliser({
@@ -82,27 +57,13 @@ export async function POST(
     acteurRole: "ADMIN",
     action: "talent.competence.preuveAjoutee",
     cible: `profil:${params.id}:competence:${params.competenceId}`,
-    detail: `${existante.competence}: preuve ${donnees.source} ajoutée (statut ${existante.statut} -> ${apres.statut}, niveau ${existante.niveau ?? "null"} -> ${apres.niveau ?? "null"})`,
-  });
-
-  const preuves = await prisma.skillEvidence.findMany({
-    where: { profilCompetenceId: params.competenceId },
-    orderBy: { createdAt: "asc" },
-  });
-
-  const confianceDetaillee = calculerConfianceCompetence({
-    competence: apres.competence,
-    statut: apres.statut,
-    niveau: apres.niveau,
-    confiance: apres.confiance,
-    contexte: apres.contexte,
-    preuves,
+    detail: `${existante.competence}: preuve ${donnees.source} ajoutée (statut ${existante.statut} -> ${resultat.profilCompetence.statut}, niveau ${existante.niveau ?? "null"} -> ${resultat.profilCompetence.niveau ?? "null"})`,
   });
 
   return NextResponse.json({
-    ...apres,
-    preuves,
-    confianceDetaillee,
-    niveauxHistoriques: niveauxHistoriques(preuves.map((p) => ({ niveau: p.niveau, source: p.source, createdAt: p.createdAt }))),
+    ...resultat.profilCompetence,
+    preuves: resultat.preuves,
+    confianceDetaillee: resultat.confianceDetaillee,
+    niveauxHistoriques: resultat.niveauxHistoriques,
   });
 }

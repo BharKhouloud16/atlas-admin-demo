@@ -23,6 +23,8 @@ const LIENS_NAV = [
   { href: "/admin/securite", label: "Sécurité (2FA)", roles: ["ADMIN"] },
   { href: "/admin/securite-intelligence", label: "Sécurité — Intelligence", roles: ["ADMIN"] },
   { href: "/admin/qualite", label: "Qualité ATLAS OS", roles: ["ADMIN"] },
+  { href: "/admin/agentic-runs", label: "Agentic Runtime", roles: ["ADMIN"] },
+  { href: "/admin/capabilities", label: "Capabilities", roles: ["ADMIN"] },
 ] as const;
 
 const LABEL_ROLE: Record<string, string> = {

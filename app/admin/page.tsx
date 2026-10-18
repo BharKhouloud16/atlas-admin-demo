@@ -29,7 +29,7 @@ export default async function AdminHome() {
     nbFeuillesEnAttente,
     hyp,
   ] = await Promise.all([
-    prisma.mission.findMany({ where: { statut: "En cours" }, include: { client: true, profil: true } }),
+    prisma.mission.findMany({ where: { statut: "EN_COURS" }, include: { client: true, profil: true } }),
     prisma.mission.count({ where: { createdAt: { gte: debutMois } } }),
     prisma.client.count(),
     prisma.user.count({ where: { role: "INGENIEUR", actif: true, desactive: false } }),

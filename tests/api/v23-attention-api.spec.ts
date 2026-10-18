@@ -1,4 +1,4 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
 import { prisma } from "@/lib/prisma";
 import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { synchroniserAttentionsClient } from "@/lib/attention/synchronisation";
@@ -29,9 +29,20 @@ import { synchroniserAttentionsClient } from "@/lib/attention/synchronisation";
 // le Client tiers — même résultat qu'un vrai GET authentifié comme ce
 // Client, sans ajouter de connexion réelle ni de route HTTP supplémentaire.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function idProfilIngenieurDemo(): Promise<string> {
@@ -230,16 +241,16 @@ test.describe("V2.3 — IDOR/BOLA : un Client ne voit et ne modifie jamais l'Att
 
   // Bascule Admin -> Client au sein d'un même test : gardé en connexions
   // réelles inchangées (voir note d'en-tête — correction minimale).
-  test("PATCH /api/client/attentions/[id] sur une Attention d'un autre Client -> 404 (jamais 403 : aucune fuite d'existence)", async ({ request }) => {
+  test("PATCH /api/client/attentions/[id] sur une Attention d'un autre Client -> 404 (jamais 403 : aucune fuite d'existence)", async () => {
     const autreClient = await creerClientDeTest("idor-patch-autre");
     await factureDeTest(autreClient.id, { statut: "ENVOYEE" });
 
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     await request.get(`/api/admin/attentions?clientId=${autreClient.id}&historique=1`); // déclenche la synchronisation
     const attentionAutreClient = await prisma.attention.findFirst({ where: { recipientType: "CLIENT", recipientId: autreClient.id } });
     expect(attentionAutreClient).toBeTruthy();
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const reponse = await request.patch(`/api/client/attentions/${attentionAutreClient!.id}`, { data: { action: "lire" } });
     expect(reponse.status()).toBe(404);
 

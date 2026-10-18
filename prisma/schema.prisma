@@ -70,6 +70,28 @@ model User {
   desactive   Boolean   @default(false)
   desactiveLe DateTime?
 
+  // ENGINEER ACCESS & TRUST (09/10/2026) — Identity/Access/Trust séparés
+  // (contrat §1/§5). Capture l'adresse IP déjà calculée pour le rate
+  // limiting de l'inscription (adresseIp(req), voir lib/rate-limit.ts et
+  // app/api/auth/signup/route.ts) — jamais une nouvelle collecte, jamais
+  // une géolocalisation précise. Nullable : absente pour tout compte créé
+  // avant ce lot ou créé directement en base (ADMIN). Minimisation (contrat
+  // §22) : sert uniquement de signal Access Integrity explicite ("combien
+  // d'autres inscriptions depuis cette même adresse"), jamais affichée à
+  // quiconque hors ADMIN, jamais utilisée pour une décision automatique.
+  // Une politique de rétention/anonymisation dédiée reste un point de
+  // raccordement explicite pour un futur lot (hors périmètre ici).
+  inscriptionIp String?
+
+  // Historique des décisions ADMIN sur une candidature — toujours
+  // append-only (voir EngineerAccessDecision ci-dessous) : la décision la
+  // plus récente fait foi, jamais une réécriture de l'ancienne. Distinct de
+  // `actif` (qui reste la SEULE source de vérité pour l'accès réel —
+  // APPROUVER se traduit par `actif: true`, exactement comme avant ce lot) :
+  // cette relation est un journal traçable des décisions, jamais un second
+  // système de statut parallèle.
+  accessDecisions EngineerAccessDecision[]
+
   // Consentement RGPD au traitement des données (voir /confidentialite),
   // recueilli obligatoirement à l'inscription pour un compte INGENIEUR ou
   // CLIENT (case à cocher, voir /inscription). Sert de preuve de
@@ -106,6 +128,46 @@ model User {
   preferenceNotification PreferenceNotification?
 }
 
+// COMPANY ATLAS — ENGINEER ACCESS & TRUST (09/10/2026).
+//
+// Journal APPEND-ONLY des décisions ADMIN sur une candidature (contrat
+// §14 : "une décision doit être traçable"). Ne remplace JAMAIS `User.actif`
+// comme source de vérité d'accès — APPROUVER continue de passer par
+// exactement la même écriture qu'avant ce lot (`actif: true, valideLe`,
+// voir app/api/comptes/route.ts) ; cette table ne fait qu'enregistrer
+// l'historique humain de la décision (qui, quand, pourquoi), jamais une
+// deuxième machine à états qui pourrait diverger de `actif`. REFUSER et
+// DEMANDER_INFORMATIONS ne changent JAMAIS `actif` : le compte reste
+// `actif=false` indéfiniment après un REFUSER (jamais de suppression
+// automatique, jamais de blocage définitif distinct — l'admin peut toujours
+// changer d'avis en créant une nouvelle décision APPROUVER plus tard,
+// jamais une réécriture de l'ancienne ligne).
+model EngineerAccessDecision {
+  id     String @id @default(cuid())
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+
+  decision EngineerAccessDecisionType
+
+  // Obligatoire pour REFUSER/DEMANDER_INFORMATIONS, jamais pour APPROUVER —
+  // contrôlé par le service (lib/engineer-access/decision.ts), jamais par
+  // une contrainte DB (Prisma ne peut pas exprimer une NOT NULL
+  // conditionnelle au statut, même limitation documentée ailleurs dans ce
+  // schéma, ex. DeliveryQualityGate.criteresEvalues).
+  raison String?
+
+  decidedByEmail String
+  decidedAt      DateTime @default(now())
+
+  @@index([userId])
+}
+
+enum EngineerAccessDecisionType {
+  APPROUVER
+  REFUSER
+  DEMANDER_INFORMATIONS
+}
+
 // Throttle par IP sur les endpoints sensibles (connexion, inscription) —
 // complète le verrouillage par compte ci-dessus : protège aussi contre un
 // bruteforce réparti sur plusieurs emails (y compris des emails qui
@@ -125,15 +187,29 @@ model TentativeIp {
 // voir lib/audit.ts. Attendu par tout client ESN/staffing sérieux : qui a
 // fait quoi, et quand. Consultable dans /admin/journal.
 model JournalActivite {
-  id          String   @id @default(cuid())
-  acteurEmail String
-  acteurRole  Role
-  action      String // ex. "validation_compte", "creation_profil", "rejet_cra"
-  cible       String? // id de l'entité concernée (userId, profilId, feuilleId...)
-  detail      String?
-  createdAt   DateTime @default(now())
+  id            String   @id @default(cuid())
+  acteurEmail   String
+  acteurRole    Role
+  action        String // ex. "validation_compte", "creation_profil", "rejet_cra"
+  cible         String? // id de l'entité concernée (userId, profilId, feuilleId...)
+  detail        String?
+  // LOT 16.2 — CONTROL PLANE HARDENING (audit Lot 16.1, section "Audit Log
+  // Audit") : seul maillon des 3 journaux d'audit (JournalActivite /
+  // EvenementSecurite / AuditEvent) sans identifiant de corrélation — les
+  // deux autres en portent déjà un (voir EvenementSecurite.correlationId,
+  // même format : lib/security/events.ts::nouveauCorrelationId(), UUID).
+  // Nullable et purement additif : n'importe quelle entrée historique reste
+  // valide (colonne absente jusqu'ici). Fourni par l'appelant lorsqu'une
+  // opération transverse possède déjà un identifiant de corrélation —
+  // jamais généré automatiquement ici (voir lib/audit.ts::journaliser) :
+  // ce lot n'introduit ni contexte global de requête, ni 4e système
+  // d'audit, seulement la capacité de JournalActivite à participer à une
+  // corrélation déjà décidée ailleurs dans le même flux.
+  correlationId String?
+  createdAt     DateTime @default(now())
 
   @@index([createdAt])
+  @@index([correlationId])
 }
 
 // ============================================================================
@@ -1030,6 +1106,7 @@ model Client {
   solutionOptions       SolutionOption[] // V2.1-A — C3 Solution Intelligence (16/09/2026) — voir SolutionOption
   factures              Facture[] // V2.2-B — Billing Foundation (17/09/2026) — voir Facture
   messageLectures       MessageLecture[] // V2.5 — Communication Intelligence (21/09/2026) — voir MessageLecture
+  candidateProposals    CandidateProposal[] // ATLAS CANDIDATE PROPOSAL (A35.8) — voir CandidateProposal
 }
 
 // Fiche interne d'un profil d'ingénieur. Créée automatiquement, vide de
@@ -1048,6 +1125,15 @@ model Profil {
   cvNomFichier String?
   cvImporteLe  DateTime?
   cvValide     Boolean   @default(false)
+  // ENGINEER ACCESS & TRUST (09/10/2026) — empreinte SHA-256 du contenu
+  // exact du fichier CV importé (voir app/api/ingenieur/cv/route.ts),
+  // recalculée à chaque ré-import. Permet un signal Access Integrity
+  // "CV identique" déterministe et explicable (comparaison d'empreintes
+  // exactes entre Profil, jamais une similarité floue/IA — contrat §9/§10 :
+  // aucun mécanisme de similarité floue n'existe aujourd'hui, jamais
+  // inventé ici). Nullable : absente pour tout Profil n'ayant jamais
+  // importé de CV depuis ce lot.
+  cvHash String?
 
   anneesExperience   Int?
   seniorite          String?
@@ -1079,18 +1165,22 @@ model Profil {
 
   realisations Json?
 
-  videoUrl        String?
-  videoNomFichier String?
-  videoImporteLe  DateTime?
-
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
-  missions         Mission[]
-  infosCv          InfoCV[]
-  versionsCv       VersionCv[]
-  compte           User?
-  shortlistEntrees ShortlistEntree[]
-  competencesGraph ProfilCompetence[]
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  missions              Mission[]
+  infosCv               InfoCV[]
+  versionsCv            VersionCv[]
+  compte                User?
+  shortlistEntrees      ShortlistEntree[]
+  competencesGraph      ProfilCompetence[]
+  // PHASE 2B-1 — Mission Skill Proposal (28/09/2026) — voir MissionSkillProposal
+  missionSkillProposals MissionSkillProposal[]
+  // A20 — MissionAssignment Foundation (05/10/2026) — voir MissionAssignment.
+  // Un même Profil peut avoir plusieurs MissionAssignment historiques sur la
+  // même Mission (changement de talent = nouvelle ligne) ou sur des Mission
+  // distinctes (staffing normal d'un talent sur plusieurs missions) —
+  // jamais une cardinalité 1:1 supposée.
+  missionAssignments     MissionAssignment[]
 }
 
 model VersionCv {
@@ -1117,6 +1207,37 @@ model InfoCV {
   createdAt DateTime @default(now())
 }
 
+// LOT 16.2 — CONTROL PLANE HARDENING (Mission.statut). Périmètre strict :
+// représente EXCLUSIVEMENT l'état opérationnel de la Mission — jamais à
+// confondre avec un futur statut de Requirement, de Relationship, de
+// Contract, de Facture (StatutFacture, déjà un enum séparé), de
+// Profil.disponibilite, ou de lib/disponibilite.ts::STATUTS_EN_MISSION
+// (vocabulaire totalement différent, jamais lu ni écrit sur ce champ).
+//
+// A22 — MISSION LIFECYCLE ENGINE (05/10/2026) : PLANIFIEE/PRETE/BLOQUEE
+// ajoutés — voir lib/mission/lifecycle.ts pour la matrice de transitions
+// complète (TRANSITIONS_AUTORISEES) et app/api/missions/[id]/transition/
+// route.ts (même endpoint que LOT 16.2/Phase 2B-0, étendu, jamais une
+// seconde route créée). EN_COURS/TERMINEE/ANNULEE restent EXACTEMENT ce
+// qu'ils étaient (même valeurs, même sémantique) — aucune réinterprétation
+// des ~5900 Missions historiques, toutes dans l'un de ces 3 états.
+// `@default(EN_COURS)` reste délibérément INCHANGÉ (voir rapport A22,
+// section "Audit du lifecycle existant") : la création d'une Mission via
+// POST /api/missions continue de produire exactement le même comportement
+// qu'avant ce lot — PLANIFIEE/PRETE sont des états pleinement implémentés
+// et atteignables (toute Mission peut y être placée explicitement, par
+// fixture de test ou par une future évolution de la route de création),
+// mais rien dans A22 ne change silencieusement ce que produit la création
+// réelle aujourd'hui.
+enum StatutMission {
+  PLANIFIEE
+  PRETE
+  EN_COURS
+  BLOQUEE
+  TERMINEE
+  ANNULEE
+}
+
 model Mission {
   id              String           @id @default(cuid())
   repere          String?
@@ -1128,7 +1249,7 @@ model Mission {
   margeCible      Float            @default(0.30)
   tjmVente        Float
   deviseVente     String           @default("EUR")
-  statut          String           @default("En cours") // En cours / Terminée / Annulée
+  statut          StatutMission    @default(EN_COURS)
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   documents       Document[]
@@ -1149,6 +1270,21 @@ model Mission {
   sourceDemande   DemandeTalent? @relation(fields: [sourceDemandeId], references: [id])
   sourceDemandeId String?
 
+  // ATLAS CANDIDATE PROPOSAL (A35.8) — voir
+  // docs/architecture/CANDIDATE_PROPOSAL_IMPLEMENTATION_CONTRACT.md §7.
+  // Identité d'unicité métier anti-double-Mission (Design Contract §11.2,
+  // D2 LOCKED) : garantie posée en base, insensible à toute isolation de
+  // transaction côté application — au plus une Mission par
+  // CandidateProposal ACCEPTEE (Postgres autorise plusieurs NULL, mais un
+  // seul non-NULL par valeur, même pattern que @@unique([needParentId]),
+  // A5.2). Additif, nullable : aucun backfill, les Mission historiques
+  // (créées avant ce champ, ou par le flux Admin ordinaire sans passer par
+  // une CandidateProposal) conservent NULL — jamais une association
+  // rétroactive par heuristique. Immutable une fois posé : contrôlé au
+  // niveau service (lib/candidate-proposal/mission.ts), jamais réécrit.
+  sourceCandidateProposal   CandidateProposal? @relation(fields: [sourceCandidateProposalId], references: [id], onDelete: Restrict)
+  sourceCandidateProposalId String?            @unique
+
   // Contexte opérationnel réellement décidé pour cette intervention —
   // jamais une seconde source de vérité pour le besoin (celui-ci reste
   // dans ClientNeed/DemandeTalent). Pré-remplis depuis la DemandeTalent
@@ -1164,7 +1300,109 @@ model Mission {
 
   factures Facture[] // V2.2-B — Billing Foundation (17/09/2026) — voir Facture
 
+  // PHASE 2B-1 — Mission Skill Proposal (28/09/2026) — voir MissionSkillProposal
+  skillProposals MissionSkillProposal[]
+
+  // A6.1 — Outcome Foundation (voir OutcomeAssessment) : jamais plus d'une
+  // ligne "courante" (supersededBy IS NULL, c'est-à-dire aucune ligne
+  // suivante ne la référence par supersedesId) par Mission à un instant
+  // donné — invariant applicatif (lib/outcome/service.ts), pas une
+  // contrainte DB (même choix que ClientNeed.needParentId ne pouvant pas
+  // exprimer "au plus une ligne non-supersédée" nativement). Mission.statut
+  // n'est JAMAIS modifié par ce lot : TERMINEE reste une clôture
+  // administrative, jamais une preuve de résultat (voir OutcomeAssessment).
+  outcomeAssessments OutcomeAssessment[]
+
+  // COMPANY ATLAS — A18 : Mission Need Pinning + Solution Decision (05/10/2026).
+  //
+  // Pin EXPLICITE vers la version EXACTE du ClientNeed à l'origine de cette
+  // Mission — jamais le Need "courant" recalculé dynamiquement (même
+  // discipline que OutcomeAssessment.needVersionId/CapabilityRequirement.
+  // needVersionId, A6.1/A8). Nullable : la quasi-totalité des Mission
+  // existantes (créées avant ce lot, ou manuelles/renouvellements sans
+  // Need) n'ont et n'auront jamais ce pin — voir lib/outcome/service.ts
+  // pour le fallback legacy (sourceDemande -> sourceNeed) utilisé quand ce
+  // champ est NULL. onDelete: SetNull (jamais Cascade) : la suppression
+  // d'un ClientNeed ne doit jamais entraîner la suppression d'une Mission
+  // déjà réalisée/facturée — seul le pin devient NULL, Mission.statut
+  // n'est jamais affecté par ce lot. Immutable une fois posé : contrôlé au
+  // niveau service (app/api/missions), jamais réécrit vers une autre
+  // version (contrat A13).
+  needVersion   ClientNeed? @relation(fields: [needVersionId], references: [id], onDelete: SetNull)
+  needVersionId String?
+
+  // Pointeur texte simple vers la ligne SolutionOption(niveau=DECISION)
+  // ayant motivé cette Mission — jamais une relation Prisma complète (même
+  // discipline que CapabilityRequirement.solutionDecisionId, A8 : une
+  // relation forcerait un champ inverse sur SolutionOption, modification
+  // hors périmètre A18). Doit appartenir au même Need que needVersionId
+  // lorsque les deux sont renseignés — invariant vérifié au niveau service
+  // à la création, jamais en base (Prisma ne peut pas exprimer cette
+  // cohérence croisée nativement). Immutable une fois posé : un changement
+  // de décision crée une nouvelle Mission, jamais une réécriture de
+  // celle-ci.
+  solutionDecisionId String?
+
+  // COMPANY ATLAS — A20 : MissionAssignment Foundation (05/10/2026).
+  //
+  // Source STRUCTURÉE de vérité pour les affectations opérationnelles —
+  // coexiste avec le legacy `profilId` ci-dessus sans le remplacer : A20
+  // n'introduit aucune migration des consommateurs existants de `profilId`
+  // (voir MissionAssignment ci-dessous pour le contrat complet). Historique
+  // intégralement additif : plusieurs MissionAssignment par Mission dans le
+  // temps (changement de talent = nouvelle ligne, jamais une réécriture).
+  assignments MissionAssignment[]
+
+  // COMPANY ATLAS — A21 : MissionCapabilityLink (05/10/2026).
+  //
+  // Lien EXPLICITE entre cette Mission et les capacités du besoin/solution
+  // effectivement retenues pour son exécution — jamais créé automatiquement
+  // (ni à la création de la Mission, ni à la dérivation d'une
+  // CapabilityRequirement) : voir MissionCapabilityLink ci-dessous.
+  capabilityLinks MissionCapabilityLink[]
+
+  // COMPANY ATLAS — A23 : WorkItem Foundation (05/10/2026).
+  //
+  // Unité de travail concrète à l'intérieur de la Mission — jamais créée
+  // automatiquement (ni à la création de la Mission, ni à une transition
+  // de son lifecycle A22, ni à la création d'un MissionAssignment/
+  // MissionCapabilityLink) : voir WorkItem ci-dessous pour le contrat
+  // complet. Machine de transition totalement indépendante du lifecycle
+  // Mission (A22) : aucune cascade dans un sens ni dans l'autre.
+  workItems WorkItem[]
+
+  // COMPANY ATLAS — A25 : Deliverable Foundation (05/10/2026).
+  //
+  // Ce que la Mission a produit/remis — jamais créé automatiquement (ni à
+  // la création de la Mission, ni à une transition de son lifecycle A22,
+  // ni à la création/transition d'un WorkItem A23) : voir Deliverable
+  // ci-dessous pour le contrat complet.
+  deliverables Deliverable[]
+
+  // COMPANY ATLAS — A29 : Financial Result Foundation (05/10/2026).
+  //
+  // Performance économique RÉELLE de la Mission — jamais créée
+  // automatiquement (ni à la création de la Mission, ni à une transition
+  // de son lifecycle A22) : voir FinancialResult ci-dessous pour le
+  // contrat complet. Indépendant par construction de tjmVente/nbJours/
+  // margeCible (la CIBLE commerciale, ci-dessus) et de OutcomeAssessment/
+  // DeliveryQualityGate (jamais une FK directe vers l'un ou l'autre —
+  // la Mission reste le seul point d'articulation commun, contrat A29 §33).
+  financialResults FinancialResult[]
+
+  // COMPANY ATLAS — A30 : Learning Foundation (05/10/2026).
+  //
+  // Connaissance DÉRIVÉE d'une expérience Mission — jamais une
+  // modification de l'expérience elle-même. Voir Learning ci-dessous
+  // pour le contrat complet. Même discipline d'indépendance que
+  // FinancialResult ci-dessus : aucune FK directe depuis Mission vers
+  // OutcomeAssessment/FinancialResult/DeliveryQualityGate n'est ajoutée
+  // ici, Mission reste le seul point d'articulation commun (contrat A30
+  // §15/§16).
+  learnings Learning[]
+
   @@index([sourceDemandeId])
+  @@index([needVersionId])
 }
 
 model FeuilleDeTemps {
@@ -1303,6 +1541,19 @@ model DemandeTalent {
   analyseConfiance       Float?
   analyseeLe             DateTime?
 
+  // LOT 15.5 — Client Requirement Builder (29/09/2026). Besoin structuré
+  // validé par le Client lui-même (expression libre analysée par IA PUIS
+  // corrigée, OU critères guidés saisis directement) — distinct des champs
+  // ci-dessus (competencesExtraites, etc.), qui restent la source de vérité
+  // du Matching Engine V2/Admin, jamais modifiés par ce lot. Forme :
+  // RequirementStructure (voir lib/talent/requirement-analyzer.ts) —
+  // uniquement la représentation structurée finale, jamais la réponse brute
+  // de l'agent IA (celle-ci n'est jamais persistée). Nul jusqu'à ce que le
+  // Client confirme son besoin (voir PATCH .../besoin) ; le self-service
+  // matching (POST .../besoin/matcher) refuse de s'exécuter tant que ce
+  // champ est vide.
+  criteresStructures Json?
+
   criteresModifiesParEmail String?
   criteresModifiesLe       DateTime?
 
@@ -1325,6 +1576,10 @@ model DemandeTalent {
   shortlist ShortlistEntree[]
   createdAt DateTime          @default(now())
   updatedAt DateTime          @updatedAt
+
+  candidateSelections CandidateSelection[]
+  finalDecisions      CandidateFinalDecision[]
+  candidateProposals  CandidateProposal[]
 
   @@index([clientId])
 }
@@ -1349,7 +1604,352 @@ model ShortlistEntree {
   valideLe       DateTime?
   createdAt      DateTime        @default(now())
 
+  candidateSelections CandidateSelection[]
+
   @@unique([demandeId, profilId])
+}
+
+// ============================================================================
+// ATLAS CANDIDATE DECISION + INTERVIEW (11/10/2026)
+//
+// Couche commerciale complémentaire — voir
+// docs/architecture/CANDIDATE_DECISION_INTERVIEW_{DESIGN_CONTRACT,
+// CTO_VALIDATION,IMPLEMENTATION_CONTRACT}.md, source d'autorité verrouillée
+// pour tout ce bloc. Ne remplace ni ne modifie ShortlistEntree/DemandeTalent/
+// Mission/MissionAssignment/Matching V2 : chaque relation ci-dessous
+// référence l'existant, jamais l'inverse. Aucun nouveau Staffing Engine,
+// aucun nouveau Matching Engine, aucun recalcul de score Matching.
+// ============================================================================
+
+enum CandidateSelectionStatut {
+  ACTIVE
+  RETIREE
+}
+
+// Choix du Client de faire avancer un candidat ShortlistEntree(VALIDEE) vers
+// l'étape Interview — distinct de ShortlistEntree, jamais une modification
+// de celle-ci (Implementation Contract §1.1). Au plus une ligne
+// statut=ACTIVE par shortlistEntreeId, vérifié en transaction Serializable
+// (voir lib/candidate-selection/service.ts), jamais une contrainte DB
+// (même discipline que MissionAssignment.estResponsablePrincipal).
+model CandidateSelection {
+  id                String                   @id @default(cuid())
+  shortlistEntree   ShortlistEntree          @relation(fields: [shortlistEntreeId], references: [id], onDelete: Restrict)
+  shortlistEntreeId String
+  demandeTalent     DemandeTalent            @relation(fields: [demandeTalentId], references: [id], onDelete: Cascade)
+  demandeTalentId   String
+  statut            CandidateSelectionStatut @default(ACTIVE)
+  selectedByEmail   String
+  selectedAt        DateTime                 @default(now())
+  retireeParEmail   String?
+  retireeLe         DateTime?
+  createdAt         DateTime                 @default(now())
+
+  interviews        Interview[]
+  finalDecisionEntrees CandidateFinalDecisionEntree[]
+
+  @@index([demandeTalentId])
+  @@index([shortlistEntreeId])
+}
+
+enum InterviewStatut {
+  PLANIFIE
+  CONFIRME
+  TERMINE
+  ANNULE
+  ABSENT
+}
+
+enum InterviewCanal {
+  VIDEO
+  TELEPHONE
+  PRESENTIEL
+  AUTRE
+}
+
+// Événement d'entretien — source de vérité métier (jamais un fournisseur
+// vidéo/calendrier). Lifecycle verrouillé par la CTO Validation §7 :
+// PLANIFIE -> CONFIRME (tous les participants CANDIDAT/organisateur
+// ACCEPTEE, voir lib/interview/lifecycle.ts::peutConfirmer, jamais un score/
+// une moyenne/une IA) -> TERMINE | ANNULE | ABSENT (terminaux, jamais
+// réutilisés — une répétition crée un nouvel Interview référençant la même
+// CandidateSelection). EN_COURS n'existe pas (aucune intégration live).
+model Interview {
+  id                   String          @id @default(cuid())
+  candidateSelection   CandidateSelection @relation(fields: [candidateSelectionId], references: [id], onDelete: Restrict)
+  candidateSelectionId String
+  statut               InterviewStatut @default(PLANIFIE)
+  canal                InterviewCanal
+  dateHeure            DateTime
+  dureeMinutes         Int
+  timezoneSaisie       String
+  lieu                 String?
+  objectif             String?
+  meetingProvider      String?
+  meetingUrl           String?
+  meetingExternalId    String?
+  createdByEmail       String
+  createdAt            DateTime       @default(now())
+  updatedAt             DateTime      @updatedAt
+  annuleParEmail        String?
+  annuleLe              DateTime?
+  motifAnnulation        String?
+
+  participants          InterviewParticipant[]
+  evaluations            InterviewEvaluation[]
+
+  @@index([candidateSelectionId])
+}
+
+enum InterviewParticipantRole {
+  CANDIDAT
+  CLIENT
+  ADMIN_RECRUTEUR
+  INTERVIEWEUR_INTERNE
+}
+
+enum StatutInvitation {
+  EN_ATTENTE
+  ENVOYEE
+  ACCEPTEE
+  REFUSEE
+  CRENEAU_ALTERNATIF_PROPOSE
+}
+
+// Un "intervieweur technique" côté Client est représenté par role=CLIENT +
+// fonctionDeclaree (texte libre) — jamais une 5e valeur d'enum sans preuve
+// d'usage réelle (CTO Validation §7). telephoneInterview est capturé ici,
+// scopé à CET Interview, jamais sur Profil (CTO Validation §5).
+model InterviewParticipant {
+  id                  String                   @id @default(cuid())
+  interview           Interview                @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  interviewId         String
+  role                InterviewParticipantRole
+  emailParticipant    String
+  profilId            String?
+  fonctionDeclaree    String?
+  estOrganisateur     Boolean                  @default(false)
+  telephoneInterview  String?
+  statutInvitation    StatutInvitation         @default(EN_ATTENTE)
+  invitationEnvoyeeLe DateTime?
+  reponseLe           DateTime?
+  messageReponse      String?
+  createdAt           DateTime                 @default(now())
+
+  reminders           InterviewReminder[]
+  calendarSync        CalendarSyncRecord?
+
+  @@unique([interviewId, emailParticipant])
+}
+
+enum AppreciationCritere {
+  POSITIF
+  NEUTRE
+  NEGATIF
+}
+
+enum RecommandationEvaluation {
+  RECOMMANDE
+  RECOMMANDE_AVEC_RESERVES
+  NON_RECOMMANDE
+}
+
+// Résultat qualitatif d'un Interview — jamais un score opaque, jamais une
+// décision automatique (Evaluation != Decision). Immuable : une correction
+// crée une nouvelle ligne via supersedesId (même pattern que
+// FinancialResult), jamais une réécriture en place. evaluateurRole est un
+// snapshot au moment de l'évaluation (déterminant la visibilité §10 du
+// Implementation Contract), jamais relu dynamiquement.
+model InterviewEvaluation {
+  id                 String                    @id @default(cuid())
+  interview          Interview                 @relation(fields: [interviewId], references: [id], onDelete: Restrict)
+  interviewId        String
+  evaluateurEmail    String
+  evaluateurRole     InterviewParticipantRole
+  criteres           Json
+  observations       String?
+  recommandation     RecommandationEvaluation
+  commentairesLibres String?
+  supersedesId       String?                   @unique
+  supersedes         InterviewEvaluation?      @relation("InterviewEvaluationSuccession", fields: [supersedesId], references: [id])
+  supersededBy       InterviewEvaluation?      @relation("InterviewEvaluationSuccession")
+  createdAt          DateTime                  @default(now())
+
+  @@index([interviewId])
+}
+
+// Décision finale exclusivement Client (CTO Validation §13, MODIFIED) :
+// decideParEmail doit être un email CLIENT, sauf si
+// communiqueParClientHorsSysteme=true ET canalHorsSysteme renseigné (Admin
+// enregistrant pour compte du Client — jamais une décision Admin autonome,
+// validé au niveau service, jamais en DB). Append-only via supersedesId.
+// Ne crée jamais de Mission ni de Proposal directement.
+model CandidateFinalDecision {
+  id                             String                   @id @default(cuid())
+  demandeTalent                  DemandeTalent            @relation(fields: [demandeTalentId], references: [id], onDelete: Restrict)
+  demandeTalentId                String
+  decideParEmail                 String
+  communiqueParClientHorsSysteme Boolean                  @default(false)
+  canalHorsSysteme               String?
+  supersedesId                   String?                  @unique
+  supersedes                     CandidateFinalDecision?  @relation("CandidateFinalDecisionSuccession", fields: [supersedesId], references: [id])
+  supersededBy                   CandidateFinalDecision?  @relation("CandidateFinalDecisionSuccession")
+  createdAt                      DateTime                 @default(now())
+
+  entrees                        CandidateFinalDecisionEntree[]
+
+  @@index([demandeTalentId])
+}
+
+enum CandidateFinalDecisionStatutEntree {
+  RETENU
+  NON_RETENU
+}
+
+model CandidateFinalDecisionEntree {
+  id                   String                             @id @default(cuid())
+  decision             CandidateFinalDecision             @relation(fields: [decisionId], references: [id], onDelete: Cascade)
+  decisionId           String
+  candidateSelection   CandidateSelection                 @relation(fields: [candidateSelectionId], references: [id], onDelete: Restrict)
+  candidateSelectionId String
+  statut               CandidateFinalDecisionStatutEntree
+  justification        String?
+
+  // ATLAS CANDIDATE PROPOSAL (A35.8) — relation inverse uniquement, cette
+  // entrée ne porte elle-même aucun champ `supersededBy` (voir
+  // CandidateProposal ci-dessous §6.1.d.vi du contrat d'implémentation).
+  candidateProposals CandidateProposal[]
+
+  @@unique([decisionId, candidateSelectionId])
+}
+
+// ============================================================================
+// ATLAS CANDIDATE PROPOSAL (A35.8, 11/10/2026) — voir
+// docs/architecture/CANDIDATE_PROPOSAL_DESIGN_CONTRACT.md et
+// docs/architecture/CANDIDATE_PROPOSAL_IMPLEMENTATION_CONTRACT.md (§3, §5,
+// §13 étape 1 — LOCKED A35/A35.1, corrigé A35.4/A35.6, audité A35.7).
+//
+// Parent métier : exactement une CandidateFinalDecisionEntree (statut
+// RETENU au moment de la création, vérifié au niveau service, jamais en
+// base). demandeTalentId/clientId dénormalisés pour une vérification
+// d'ownership Client en une seule lecture (même précédent que
+// SolutionOption.clientId) — jamais une nouvelle convention.
+// ============================================================================
+
+enum CandidateProposalStatut {
+  BROUILLON
+  EMISE
+  ACCEPTEE
+  REFUSEE
+  RETIREE
+}
+
+model CandidateProposal {
+  id String @id @default(cuid())
+
+  candidateFinalDecisionEntree   CandidateFinalDecisionEntree @relation(fields: [candidateFinalDecisionEntreeId], references: [id], onDelete: Restrict)
+  candidateFinalDecisionEntreeId String
+
+  // Dénormalisés, immuables — jamais une copie des critères de
+  // DemandeTalent (IC §3.1, même précédent que SolutionOption.clientId).
+  demandeTalent   DemandeTalent @relation(fields: [demandeTalentId], references: [id], onDelete: Restrict)
+  demandeTalentId String
+  client          Client        @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  clientId        String
+
+  statut CandidateProposalStatut @default(BROUILLON)
+
+  // Append-only — même pattern que CandidateFinalDecision.supersedesId.
+  // Au plus un successeur par proposition, garanti en base.
+  supersedesId String?             @unique
+  supersedes   CandidateProposal?  @relation("CandidateProposalSuccession", fields: [supersedesId], references: [id])
+  supersededBy CandidateProposal?  @relation("CandidateProposalSuccession")
+
+  // Snapshot commercial — figé à l'émission (IC §4.2/§6.2), jamais
+  // recalculé. Noms choisis par cohérence avec les champs déjà existants
+  // de Mission (tjmVente/deviseVente/nbJours) — aucune valeur ni formule
+  // inventée, uniquement saisis par l'Admin au moment de l'émission.
+  tjmPropose          Float?
+  devise              String?
+  dureeJours          Int?
+  dateDebutEnvisagee  DateTime?
+  dateValidite        DateTime?
+
+  emisLe        DateTime?
+  emisParEmail  String?
+
+  decideLe       DateTime?
+  decideParEmail String?
+
+  communiqueParClientHorsSysteme Boolean @default(false)
+  canalHorsSysteme               String?
+
+  retireeLe DateTime?
+
+  createdByEmail String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relation inverse uniquement — Mission porte le champ
+  // sourceCandidateProposalId (@unique). Jamais de création automatique
+  // depuis ce modèle.
+  missionCreee Mission?
+
+  @@index([candidateFinalDecisionEntreeId])
+  @@index([demandeTalentId])
+  @@index([clientId])
+}
+
+enum InterviewReminderStatutEnvoi {
+  PLANIFIE
+  ENVOYE
+  ANNULE
+  ECHEC
+}
+
+// Rappels générés à la création de l'Interview (politique "24h + 1h" par
+// défaut, configurable — CTO Validation §10). declencheA est calculé et
+// stocké pour une requête de polling efficace par l'endpoint interne (voir
+// lib/interview/reminders.ts). Un rescheduling supprime les lignes PLANIFIE
+// et en recrée pour la nouvelle date (hard-delete acceptable ici : artefact
+// de planification interne, pas un fait métier/audité en soi).
+model InterviewReminder {
+  id                     String                        @id @default(cuid())
+  interviewParticipant   InterviewParticipant          @relation(fields: [interviewParticipantId], references: [id], onDelete: Cascade)
+  interviewParticipantId String
+  delaiAvantMinutes      Int
+  declencheA             DateTime
+  statutEnvoi            InterviewReminderStatutEnvoi  @default(PLANIFIE)
+  envoyeLe               DateTime?
+  createdAt              DateTime                      @default(now())
+
+  @@unique([interviewParticipantId, delaiAvantMinutes])
+  @@index([declencheA, statutEnvoi])
+}
+
+enum CalendarSyncStatut {
+  NON_CONNECTE
+  EN_ATTENTE
+  SUCCES
+  ECHEC
+  ANNULE_EXTERNE
+}
+
+// EXTERNAL INTEGRATION — découplée du domaine ATLAS. Un statutSync=ECHEC
+// n'invalide jamais l'Interview ATLAS (invariant absolu, vérifié par
+// construction : aucune FK inverse, aucun service Interview ne lit ce
+// modèle). Aucun fournisseur n'est imposé ni appelé dans ce lot.
+model CalendarSyncRecord {
+  id                     String             @id @default(cuid())
+  interviewParticipant   InterviewParticipant @relation(fields: [interviewParticipantId], references: [id], onDelete: Cascade)
+  interviewParticipantId String             @unique
+  provider               String?
+  externalEventId        String?
+  statutSync             CalendarSyncStatut @default(NON_CONNECTE)
+  dernierEssaiLe         DateTime?
+  erreurDetail           String?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
 }
 
 // COMPANY ATLAS — LOT 2 : Client Need Intelligence Foundation (15/09/2026).
@@ -1378,6 +1978,25 @@ enum ClientNeedStatut {
   ARCHIVE
 }
 
+// LOT A — ATLAS FUNCTIONAL SPECIFICATION vFINAL (30/09/2026) : vocabulaire
+// canonique du Need Lifecycle, verrouillé par le gate A0 (LOT A0 DESIGN
+// FREEZE). Coexiste avec `ClientNeedStatut` ci-dessus en DUAL-READ le temps
+// de migrer les écrans dépendants (app/client/besoins/page.tsx,
+// app/admin/talent/besoins/page.tsx) — `statut` n'est PAS retiré dans ce lot.
+// Mapping verrouillé (A0 §2) : BROUILLON->DRAFT, A_CLARIFIER->UNDERSTANDING,
+// VALIDE->VALIDATED, ARCHIVE->ARCHIVED ; SOUMIS se scinde selon un recalcul
+// déterministe de evaluerCoherenceBesoin()/prioriserClarifications() déjà
+// existantes (13 ->STRUCTURING historiques, 330 ->UNDERSTANDING) — jamais un
+// mapping direct. DRAFT n'est jamais écrit par aucune route (BROUILLON est
+// un chemin mort, confirmé par le gate A0 : 0 ligne).
+enum NeedLifecycleStatut {
+  DRAFT
+  UNDERSTANDING
+  STRUCTURING
+  VALIDATED
+  ARCHIVED
+}
+
 enum ClientNeedCoherenceStatut {
   COHERENT
   INCONSISTENT
@@ -1395,6 +2014,35 @@ model ClientNeed {
   texteOriginal      String
   titre              String?
   statut             ClientNeedStatut          @default(BROUILLON)
+  // LOT A : vocabulaire canonique — NOT NULL en base (backfill exhaustif,
+  // voir migration.sql), défaut UNDERSTANDING côté base pour toute création
+  // directe ne le renseignant pas explicitement (fixé par la migration de
+  // suivi 20260930193500 — la seule route applicative qui crée un
+  // ClientNeed, app/api/client/besoins/route.ts, le renseigne déjà
+  // explicitement et n'est pas affectée par ce défaut).
+  lifecycleStatut    NeedLifecycleStatut       @default(UNDERSTANDING)
+  // LOT A — gate A0 §5 : marqueur de traçabilité historique UNIQUEMENT.
+  // Ne constitue PAS un état de lifecycle. Posé au backfill sur les Need
+  // dont le statut historique n'est pas BROUILLON/DRAFT mais qui ne
+  // possèdent aucun ClientNeedFait (334 lignes identifiées par le gate A0) —
+  // jamais réinterprété, jamais utilisé pour forcer un retour à DRAFT.
+  legacyPreInvariant Boolean                   @default(false)
+  // LOT A — A5 Need versioning. `version`=1 pour toute ligne créée avant ce
+  // lot ou directement (pas encore de modification post-VALIDATED déclenchée
+  // dans ce lot — voir rapport final, point STOP). `needParentId` pointe
+  // vers la version précédente de la même lignée ; `needSuivantId` (posé sur
+  // l'ancienne version) pointe vers la version qui la remplace. Version
+  // courante d'une lignée = celle dont needSuivantId est NULL. Jamais de
+  // réécriture d'une version existante.
+  version            Int                       @default(1)
+  // A5.2 — contrainte anti-bifurcation (gate A5.1 §18/§20) : un parent ne
+  // peut avoir qu'un seul enfant. NULL reste autorisé et non contraint par
+  // Postgres (plusieurs Need racines indépendants restent possibles) ;
+  // seule une deuxième ligne non-NULL portant la MÊME valeur est rejetée.
+  needParentId       String?                   @unique
+  needParent         ClientNeed?               @relation("ClientNeedVersionChain", fields: [needParentId], references: [id])
+  needVersionsFilles ClientNeed[]              @relation("ClientNeedVersionChain")
+  needSuivantId      String?
   coherenceStatut    ClientNeedCoherenceStatut @default(UNKNOWN)
   // Liste de {regle, statut, explication} — voir lib/client-need/coherence.ts.
   coherenceDetail    Json?
@@ -1410,10 +2058,37 @@ model ClientNeed {
   // requise par Prisma en contrepartie de SolutionOption.need, aucun champ
   // existant modifié.
   solutionOptions    SolutionOption[]
+  // A6.1 — Outcome Foundation : un OutcomeAssessment pointe vers la version
+  // EXACTE du Need qu'il évalue (needVersionId), jamais la version
+  // courante recalculée — voir OutcomeAssessment. Relation Prisma réelle
+  // (jamais une chaîne de traçabilité pure) pour garantir qu'un Outcome ne
+  // puisse jamais pointer vers un ClientNeed inexistant ; n'affecte en rien
+  // la logique de fork/versioning (lib/client-need/versioning.ts, non
+  // modifiée par ce lot).
+  outcomeAssessments OutcomeAssessment[]
+  // A8 — Capability Engine V1 : un CapabilityRequirement pointe vers la
+  // version EXACTE du Need qui l'a produit (needVersionId), même principe
+  // que OutcomeAssessment.needVersionId ci-dessus — jamais la version
+  // courante recalculée. Relation Prisma réelle (jamais une chaîne de
+  // traçabilité pure) pour garantir qu'un CapabilityRequirement ne puisse
+  // jamais pointer vers un ClientNeed inexistant ; n'affecte en rien la
+  // logique de fork/versioning existante.
+  capabilityRequirements CapabilityRequirement[]
+  // A18 — Mission Need Pinning : une Mission peut pointer vers la version
+  // EXACTE de ce Need (Mission.needVersionId) — jamais le Need courant.
+  // Relation Prisma réelle (même discipline que outcomeAssessments/
+  // capabilityRequirements ci-dessus), requise par Prisma en contrepartie
+  // de Mission.needVersion ; n'affecte en rien le chemin legacy existant
+  // (Mission.sourceDemandeId -> DemandeTalent.sourceNeedId -> ClientNeed),
+  // qui reste le fallback utilisé par Outcome quand ce pin est absent.
+  missions           Mission[]
   createdAt          DateTime                  @default(now())
   updatedAt          DateTime                  @updatedAt
 
   @@index([clientId])
+  // A5.2 : l'ancien @@index([needParentId]) non-unique (Lot A) devient
+  // redondant — le `@unique` posé ci-dessus sur le champ lui-même couvre
+  // déjà toutes les mêmes recherches, en plus de la contrainte.
 }
 
 // Vocabulaire FERMÉ des attributs représentables — un nouvel attribut
@@ -1467,19 +2142,35 @@ enum ClientNeedFaitCle {
 // (COMPETENCE, CONTRAINTE, CRITERE_REUSSITE, PRIORITE, RISQUE, PREFERENCE)
 // sont répétables par nature — l'appliquer au niveau base figerait
 // prématurément le modèle.
+//
+// LOT A — ATLAS FUNCTIONAL SPECIFICATION vFINAL (30/09/2026) : `statutActivite`
+// distingue l'ACTIVITÉ du fait (ACTIVE/OBSOLETE) de sa PROVENANCE (`statut`,
+// inchangé ci-dessus) — deux axes indépendants. ACTIVE par défaut, y compris
+// au backfill (3669/3669 faits historiques, gate A0 : aucune donnée ne
+// permet de déduire objectivement un OBSOLETE rétroactif). La transition
+// OBSOLETE n'est posée que par un mécanisme futur (changement de
+// Profile/Capacity, hors périmètre de ce lot — voir A4) ; jamais
+// OBSOLETE -> ACTIVE (une réactivation crée un nouveau fait ACTIVE, jamais
+// une réécriture — même discipline append-only que le reste du modèle).
 model ClientNeedFait {
-  id           String                 @id @default(cuid())
-  need         ClientNeed             @relation(fields: [needId], references: [id], onDelete: Cascade)
-  needId       String
-  composanteId String?
-  cle          ClientNeedFaitCle
-  valeur       String
-  statut       StatutPreuveCompetence @default(INCONNU)
-  source       String?
-  createdAt    DateTime               @default(now())
-  updatedAt    DateTime               @updatedAt
+  id             String                 @id @default(cuid())
+  need           ClientNeed             @relation(fields: [needId], references: [id], onDelete: Cascade)
+  needId         String
+  composanteId   String?
+  cle            ClientNeedFaitCle
+  valeur         String
+  statut         StatutPreuveCompetence @default(INCONNU)
+  statutActivite NeedFactStatus         @default(ACTIVE)
+  source         String?
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
 
   @@index([needId])
+}
+
+enum NeedFactStatus {
+  ACTIVE
+  OBSOLETE
 }
 
 // COMPANY ATLAS — V2.1-A : C3 Solution Intelligence, socle data (16/09/2026).
@@ -1537,10 +2228,19 @@ model SolutionOption {
   // décision n'est implémentée dans cette étape (voir V2.1-D).
   decideParEmail  String?
   decideLe        DateTime?
+  // LOT A — A5, gate A0 §7/§9 : identifiant de la version du Need à
+  // l'origine de cette ligne. Rempli depuis `signatureSource` (déjà calculé
+  // par calculerSignatureSource, lib/client-solution/signature.ts) quand
+  // disponible ; sinon la chaîne littérale "INCONNU" — jamais la date, la
+  // version courante, le dernier Need ou toute autre heuristique de
+  // substitution (interdiction explicite du gate A0, notamment pour les 24
+  // lignes DECISION historiques sans signature exploitable).
+  versionLien     String?
   createdAt       DateTime                @default(now())
 
   @@index([needId])
   @@index([clientId])
+  @@index([versionLien])
 }
 
 enum NiveauCertitudeSolution {
@@ -1700,6 +2400,74 @@ model SkillEvidence {
   createdAt          DateTime               @default(now())
 
   @@index([profilCompetenceId])
+}
+
+// ATLAS — PHASE 2B-1 : MISSION SKILL PROPOSAL (28/09/2026).
+//
+// Pont MISSION -> PROPOSITION -> DÉCISION HUMAINE -> SkillEvidence. Une
+// Mission ne prouve jamais automatiquement qu'une compétence est maîtrisée
+// (voir mandat Phase 2B-1) : elle peut seulement produire une PROPOSITION
+// (Ingénieur ou Admin), qui reste un objet de WORKFLOW MUTABLE tant qu'elle
+// est EN_ATTENTE. Seule une décision Admin explicite (voir
+// app/api/profils/[id]/skill-proposals/[proposalId]/route.ts) peut la faire
+// passer à VALIDEE et créer, à cette occasion, une SkillEvidence(source:
+// MISSION) réelle — via le même helper que POST .../competences/
+// [competenceId]/preuves (voir lib/talent/skill-graph.ts,
+// creerPreuveCompetence()), jamais une seconde logique de création de
+// preuve.
+//
+// skillEvidenceId est une RÉFÉRENCE DE TRAÇABILITÉ, pas une relation Prisma
+// (pas de @relation) : ajouter une relation forcerait SkillEvidence — une
+// donnée historique immuable consommée telle quelle par tout lib/talent/*
+// — à porter un champ inverse dont elle n'a structurellement aucun besoin
+// (aucun code ne "remonte" d'une SkillEvidence vers la proposition qui l'a
+// produite ; la traçabilité complète existe déjà via journaliser(), voir
+// mission.skill_proposal.validated). Un simple String? évite ce couplage
+// inutile, documenté explicitement ici (voir audit Phase 2B-1, section C).
+//
+// StatutPropositionCompetence est un vocabulaire VOLONTAIREMENT séparé de
+// StatutPreuveCompetence — même principe déjà appliqué à StatutProfilFait
+// (voir plus haut, LOT 4) : un EN_ATTENTE/VALIDEE/REFUSEE de workflow n'a
+// rien à voir avec un VERIFIE/DECLARE/INFERE/INCONNU de preuve, et les
+// mélanger romprait le typage de lib/talent/skill-graph.ts sans aucun
+// bénéfice.
+enum StatutPropositionCompetence {
+  EN_ATTENTE
+  VALIDEE
+  REFUSEE
+}
+
+model MissionSkillProposal {
+  id        String  @id @default(cuid())
+  mission   Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  missionId String
+  // Toujours dérivé de mission.profilId côté serveur — jamais accepté depuis
+  // le body d'une requête (voir routes) : élimine structurellement tout IDOR
+  // par profilId falsifié.
+  profil    Profil  @relation(fields: [profilId], references: [id], onDelete: Cascade)
+  profilId  String
+
+  competence    String // valeur du vocabulaire fermé lib/competences.ts::TOUTES_COMPETENCES, jamais du texte libre non validé
+  niveauPropose Int? // déclaration de l'Ingénieur — jamais utilisé tel quel comme niveau de preuve (voir D3)
+  contexte      String?
+
+  proposeParEmail String
+  proposeParRole  Role // ADMIN ou INGENIEUR — jamais CLIENT (voir H8, aucune route Client sur ce modèle)
+
+  statut     StatutPropositionCompetence @default(EN_ATTENTE)
+  decidePar  String?
+  decideLe   DateTime?
+  motifRefus String?
+
+  // Renseigné uniquement à la validation — le niveau RÉELLEMENT retenu par
+  // l'Admin peut différer de niveauPropose (D3) ; jamais l'inverse.
+  skillEvidenceId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([missionId])
+  @@index([profilId, statut])
 }
 
 // ==========================================================================
@@ -2093,4 +2861,1804 @@ model PreferenceNotification {
   categoriesEmail AttentionCategorie[]
   createdAt       DateTime             @default(now())
   updatedAt       DateTime             @updatedAt
+}
+
+// COMPANY ATLAS — A6.1 : Outcome Foundation (01/10/2026).
+//
+// Implémente le contrat défini par le rapport A6 ("ATLAS — A6 — OUTCOME
+// CONTRACT / PRODUCT DESIGN") : répond à "la Mission a-t-elle réellement
+// produit le résultat attendu par le Need validé ?" — jamais une deuxième
+// Evaluation, jamais un proxy de satisfaction, jamais une conclusion
+// inventée quand les preuves sont insuffisantes (voir OutcomeStatut.
+// INDETERMINABLE ci-dessous).
+//
+// Mission / Evaluation / Evidence / Quality / Outcome restent strictement
+// séparés (A6 §A6.3) : ce lot ne modifie ni Mission.statut, ni le modèle
+// Evaluation, ni SolutionOption, ni Decision/DecisionOption (Control
+// Plane) — `decisionOptionId` ci-dessous est une pure référence de
+// traçabilité (même patron que SolutionOption.sourceOptionId/
+// demandeTalentId : une simple colonne, jamais une relation Prisma),
+// délibérément pour ne jamais exiger de champ inverse sur SolutionOption.
+enum OutcomeStatut {
+  OBTENU               // ACHIEVED
+  PARTIELLEMENT_OBTENU // PARTIALLY_ACHIEVED
+  NON_OBTENU           // NOT_ACHIEVED
+  // Jamais une absence de ligne : un critère/ensemble de critères évalué
+  // sans preuve suffisante produit explicitement cet état, jamais un
+  // OBTENU/NON_OBTENU par défaut (règle absolue, A6 §9 et mandat A6.1 §15).
+  INDETERMINABLE       // NOT_DETERMINABLE
+}
+
+// Méthode de vérification d'un critère — distincte de la confiance
+// (OutcomeConfiance ci-dessous, qui réutilise VERIFIE/DECLARE/INFERE/
+// INCONNU comme StatutPreuveCompetence/ClientNeedFait.statut, 5e instance
+// du même vocabulaire à dessein jamais partagée, A6 §A6.3/§A6.10).
+enum OutcomeMethodeVerification {
+  VERIFIE_HUMAIN  // HUMAN_VERIFIED — un ADMIN a vérifié activement.
+  DECLARE_CLIENT  // CLIENT_DECLARED — le client déclare lui-même.
+  MESURE_SYSTEME  // SYSTEM_MEASURED — calculé depuis une donnée objective existante.
+  INFERE_IA       // AI_INFERRED — une IA propose ; jamais suffisant seul pour OBTENU/NON_OBTENU.
+}
+
+enum OutcomeConfiance {
+  VERIFIE
+  DECLARE
+  INFERE
+  INCONNU
+}
+
+model OutcomeAssessment {
+  id              String   @id @default(cuid())
+  mission         Mission  @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  missionId       String
+  // Version EXACTE, immuable, du Need évaluée — jamais la version
+  // courante recalculée au moment de la lecture (A6 §A6.6 "point-in-time
+  // truth"). Nullable : la majorité des Mission existantes n'ont pas de
+  // sourceDemandeId traçable (voir Mission.sourceDemandeId) — ne jamais
+  // deviner, laisser explicitement absent plutôt qu'inventer un lien.
+  needVersion     ClientNeed? @relation(fields: [needVersionId], references: [id])
+  needVersionId   String?
+  // Référence de traçabilité pure vers la ligne SolutionOption (niveau
+  // DECISION) qui a mené à cette Mission — jamais une relation Prisma
+  // complète (même patron que SolutionOption.demandeTalentId), pour ne
+  // jamais exiger de champ inverse sur SolutionOption (hors périmètre A6.1
+  // explicite : "Ne modifie pas SolutionOption").
+  decisionOptionId String?
+  // Copie figée de RESULTAT_ATTENDU au moment de l'évaluation, si ce fait
+  // existe sur la version pinnée — jamais une relecture live (le Need peut
+  // avoir déjà forké depuis). Null si absent sur cette version (pas une
+  // valeur inventée).
+  expectedOutcome String?
+
+  // Dérivé des OutcomeCriterionResult ci-dessous par
+  // lib/outcome/verification.ts::verifierResultatVsNeed — jamais assigné
+  // directement par un appelant (voir lib/outcome/service.ts).
+  overallStatus   OutcomeStatut
+
+  assessedAt      DateTime @default(now())
+  // ADMIN uniquement (A6 §A6.11 — jamais le Client, jamais l'Ingénieur :
+  // risque d'auto-validation ; jamais un Agent sans passer par B22, qui ne
+  // s'applique à aucun appelant dans ce lot). Jamais null : l'API exige une
+  // identité humaine authentifiée avant toute création.
+  assessedByEmail String
+  assessedByRole  String
+
+  criteria        OutcomeCriterionResult[]
+
+  // A15 — Supersession corrigée (même doctrine que DeliveryEvidence,
+  // A12.1) : le pointeur vit sur la NOUVELLE ligne (supersedesId), jamais
+  // sur l'ancienne — une ligne déjà créée n'est plus jamais réécrite,
+  // aucune exception. "Courant" pour une Mission = supersededBy IS NULL
+  // (aucune ligne suivante ne la référence par supersedesId). Au plus une
+  // ligne courante par Mission à un instant donné — invariant applicatif
+  // (transaction Serializable + retry, lib/outcome/service.ts), jamais une
+  // contrainte DB (voir commentaire sur Mission.outcomeAssessments
+  // ci-dessus). @unique sur supersedesId empêche structurellement toute
+  // branche (deux lignes ne peuvent jamais superséder la même ligne).
+  supersedesId    String?            @unique
+  supersedes      OutcomeAssessment? @relation("OutcomeSupersession", fields: [supersedesId], references: [id], onDelete: Restrict)
+  supersededBy    OutcomeAssessment? @relation("OutcomeSupersession")
+
+  createdAt       DateTime @default(now())
+
+  @@index([missionId])
+  @@index([needVersionId])
+}
+
+model OutcomeCriterionResult {
+  id              String            @id @default(cuid())
+  assessment      OutcomeAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  assessmentId    String
+  // Référence de traçabilité pure vers l'instance ClientNeedFait(cle=
+  // CRITERE_REUSSITE) précise évaluée — jamais une relation Prisma
+  // complète (ClientNeedFait reste un modèle à très fort trafic, non
+  // modifié par ce lot ; même discipline que decisionOptionId ci-dessus).
+  // Null si ce critère ne correspond à aucun fait structuré (ex. critère
+  // global unique faute de CRITERE_REUSSITE sur la version pinnée).
+  sourceFaitId    String?
+  // Copie figée du texte du critère au moment de l'évaluation — jamais
+  // une relecture live.
+  criterionText   String
+  actualResult    String?
+  status          OutcomeStatut
+  confidence      OutcomeConfiance
+  verificationMethod OutcomeMethodeVerification?
+
+  evidences       OutcomeEvidence[]
+
+  createdAt       DateTime @default(now())
+
+  @@index([assessmentId])
+}
+
+model OutcomeEvidence {
+  id          String                  @id @default(cuid())
+  criterion   OutcomeCriterionResult  @relation(fields: [criterionId], references: [id], onDelete: Cascade)
+  criterionId String
+  // Libre, texte court — même rôle que SkillEvidence.source/detail,
+  // jamais une copie de document complet (voir A6 §A6.8 : ce lot ne
+  // construit pas de Deliverable Engine/Evidence Graph, uniquement le
+  // point d'extension minimal permettant d'y brancher plus tard une
+  // source réelle sans refactor).
+  source      String
+  detail      String?
+  createdAt   DateTime @default(now())
+
+  @@index([criterionId])
+}
+
+// COMPANY ATLAS — A8 : SolutionDecision + Capability Engine V1 (05/10/2026).
+//
+// SÉPARATION DÉFINITIVE : ce modèle n'a AUCUN rapport avec `Decision`/
+// `DecisionOption` (Control Plane, gouvernance d'actions/agents,
+// lib/control-plane/*) — domaines distincts, jamais fusionnés. Le concept
+// métier "SolutionDecision" (choix humain explicite d'une SolutionOption
+// sur une version précise d'un besoin) reste porté techniquement par
+// SolutionOption(niveau=DECISION), déjà mature et append-only (V2.1-E) —
+// décision d'architecture A8 : migrer vers un modèle dédié exigerait de
+// réécrire l'historique DECISION existant pour un gain nul, aucune
+// collision de code ne l'exige (voir lib/client-solution/decision.ts pour
+// le vocabulaire domaine `SolutionDecision`). `CapabilityRequirement`
+// référence une SolutionDecision par pointeur texte simple
+// (solutionDecisionId), jamais une relation Prisma — même discipline que
+// SolutionOption.sourceOptionId/demandeTalentId : une relation forcerait
+// un champ inverse sur SolutionOption, modification hors périmètre A8.
+//
+// Transforme les exigences structurées d'une Need VERSIONNÉE (faits
+// COMPETENCE actifs uniquement — jamais CRITERE_REUSSITE, qui exigerait de
+// synthétiser une capacité à partir d'une phrase de critère de succès,
+// interdit par le principe "ne jamais inventer") en capacités requises.
+// Indépendant du Talent/Matching par construction : aucun champ ne
+// référence Profil/ProfilCompetence/SkillEvidence, aucun score.
+model CapabilityRequirement {
+  id       String     @id @default(cuid())
+  need     ClientNeed @relation(fields: [needVersionId], references: [id], onDelete: Cascade)
+  needVersionId String
+
+  // Pointeur texte simple vers la ligne SolutionOption(niveau=DECISION)
+  // ayant motivé cette dérivation, si une telle décision existe déjà pour
+  // cette version du Need — jamais une précondition bloquante : la
+  // dérivation fonctionne depuis le Need seul (voir lib/capability/service.ts).
+  solutionDecisionId String?
+
+  // Référence de traçabilité pure vers le ClientNeedFait(cle=COMPETENCE)
+  // exact à l'origine de cette ligne — jamais une relation Prisma complète
+  // (même discipline que OutcomeCriterionResult.sourceFaitId ci-dessus).
+  // Toujours renseigné (contrairement à Outcome) : CapabilityRequirement
+  // n'existe QUE dérivé d'un fait structuré précis, jamais autrement.
+  sourceFaitId String
+
+  // Texte brut du fait COMPETENCE source, jamais une reformulation/
+  // élaboration — V1 est délibérément 1:1 avec le fait déclaré (la
+  // distinction Skill≠Capability enrichie reste pour un futur lot
+  // IA-assisté passant par ce même pipeline de provenance, jamais fabriquée
+  // ici).
+  requiredCapability String
+  // Justification déterministe (template, référence le fait source) —
+  // jamais une inférence supplémentaire.
+  rationale          String
+
+  // Copie figée du statut de provenance du fait source au moment de la
+  // dérivation — réutilise StatutPreuveCompetence tel quel (même principe
+  // que ClientNeedFait.statut lui-même), jamais recalculée après coup.
+  provenance StatutPreuveCompetence
+
+  // ACTIVE tant que le fait source reste une facette ACTIVE de sa version ;
+  // SUPERSEDED si une re-dérivation constate que le fait source n'est plus
+  // ACTIVE (défensif — aucun chemin d'écriture actuel ne repasse un
+  // ClientNeedFait.statutActivite à OBSOLETE, mais le filtrage doit rester
+  // correct si cela devient vrai un jour). Mis à jour en place
+  // uniquement par le moteur lui-même, jamais par un appelant externe.
+  status CapabilityRequirementStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now())
+
+  // A21 — MissionCapabilityLink : traçabilité inverse vers les Mission
+  // ayant explicitement mobilisé cette capacité — jamais automatique
+  // (aucune création n'est déclenchée depuis ce côté-ci). Une
+  // CapabilityRequirement devenant SUPERSEDED (voir status ci-dessus)
+  // n'affecte jamais rétroactivement les liens déjà créés : ceux-ci
+  // conservent leur propre statut, indépendant (voir
+  // MissionCapabilityLink.statut).
+  missionLinks MissionCapabilityLink[]
+
+  // Idempotence : une même (version de Need, fait source) ne produit
+  // jamais deux lignes — clé naturelle, jamais un hash à maintenir
+  // séparément (voir §12 du mandat A8).
+  @@unique([needVersionId, sourceFaitId])
+  @@index([needVersionId])
+  @@index([solutionDecisionId])
+}
+
+enum CapabilityRequirementStatus {
+  ACTIVE
+  SUPERSEDED
+}
+
+// COMPANY ATLAS — A20 : MissionAssignment Foundation (05/10/2026).
+//
+// Source STRUCTURÉE de vérité pour l'affectation opérationnelle d'un
+// Talent (Profil) à une Mission — coexiste avec le legacy `Mission.profilId`
+// sans le remplacer : A20 ne retire pas `profilId`, ne le rend pas
+// nullable, et ne migre aucun consommateur existant vers ce nouveau modèle
+// (voir lib/mission/assignment-backfill.ts pour le backfill contrôlé des
+// Mission historiques). Ne crée AUCUNE dépendance vers WorkItem/Deliverable
+// (hors périmètre A20, voir contrat A13) : `role` ci-dessous est un rôle
+// D'AFFECTATION, indépendant de tout futur rôle WorkItem.
+//
+// Identité immuable : une ligne appartient à EXACTEMENT une Mission et un
+// Talent, fixés à la création (missionId/talentId jamais réécrits — un
+// changement de Talent termine/annule l'ancienne ligne puis en crée une
+// nouvelle, jamais un UPDATE du pointeur). Historique intégralement
+// additif, même discipline que ClientNeedFait/SolutionOption : un même
+// Talent peut avoir plusieurs MissionAssignment sur la même Mission dans le
+// temps (ex. ACTIF -> TERMINE -> nouvelle ligne ACTIF), jamais collapsées.
+//
+// Invariants transactionnels (lib/mission/assignment.ts, jamais seulement
+// applicatifs hors transaction — Serializable + retry P2034, même
+// discipline que lib/outcome/service.ts/lib/client-need/versioning.ts) :
+// (1) au plus un Assignment ACTIF avec estResponsablePrincipal=true par
+// Mission ; (2) au plus un Assignment ACTIF par (Mission, Talent) — un
+// Talent peut avoir un historique TERMINE/ANNULE sur cette Mission sans
+// limite, seul le cumul de deux lignes ACTIF simultanées est interdit.
+model MissionAssignment {
+  id String @id @default(cuid())
+
+  mission   Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  missionId String
+
+  // onDelete: Restrict (jamais Cascade) : un Talent ne peut jamais être
+  // supprimé tant qu'il porte une affectation, historique ou active — même
+  // doctrine que Mission.profilId (ON DELETE RESTRICT, voir migration
+  // d'origine), jamais une suppression silencieuse de l'historique.
+  talent   Profil @relation(fields: [talentId], references: [id], onDelete: Restrict)
+  talentId String
+
+  role   MissionAssignmentRole
+  statut MissionAssignmentStatut @default(ACTIF)
+
+  // Obligatoire quel que soit le statut (PLANIFIE/ACTIF comme TERMINE/ANNULE
+  // en conservent un) — jamais déduite silencieusement d'un autre champ.
+  dateDebut DateTime
+  // A20 — DATE SEMANTICS CORRECTION (05/10/2026). AUCUN champ de Mission
+  // (createdAt/updatedAt/dateDebut/dateFin) ne constitue une preuve de
+  // la date RÉELLE d'affectation opérationnelle d'un Talent — ce sont des
+  // faits de PROVENANCE DE LA DONNÉE (quand la ligne Mission a été écrite),
+  // jamais des faits MÉTIER (quand le Talent a réellement commencé/fini).
+  // Confondre les deux a été identifié comme une erreur dans la première
+  // version du backfill A20 et corrigé ici : CONNUE = la date a été
+  // explicitement fournie comme un fait réel (création/transition vivante
+  // via le service, lib/mission/assignment.ts) ; PROXY_CREATION_MISSION/
+  // PROXY_DERNIERE_ECRITURE_MISSION = reconstruite par le backfill
+  // historique (lib/mission/assignment-backfill.ts) à partir d'un fait de
+  // provenance, JAMAIS présentée comme une certitude métier. Tout
+  // consommateur futur de dateDebut/dateFin DOIT lire ce champ avant de
+  // traiter la date comme fiable.
+  dateDebutProvenance DateAffectationProvenance @default(CONNUE)
+  // NULL tant que PLANIFIE/ACTIF (affectation toujours en cours) ;
+  // obligatoire au moment de la transition vers TERMINE/ANNULE (contrôlé
+  // par le service, jamais par une contrainte DB — Prisma ne peut pas
+  // exprimer une NOT NULL conditionnelle au statut).
+  dateFin DateTime?
+  // NULL tant que dateFin est NULL (même cycle de vie) — même doctrine de
+  // provenance que dateDebutProvenance ci-dessus, jamais déduite.
+  dateFinProvenance DateAffectationProvenance?
+
+  // NULL = UNKNOWN explicite (jamais déduit) ; 0 = valeur connue et valide
+  // (allocation nulle mais renseignée) ; 1..100 = valeur connue. Aucune
+  // règle de somme à 100% entre Assignment d'une même Mission dans A20.
+  allocationPct Int?
+
+  // Au plus un Assignment ACTIF par Mission avec cette valeur à true —
+  // invariant transactionnel (voir ci-dessus), jamais seulement applicatif.
+  estResponsablePrincipal Boolean @default(false)
+
+  // Immuables après création (même discipline que OutcomeAssessment/
+  // CapabilityRequirement) : aucune route ne les réécrit jamais.
+  createdAt      DateTime @default(now())
+  createdByEmail String
+
+  // A24 — WorkItemAssignment Foundation (05/10/2026). Inverse Prisma
+  // strictement nécessaire pour la relation WorkItemAssignment.
+  // missionAssignment ci-dessous — aucune règle A20 (lifecycle, dates,
+  // provenance, backfill) n'est modifiée par cet ajout (contrat A24 §36).
+  workItemAssignments WorkItemAssignment[]
+
+  @@index([missionId])
+  @@index([talentId])
+}
+
+enum MissionAssignmentRole {
+  RESPONSABLE_PRINCIPAL
+  CONTRIBUTEUR
+  REVIEWER
+}
+
+enum MissionAssignmentStatut {
+  PLANIFIE
+  ACTIF
+  TERMINE
+  ANNULE
+}
+
+// A20 — DATE SEMANTICS CORRECTION (05/10/2026). Distingue une date
+// d'affectation RÉELLEMENT connue (CONNUE — fournie explicitement par un
+// Admin via le service vivant, création ou transition) d'une date
+// RECONSTRUITE par le backfill historique à partir d'un fait de
+// provenance de la donnée Mission, jamais d'un fait d'affectation
+// vérifié. PROXY_CREATION_MISSION/PROXY_DERNIERE_ECRITURE_MISSION ne
+// doivent JAMAIS être traitées comme une certitude métier par un
+// consommateur futur (voir MissionAssignment.dateDebutProvenance/
+// dateFinProvenance).
+enum DateAffectationProvenance {
+  CONNUE
+  PROXY_CREATION_MISSION
+  PROXY_DERNIERE_ECRITURE_MISSION
+}
+
+// COMPANY ATLAS — A21 : MissionCapabilityLink (05/10/2026).
+//
+// Jonction EXPLICITE entre une capacité issue du besoin/solution
+// (CapabilityRequirement, A8) et une Mission qui la mobilise réellement —
+// jamais un matching automatique, jamais une compétence Talent, jamais
+// une preuve d'exécution (hors périmètre A21 : Outcome/WorkItem/
+// Deliverable/Evidence restent des domaines séparés, aucune dépendance
+// introduite ici vers eux). Création toujours EXPLICITE : ni la création
+// d'une Mission, ni la dérivation d'une CapabilityRequirement (A8) ne
+// déclenche automatiquement un lien.
+//
+// PROVENANCE SANS DUPLICATION : `capabilityRequirementId` référence la
+// ligne source (jamais une copie de ses champs needVersionId/
+// solutionDecisionId/sourceFaitId/rationale, qui restent exclusivement
+// sur CapabilityRequirement). Nullable : un LIEN MANUEL (sans
+// CapabilityRequirement) est explicitement autorisé pour les Mission
+// legacy/manuelles sans Need/Decision (contrat A21 §6/§11) — ATLAS
+// n'interdit jamais la construction d'une Mission hors du pipeline
+// Need→Solution, et ne doit donc pas non plus interdire d'y documenter
+// une capacité mobilisée. onDelete: Restrict (jamais Cascade) : une
+// CapabilityRequirement référencée ne peut jamais être supprimée tant
+// qu'un lien l'utilise — même doctrine que MissionAssignment.talentId.
+//
+// SNAPSHOT (`capability`) : copié depuis CapabilityRequirement.
+// requiredCapability AU MOMENT DE LA CRÉATION, jamais relu dynamiquement
+// depuis la relation — une re-dérivation A8 ultérieure qui ferait passer
+// la CapabilityRequirement source en SUPERSEDED (lib/capability/service.ts)
+// NE MODIFIE JAMAIS ce lien, ni son texte, ni son statut : l'historique
+// d'une Mission reste figé au moment de l'attachement, exactement comme
+// OutcomeAssessment reste pinné à sa version du Need (A6.1). Aucune
+// cascade automatique SUPERSEDED->SUPERSEDED entre CapabilityRequirement
+// et MissionCapabilityLink — ce sont deux statuts indépendants, un choix
+// de supersession ici est TOUJOURS une action Admin explicite (retrait),
+// jamais une conséquence d'un événement survenu côté CapabilityRequirement.
+//
+// COHÉRENCE DE VERSION (contrat A21 §6) : un lien référençant une
+// CapabilityRequirement exige que Mission.needVersionId soit renseigné ET
+// égal exactement à CapabilityRequirement.needVersionId — vérifié par le
+// service (lib/mission/capability-link.ts), jamais en base (Prisma ne
+// peut pas exprimer cette cohérence croisée nativement, même limitation
+// que Mission.solutionDecisionId vs needVersionId, A18). Une Mission sans
+// needVersionId ne peut donc recevoir qu'un lien MANUEL — jamais une
+// CapabilityRequirement "flottante" sans pin Need vérifiable.
+model MissionCapabilityLink {
+  id String @id @default(cuid())
+
+  mission   Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  missionId String
+
+  capabilityRequirement   CapabilityRequirement? @relation(fields: [capabilityRequirementId], references: [id], onDelete: Restrict)
+  capabilityRequirementId String?
+
+  // Toujours renseigné : snapshot de CapabilityRequirement.requiredCapability
+  // si capabilityRequirementId est fourni, sinon texte libre saisi pour un
+  // lien manuel — jamais les deux à la fois (contrôlé par le service).
+  capability String
+
+  // Justification de la MOBILISATION dans cette Mission — distincte de
+  // CapabilityRequirement.rationale (justification de la DÉRIVATION depuis
+  // le Need), jamais recopiée depuis celle-ci.
+  rationale String?
+
+  // ACTIVE par défaut ; SUPERSEDED uniquement par une action Admin
+  // explicite de retrait (contrat A21 §10) — jamais une cascade depuis
+  // CapabilityRequirement.status. Terminal : un lien SUPERSEDED ne repasse
+  // jamais ACTIVE (réactivation = nouveau lien, même discipline que
+  // MissionAssignment).
+  statut MissionCapabilityLinkStatut @default(ACTIVE)
+
+  // Immuables après création — aucune route ne les réécrit jamais (même
+  // discipline que MissionAssignment/OutcomeAssessment/CapabilityRequirement).
+  createdAt      DateTime @default(now())
+  createdByEmail String
+
+  @@index([missionId])
+  @@index([capabilityRequirementId])
+}
+
+enum MissionCapabilityLinkStatut {
+  ACTIVE
+  SUPERSEDED
+}
+
+// COMPANY ATLAS — A23 : WorkItem Foundation (05/10/2026).
+//
+// Unité CONCRÈTE de travail à l'intérieur d'une Mission — Mission 1 - N
+// WorkItem, jamais l'inverse (contrat A23 §2). Volontairement SANS
+// talentId/profilId/engineerId : un WorkItem ne connaît jamais directement
+// un Talent (contrat A23 §7) — la relation future passera par
+// WorkItemAssignment -> MissionAssignment -> Talent, un lot distinct
+// (A24+), jamais anticipé ici. Un WorkItem peut donc exister indéfiniment
+// sans aucun Assignment (contrat A23 §8) — jamais une contrainte "Talent
+// obligatoire".
+//
+// AUCUNE RELATION vers Deliverable/DeliveryEvidence/DeliveryQualityGate/
+// OutcomeAssessment/Learning/FinancialResult dans ce lot (contrat A23 §38)
+// — ces domaines appartiennent à des lots futurs distincts.
+//
+// SANS dateDebut/dateFin métier (contrat A23 §23) : aucune nécessité
+// démontrée dans ce lot ; `createdAt`/`updatedAt` restent des faits de
+// PROVENANCE DE LA DONNÉE (quand la ligne a été écrite/modifiée), jamais
+// des faits d'exécution — même doctrine que Mission.createdAt/updatedAt
+// (A20 Date Semantics Correction) : `updatedAt` ne doit JAMAIS être lu
+// comme une date de transition de statut.
+//
+// SANS colonne dédiée pour la raison de blocage/résolution/annulation
+// (contrat A23 §19/§20/§21) — même choix que Mission.statut (A22) :
+// raison/raisonResolution/motif sont validés par le service
+// (lib/work-item/lifecycle.ts) et journalisés (JournalActivite.detail),
+// jamais persistés comme colonne structurée — "pas de nouvelle colonne
+// pour un fait déjà capturé par l'audit".
+model WorkItem {
+  id String @id @default(cuid())
+
+  // Immuable après création (contrat A23 §9/§24) : aucun service de ce
+  // lot n'accepte jamais missionId en paramètre de modification — un
+  // "déplacement" de WorkItem n'existe pas, seulement ANNULE + nouveau
+  // WorkItem sur l'autre Mission.
+  mission   Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  missionId String
+
+  titre       String
+  description String?
+
+  statut WorkItemStatut @default(A_FAIRE)
+
+  // Immuables après création (même discipline que MissionAssignment/
+  // MissionCapabilityLink/OutcomeAssessment/CapabilityRequirement).
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  createdByEmail String
+
+  // A24 — WorkItemAssignment Foundation (05/10/2026). Inverse Prisma
+  // strictement nécessaire — aucune règle A23 (lifecycle, création,
+  // transition, statut) n'est modifiée par cet ajout (contrat A24 §37).
+  assignments WorkItemAssignment[]
+
+  // A25 — Deliverable Foundation (05/10/2026). Inverse Prisma strictement
+  // nécessaire pour DeliverableWorkItemLink ci-dessous — aucune règle A23
+  // (lifecycle, création, transition, statut) n'est modifiée par cet ajout.
+  deliverableLinks DeliverableWorkItemLink[]
+
+  // A26 — DeliveryEvidence Foundation (05/10/2026). Inverse Prisma
+  // strictement nécessaire — aucune règle A23 n'est modifiée par cet ajout.
+  deliveryEvidences DeliveryEvidence[]
+
+  @@index([missionId])
+  @@index([missionId, statut])
+}
+
+// Graphe de transition verrouillé (contrat A23 §5) — voir
+// lib/work-item/lifecycle.ts::TRANSITIONS_AUTORISEES pour la matrice
+// explicite. Machine totalement indépendante du lifecycle Mission (A22) :
+// aucune synchronisation automatique dans un sens ni dans l'autre (contrat
+// A23 §12/§13/§34).
+enum WorkItemStatut {
+  A_FAIRE
+  EN_COURS
+  BLOQUE
+  TERMINE
+  ANNULE
+}
+
+// COMPANY ATLAS — A24 : WorkItemAssignment Foundation (05/10/2026).
+//
+// Répond à "qui exécute concrètement ce WorkItem ?" — JAMAIS par un lien
+// direct WorkItem -> Talent (contrat A24 §2) : WorkItem ne reçoit ni
+// talentId, ni profilId, ni engineerId. Le chemin reste obligatoirement
+// WorkItem -> WorkItemAssignment -> MissionAssignment -> Talent (contrat
+// A24 §1/§10) : le client de l'API fournit missionAssignmentId, jamais un
+// talentId — le serveur résout le Talent en lisant MissionAssignment,
+// jamais l'inverse.
+//
+// COHÉRENCE DE MISSION (contrat A24 §9) : une ligne n'est valide que si
+// WorkItem.missionId === MissionAssignment.missionId — vérifié par le
+// service (lib/work-item/assignment.ts), jamais en base (Prisma ne peut
+// pas exprimer cette cohérence croisée nativement, même limitation que
+// Mission.solutionDecisionId vs needVersionId, A18, et MissionCapabilityLink
+// vs needVersionId, A21).
+//
+// RÔLE/STATUT dédiés, jamais réutilisés depuis MissionAssignment (contrat
+// A24 §7/§8) : les deux machines représentent des faits différents (le
+// rôle d'un Talent sur LA MISSION entière n'est pas forcément son rôle sur
+// CE WorkItem précis).
+model WorkItemAssignment {
+  id String @id @default(cuid())
+
+  // Immuable après création (contrat A24 §27) : aucun service de ce lot
+  // n'accepte jamais workItemId en paramètre de modification — un
+  // "déplacement" vers un autre WorkItem n'existe pas, seulement ANNULE/
+  // TERMINE + nouvelle WorkItemAssignment.
+  workItem   WorkItem @relation(fields: [workItemId], references: [id], onDelete: Cascade)
+  workItemId String
+
+  // onDelete: Restrict (jamais Cascade) : une MissionAssignment ne peut
+  // jamais être supprimée tant qu'elle porte une WorkItemAssignment,
+  // historique ou active — même doctrine que MissionAssignment.talentId
+  // (A20) et MissionCapabilityLink.capabilityRequirementId (A21). Immuable
+  // après création (contrat A24 §26/§27) : un changement de Talent sur ce
+  // WorkItem n'est JAMAIS une réécriture de ce champ, toujours ANNULE/
+  // TERMINE + nouvelle ligne.
+  missionAssignment   MissionAssignment @relation(fields: [missionAssignmentId], references: [id], onDelete: Restrict)
+  missionAssignmentId String
+
+  // Rôle sur CE WorkItem précis — indépendant du rôle MissionAssignment
+  // (contrat A24 §7/§22). Immuable après création : aucune route de ce
+  // lot ne le réécrit (non justifié par le mandat — voir lib/work-item/
+  // assignment.ts, "aucun champ métier librement éditable après création").
+  role WorkItemAssignmentRole
+
+  // PLANIFIE par défaut à la création — jamais choisi par le client
+  // (contrat A24 §29).
+  statut WorkItemAssignmentStatut @default(PLANIFIE)
+
+  // Ni l'une ni l'autre n'est jamais déduite (contrat A24 §23/§24) : pas
+  // de createdAt, pas de MissionAssignment.dateDebut, pas de transition
+  // WorkItem. NULL par défaut — jamais une fausse date. dateDebut
+  // optionnelle à la création ; dateFin optionnelle UNIQUEMENT fournie par
+  // l'appelant au moment de "terminer"/"annuler" (jamais "now()"
+  // implicite) ; dateFin >= dateDebut vérifiée par le service lorsque les
+  // deux existent.
+  dateDebut DateTime?
+  dateFin   DateTime?
+
+  // Immuables après création (même discipline que MissionAssignment/
+  // MissionCapabilityLink/WorkItem).
+  createdAt      DateTime @default(now())
+  createdByEmail String
+
+  @@index([workItemId])
+  @@index([missionAssignmentId])
+}
+
+enum WorkItemAssignmentRole {
+  EXECUTEUR
+  CONTRIBUTEUR
+  REVIEWER
+}
+
+// Graphe de transition verrouillé (contrat A24 §28) — voir
+// lib/work-item/assignment.ts::TRANSITIONS_AUTORISEES. Machine totalement
+// indépendante des lifecycles Mission (A22)/WorkItem (A23)/MissionAssignment
+// (A20) : aucune synchronisation automatique dans un sens ni dans l'autre.
+enum WorkItemAssignmentStatut {
+  PLANIFIE
+  ACTIF
+  TERMINE
+  ANNULE
+}
+
+// COMPANY ATLAS — A25 : Deliverable Foundation (05/10/2026).
+//
+// Ce que la Mission a PRODUIT/REMIS/PRÉPARÉ — jamais une preuve
+// (Evidence), jamais une validation qualité (Quality), jamais un
+// résultat client (Outcome). Un Deliverable FINALIZED n'implique JAMAIS
+// Outcome=OBTENU (contrat A25 §28/§32) — même doctrine que Mission.
+// TERMINEE n'impliquant jamais Outcome=OBTENU (A6.1/A22).
+//
+// DÉCISION DE MODÉLISATION EXPLICITE (contrat A25 §17/§39, documentée ici
+// comme demandé) : `Deliverable` est un objet logique QUASI-VIDE —
+// uniquement missionId/acceptanceCriteria/métadonnées de création. TOUT
+// le contenu versionné (titre, nature, contenu structuré) ET le STATUT de
+// lifecycle vivent EXCLUSIVEMENT sur DeliverableVersion ci-dessous. Un
+// Deliverable n'a PAS de statut propre — jamais un second statut
+// redondant : "le statut du Deliverable" se lit toujours comme celui de
+// sa version courante (non-supersédée). Justification : le cycle DRAFT->
+// REVIEW->APPROVED->FINALIZED décrit l'état d'un CONTENU précis (contrat
+// A25 §18/§20 : "cette VERSION est officiellement gelée"), jamais un état
+// administratif de l'objet logique — exactement le même raisonnement qui
+// a mené A15 à poser supersedesId/le statut matériel sur OutcomeAssessment
+// (une ligne par évaluation), jamais sur Mission.
+//
+// acceptanceCriteria reste sur Deliverable (pas sur Version) : c'est le
+// CONTRAT d'acceptation de l'objet logique dans son ensemble (contrat
+// A25 §27), pas un contenu qui change à chaque révision — distinct de
+// Need.criteres/Outcome.criterion, aucun lien automatique.
+model Deliverable {
+  id String @id @default(cuid())
+
+  mission   Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  missionId String
+
+  // Descriptif de ce que "accepter" ce livrable signifie — jamais
+  // confondu avec un critère de succès du Need (A1) ni un critère
+  // Outcome (A6.1), aucun lien automatique (contrat A25 §27).
+  acceptanceCriteria String?
+
+  // Immuables après création — aucune route ne les réécrit jamais (même
+  // discipline que WorkItem/MissionAssignment/MissionCapabilityLink).
+  createdAt      DateTime @default(now())
+  createdByEmail String
+
+  versions      DeliverableVersion[]
+  workItemLinks DeliverableWorkItemLink[]
+
+  @@index([missionId])
+}
+
+// Nature du CONTENU (pas un type commercial/catalogue — contrat A25 §6/§7,
+// DeliverableType explicitement interdit). DOCUMENT = fichier/texte narratif
+// à venir (A25 ne crée aucune relation Document — voir décision ci-dessous
+// sur DeliverableDocumentLink) ; STRUCTURE = données structurées (seule
+// nature acceptant contenuStructure) ; OPERATION = action opérationnelle
+// effectuée (ex. configuration déployée, aucun artefact fichier) ;
+// DECLARATIF = déclaration/affirmation structurée sans preuve jointe.
+enum DeliverableNatureContenu {
+  DOCUMENT
+  STRUCTURE
+  OPERATION
+  DECLARATIF
+}
+
+// Cycle verrouillé (contrat A25 §16) — voir
+// lib/deliverable/version.ts::TRANSITIONS_AUTORISEES pour la matrice
+// explicite. DRAFT->REVIEW->APPROVED->FINALIZED ; REVIEW->REJECTED.
+// FINALIZED et REJECTED sont TOUS LES DEUX terminaux : aucune réouverture
+// REJECTED->DRAFT (contrat A25 §21 : "une correction crée une nouvelle
+// version", jamais une réécriture/réouverture — même doctrine que
+// TERMINE/ANNULE sur WorkItem/WorkItemAssignment, A23/A24).
+enum DeliverableStatut {
+  DRAFT
+  REVIEW
+  APPROVED
+  FINALIZED
+  REJECTED
+}
+
+// Une version précise du CONTENU du Deliverable — append-only, jamais
+// réécrite (contrat A25 §13) : succession portée par la NOUVELLE ligne
+// (supersedesId, même doctrine que OutcomeAssessment/A15, jamais
+// supersededById sur l'ancienne), @unique sur supersedesId empêchant
+// structurellement tout branchement (contrat A25 §15/§41 : V1->V2->V3,
+// jamais V1->{V2,V3}). Le numéro `version` est attribué par le service
+// (lib/deliverable/version.ts), jamais fourni par le client (contrat
+// A25 §14).
+model DeliverableVersion {
+  id String @id @default(cuid())
+
+  deliverable   Deliverable @relation(fields: [deliverableId], references: [id], onDelete: Cascade)
+  deliverableId String
+
+  // Serveur-assigné, strictement croissant à partir de 1 par Deliverable
+  // — jamais choisi par le client.
+  version Int
+
+  titre         String
+  natureContenu DeliverableNatureContenu
+
+  // Autorisé UNIQUEMENT si natureContenu = STRUCTURE (contrat A25 §8/§37)
+  // — vérifié par le service, jamais en base (Prisma ne peut pas exprimer
+  // cette cohérence croisée nativement, même limitation que
+  // MissionCapabilityLink vs needVersionId, A21).
+  contenuStructure Json?
+
+  statut DeliverableStatut @default(DRAFT)
+
+  // A15 — même doctrine de supersession corrigée : le pointeur vit sur la
+  // NOUVELLE ligne, l'ancienne n'est jamais mutée après coup. @unique
+  // empêche toute branche.
+  supersedesId String?             @unique
+  supersedes   DeliverableVersion? @relation("DeliverableVersionSuccession", fields: [supersedesId], references: [id], onDelete: Restrict)
+  supersededBy DeliverableVersion? @relation("DeliverableVersionSuccession")
+
+  // Immuables après création — jamais réécrits (contrat A25 §40 :
+  // version/supersedesId/createdAt/createdByEmail explicitement listés).
+  // Une fois FINALIZED, titre/natureContenu/contenuStructure deviennent
+  // également immuables (contrat A25 §18) — contrôlé par le service,
+  // jamais par une contrainte DB (le statut conditionne l'immutabilité,
+  // Prisma ne peut pas l'exprimer nativement).
+  createdAt      DateTime @default(now())
+  createdByEmail String
+
+  // A26 — DeliveryEvidence Foundation (05/10/2026). Inverse Prisma
+  // strictement nécessaire — aucune règle A25 n'est modifiée par cet ajout.
+  deliveryEvidences DeliveryEvidence[]
+
+  // A27 — Quality Gate Foundation (05/10/2026). Inverse Prisma strictement
+  // nécessaire — aucune règle A25 (lifecycle, immutabilité, succession)
+  // n'est modifiée par cet ajout.
+  qualityGates DeliveryQualityGate[]
+
+  @@unique([deliverableId, version])
+  @@index([deliverableId])
+}
+
+// Lien EXPLICITE entre un Deliverable et les WorkItem ayant contribué à sa
+// production — N:M, jamais créé automatiquement (contrat A25 §22/§23).
+// Volontairement au niveau Deliverable, JAMAIS DeliverableVersion (contrat
+// A25 §25/§26) : les WorkItems contributeurs restent les mêmes à travers
+// les révisions de contenu, jamais dupliqués à chaque nouvelle version.
+// COHÉRENCE DE MISSION (contrat A25 §24) : Deliverable.missionId ==
+// WorkItem.missionId, vérifiée par le service (lib/deliverable/
+// work-item-link.ts), jamais en base (même limitation que
+// WorkItemAssignment vs Mission, A24). onDelete: Restrict sur workItem
+// (jamais Cascade) : même doctrine que MissionAssignment.talentId (A20) —
+// un WorkItem ne peut jamais être supprimé tant qu'il porte un lien.
+// Suppression de CE lien = hard delete (contrat A25 §44, verbe DELETE) :
+// jamais un soft-SUPERSEDED comme MissionCapabilityLink (A21), parce que
+// ce lien ne porte lui-même aucun fait métier à historiser — seul un pur
+// pointeur de traçabilité, retiré sans perte d'information (ni le
+// Deliverable ni le WorkItem ne sont jamais supprimés par ce retrait).
+model DeliverableWorkItemLink {
+  id String @id @default(cuid())
+
+  deliverable   Deliverable @relation(fields: [deliverableId], references: [id], onDelete: Cascade)
+  deliverableId String
+
+  workItem   WorkItem @relation(fields: [workItemId], references: [id], onDelete: Restrict)
+  workItemId String
+
+  createdAt      DateTime @default(now())
+  createdByEmail String
+
+  @@unique([deliverableId, workItemId])
+  @@index([deliverableId])
+  @@index([workItemId])
+}
+
+// COMPANY ATLAS — A26 : DeliveryEvidence Foundation (05/10/2026).
+//
+// Répond à "quel fait pouvons-nous documenter, sur quelle cible, avec
+// quelle méthode, et avec quel niveau de confiance ?" — JAMAIS "le client
+// a-t-il obtenu son résultat ?" (Outcome, hors périmètre A26, contrat
+// A26 §3/§21). N'implique jamais OutcomeAssessment ni un QualityGate futur
+// (contrat A26 §21/§22).
+//
+// CIBLE XOR (contrat A26 §6) : exactement WorkItem OU DeliverableVersion,
+// jamais les deux, jamais aucun — vérifié par le service
+// (lib/delivery-evidence/evidence.ts), jamais en base nativement via
+// Prisma (CHECK ajouté manuellement en migration, même limitation que les
+// index uniques partiels A21/A24 — voir migration.sql).
+//
+// IMMUTABILITÉ + SUCCESSION (contrat A26 §14/§15/§16) : même doctrine que
+// OutcomeAssessment (A15)/DeliverableVersion (A25) — le pointeur de
+// succession vit sur la NOUVELLE ligne (supersedesId), jamais l'ancienne
+// mutée. DIFFÉRENCE STRUCTURELLE IMPORTANTE documentée ici : contrairement
+// à OutcomeAssessment/DeliverableVersion (UN SEUL objet versionné par
+// Mission/Deliverable), une cible (WorkItem ou DeliverableVersion) peut
+// porter PLUSIEURS chaînes d'Evidence totalement indépendantes
+// simultanément (ex. "12 tests passés" ET "accès client indisponible" sur
+// le même WorkItem ne sont jamais des versions l'une de l'autre) — il
+// n'existe donc PAS de notion de "ligne courante unique par cible" à
+// auto-détecter. supersedesId est donc TOUJOURS explicitement fourni par
+// l'appelant (jamais déduit d'une recherche "supersededBy IS NULL pour
+// cette cible"), et désigne précisément QUELLE assertion antérieure est
+// corrigée — jamais une simple dernière-en-date.
+model DeliveryEvidence {
+  id String @id @default(cuid())
+
+  // XOR avec deliverableVersionId ci-dessous — exactement l'un des deux,
+  // jamais les deux, jamais aucun (contrat A26 §6/§7). onDelete: Restrict
+  // (jamais Cascade) : une Evidence est un fait historique, elle ne doit
+  // jamais disparaître silencieusement si sa cible était supprimée (même
+  // doctrine que MissionAssignment.talentId, A20).
+  workItem   WorkItem? @relation(fields: [workItemId], references: [id], onDelete: Restrict)
+  workItemId String?
+
+  deliverableVersion   DeliverableVersion? @relation(fields: [deliverableVersionId], references: [id], onDelete: Restrict)
+  deliverableVersionId String?
+
+  methode   DeliveryEvidenceMethod
+  // Couple (méthode, confiance) validé par le service selon la matrice
+  // verrouillée du contrat A26 §12 — jamais une combinaison arbitraire
+  // acceptée en base.
+  confiance DeliveryEvidenceConfidence
+
+  // Assertion factuelle contextualisée, texte libre — jamais un moteur
+  // NLP/paraphrase IA, jamais une normalisation sémantique (contrat A26
+  // §19/§47) : le service conserve l'assertion fournie telle quelle.
+  contenu String
+
+  // Succession append-only — même doctrine que OutcomeAssessment (A15) et
+  // DeliverableVersion (A25) : le pointeur vit sur la NOUVELLE ligne,
+  // jamais l'ancienne mutée. @unique empêche structurellement toute
+  // branche (contrat A26 §15/§44 : E1->E2->E3, jamais E1->{E2,E3}).
+  // Cohérence vérifiée par le service (jamais en base) : même cible, même
+  // Mission (contrat A26 §41/§42/§43).
+  supersedesId String?           @unique
+  supersedes   DeliveryEvidence? @relation("DeliveryEvidenceSuccession", fields: [supersedesId], references: [id], onDelete: Restrict)
+  supersededBy DeliveryEvidence? @relation("DeliveryEvidenceSuccession")
+
+  // Immuables après création — aucune route ne les réécrit jamais (même
+  // discipline que WorkItem/MissionAssignment/DeliverableVersion).
+  // Volontairement AUCUN verifiedBy/verifiedAt (contrat A26 §18) : la
+  // méthode + createdByEmail suffisent ("VALIDATION_ADMIN" + l'email de
+  // l'Admin créateur matérialise déjà la validation, plus l'audit
+  // journalisé — jamais un second mécanisme de validation redondant).
+  createdAt      DateTime @default(now())
+  createdByEmail String
+
+  // A27 — Quality Gate Foundation (05/10/2026). Inverse Prisma strictement
+  // nécessaire pour QualityEvidenceLink ci-dessous — aucune règle A26
+  // (immutabilité, succession, contenu) n'est modifiée par cet ajout.
+  qualityEvidenceLinks QualityEvidenceLink[]
+
+  @@index([workItemId])
+  @@index([deliverableVersionId])
+}
+
+// Méthodes verrouillées (contrat A26 §10) — jamais étendues dans ce lot.
+enum DeliveryEvidenceMethod {
+  DECLARATION_TALENT
+  VALIDATION_ADMIN
+  VALIDATION_CLIENT
+  MESURE_SYSTEME
+  TEST_AUTOMATISE
+  INFERENCE_IA
+}
+
+// Confiance QUALITATIVE (contrat A26 §11/§20) — jamais un score numérique
+// (pas de confidenceScore/probability). Vocabulaire fermé DÉDIÉ, jamais
+// réutilisé depuis OutcomeConfiance/StatutPreuveCompetence/ClientNeedFait.
+// statut (même discipline que OutcomeMethodeVerification, A6 §A6.3).
+enum DeliveryEvidenceConfidence {
+  VERIFIE
+  DECLARE
+  INFERE
+  INCONNU
+}
+
+// COMPANY ATLAS — A27 : Quality Gate Foundation (05/10/2026).
+//
+// Répond à "ce qui a été livré respecte-t-il les critères d'acceptation
+// définis ?" — JAMAIS "le client a-t-il obtenu son résultat ?" (Outcome,
+// hors périmètre A27, contrat A27 §1/§3). Les trois assertions Evidence
+// (A26, "que s'est-il passé ?") / Quality (A27, "cela respecte-t-il les
+// critères ?") / Outcome (A6.1, "le client a-t-il obtenu son résultat ?")
+// restent strictement indépendantes, jamais fusionnées, jamais un
+// automatisme dans un sens ou dans l'autre (contrat A27 §3/§11/§28/§29).
+//
+// CIBLE — DÉCISION DE MODÉLISATION EXPLICITE (contrat A27 §6/§7,
+// documentée ici comme demandé) : UNIQUEMENT DeliverableVersion — jamais
+// WorkItem, contrairement à DeliveryEvidence (A26, XOR WorkItem/
+// DeliverableVersion). Raison : "critères" est le cœur même de ce que
+// Quality évalue, et acceptanceCriteria est un concept qui vit
+// EXCLUSIVEMENT sur Deliverable (voir ci-dessous) — WorkItem (A23) ne
+// porte structurellement aucune notion de critère d'acceptation : c'est
+// une unité de travail interne, pas un contenu livré à évaluer contre un
+// contrat d'acceptation. Introduire une cible WorkItem pour Quality
+// exigerait soit d'inventer un acceptanceCriteria sur WorkItem (hors
+// périmètre, non demandé), soit d'évaluer un WorkItem contre les critères
+// d'un Deliverable qu'il ne porte pas lui-même — une confusion de
+// domaine. Une cible générique (Option C) est également écartée : elle
+// introduirait une abstraction supplémentaire pour éviter une seule FK,
+// ce que le contrat interdit explicitement (§7 : "ne pas introduire une
+// abstraction générique seulement pour éviter deux FK"). Un seul FK
+// obligatoire, jamais nullable, jamais XOR — plus simple que A26 parce
+// que le besoin réel l'est aussi.
+//
+// IMMUABILITÉ DE CIBLE (contrat A27 §28) : une fois créée, une
+// DeliveryQualityGate reste pointée EXACTEMENT sur cette version — jamais
+// déplacée automatiquement vers une version plus récente si le
+// Deliverable évolue (même doctrine que DeliveryEvidence vs sa cible,
+// A26).
+//
+// CRITÈRES / SNAPSHOT (contrat A27 §9/§10, décision explicite) :
+// Deliverable.acceptanceCriteria (A25) est un champ libre MUTABLE sur
+// l'objet logique Deliverable, tandis qu'une DeliverableVersion est un
+// instantané immuable dans le temps — une Quality historique référençant
+// V1 ne doit JAMAIS réinterpréter silencieusement sous un
+// acceptanceCriteria modifié APRÈS coup. Solution minimale retenue (même
+// doctrine que OutcomeAssessment.expectedOutcome, A6.1, "copie figée au
+// moment de l'évaluation, jamais une relecture live") : `
+// acceptanceCriteriaSnapshot` copie littéralement Deliverable.
+// acceptanceCriteria au moment de la création, une seule fois, jamais mis
+// à jour ensuite. Aucun moteur de règles générique construit : simple
+// copie figée.
+//
+// GRANULARITÉ — DÉCISION EXPLICITE (contrat A27 §23/§24/§25/§26) : PAS de
+// QualityCriterionResult par critère (contrairement à OutcomeAssessment/
+// OutcomeCriterionResult, A6.1) — un seul résultat de premier niveau
+// (`resultat`). Raison indépendante, jamais une copie aveugle : Outcome
+// dispose d'une source STRUCTURÉE de critères (ClientNeedFait,
+// cle=CRITERE_REUSSITE) à itérer un par un ; Deliverable.acceptanceCriteria
+// est un unique champ texte libre (A25 §27), sans aucune liste structurée
+// à décomposer — construire une granularité par critère exigerait de
+// demander à l'évaluateur de ré-inventer un découpage que le modèle ne
+// fournit pas, contraire au principe "jamais inventer". `criteresEvalues`
+// (texte libre, obligatoire) porte la déclaration de l'évaluateur sur ce
+// qui a réellement été vérifié.
+//
+// RÉSULTAT (contrat A27 §11/§12/§13) : vocabulaire fermé DÉDIÉ
+// (DeliveryQualityResult), jamais réutilisé depuis OutcomeStatut (OBTENU/
+// PARTIELLEMENT_OBTENU/NON_OBTENU/INDETERMINABLE) ni depuis le vocabulaire
+// QualityStatus non lié de lib/quality/domain.ts (Quality Signals CI —
+// bounded context totalement différent, dérivé de CI/CODE_REVIEW/RUNTIME
+// pour la Sécurité/le code, AUCUN rapport avec cette Quality-ci malgré le
+// nom partagé — vérifié par l'audit A27 §4, aucune collision de modèle
+// Prisma). NOT_DETERMINABLE est préféré à un faux PASS/FAIL quand la
+// preuve est insuffisante — jamais forcé par défaut.
+//
+// LIFECYCLE (contrat A27 §17/§18) : DRAFT -> FINALIZED uniquement, machine
+// minimale à deux états (jamais un vocabulaire flou) — transition en
+// écriture conditionnelle (`updateMany` sur id+statut, même discipline
+// que DeliverableVersion/WorkItem, AUCUN invariant croisé entre lignes,
+// donc jamais de transaction Serializable ici). AUCUNE SUCCESSION
+// (supersedesId) dans ce lot (contrat A27 §17, "une simple nouvelle
+// Quality indépendante peut suffire si le besoin n'est pas démontré") :
+// contrairement à OutcomeAssessment/DeliverableVersion (UN SEUL objet
+// courant par parent, succession auto-détectée nécessaire), plusieurs
+// DeliveryQualityGate INDÉPENDANTES peuvent légitimement coexister sur la
+// MÊME DeliverableVersion (ex. une évaluation "fonctionnelle" et une
+// évaluation "sécurité" ne sont jamais des versions l'une de l'autre) —
+// il n'existe donc PAS de notion de "ligne courante unique par cible" à
+// remplacer, donc rien à superséder structurellement. Une correction
+// après FINALIZED est simplement une NOUVELLE DeliveryQualityGate
+// indépendante sur la même cible, jamais une réécriture de l'ancienne.
+//
+// RBAC (hors de ce modèle/service, contrôlé par les routes, contrat A27
+// §17-21 audité) : ADMIN et INGENIEUR (sur les Missions où il est
+// autorisé, via lib/delivery-evidence/access.ts::
+// estIngenieurAutoriseSurMission, même fonction partagée que A26 pour
+// DeliverableVersion) peuvent créer/préparer une DRAFT ; seul ADMIN peut
+// finaliser (jamais l'Ingénieur, même sur sa propre ligne — risque
+// d'auto-validation, même doctrine que OutcomeAssessment, A6.1 §A6.11) ;
+// le CLIENT ne devient JAMAIS automatiquement approbateur Quality (sa
+// validation reste exclusivement DeliveryEvidence.VALIDATION_CLIENT,
+// A26) — lecture uniquement sur ses propres Mission.
+//
+// AUCUN RÔLE AGENT (contrat A27 §22-27, limitation déjà documentée par
+// A26/A6.1) : ce schéma n'ajoute aucune identité Agent — une Quality
+// "proposée par IA" devrait passer par ADMIN comme pour INFERENCE_IA
+// (A26) ou DECLARE_CLIENT/INFERE_IA (Outcome), jamais une création
+// directe FINALIZED.
+//
+// ISOLATION ABSOLUE (contrat A27 §37-42) : ce domaine ne modifie JAMAIS
+// DeliveryEvidence (seulement référencée via QualityEvidenceLink, jamais
+// son contenu copié), ne modifie JAMAIS Deliverable/DeliverableVersion
+// (contenu, statut, FINALIZE/REJECT), ne modifie JAMAIS WorkItem.statut,
+// ne modifie JAMAIS Mission.statut. Mission TERMINEE/ANNULEE ne bloque
+// JAMAIS la création d'une DeliveryQualityGate historiquement nécessaire
+// (même doctrine que DeliveryEvidence/DeliverableVersion, A25/A26) :
+// aucune précondition Mission.statut/DeliverableVersion.statut n'est
+// vérifiée ici.
+enum DeliveryQualityResult {
+  PASS
+  FAIL
+  NOT_DETERMINABLE
+}
+
+enum DeliveryQualityStatut {
+  DRAFT
+  FINALIZED
+}
+
+model DeliveryQualityGate {
+  id String @id @default(cuid())
+
+  // Cible UNIQUE et immuable (contrat A27 §6/§7/§28) — jamais XOR, jamais
+  // nullable, jamais déplacée vers une version ultérieure. onDelete:
+  // Restrict (jamais Cascade) : une Quality est un fait historique, elle
+  // ne doit jamais disparaître silencieusement si sa cible était
+  // supprimée (même doctrine que DeliveryEvidence vs ses cibles, A26).
+  deliverableVersion   DeliverableVersion @relation(fields: [deliverableVersionId], references: [id], onDelete: Restrict)
+  deliverableVersionId String
+
+  // Déclaration libre de l'évaluateur sur ce qui a réellement été vérifié
+  // — obligatoire (champ minimal "critères" du contrat A27 §5), jamais
+  // une relecture automatique de acceptanceCriteriaSnapshot ci-dessous
+  // (qui reste une copie contextuelle, pas une liste à cocher).
+  criteresEvalues String
+
+  // Copie figée de Deliverable.acceptanceCriteria au moment de la
+  // création — jamais relue live ensuite (contrat A27 §9/§10). Null si
+  // le Deliverable n'avait aucun acceptanceCriteria renseigné à cet
+  // instant (pas une valeur inventée).
+  acceptanceCriteriaSnapshot String?
+
+  resultat DeliveryQualityResult
+
+  // DRAFT à la création, jamais choisi par l'appelant (contrat A27 §17).
+  statut DeliveryQualityStatut @default(DRAFT)
+
+  // Évaluateur + date (champs minimaux du contrat A27 §5) — immuables
+  // après création, même discipline que WorkItem/MissionAssignment/
+  // DeliverableVersion/DeliveryEvidence.
+  evaluatedAt      DateTime @default(now())
+  evaluatedByEmail String
+  evaluatedByRole  String
+
+  createdAt      DateTime @default(now())
+  createdByEmail String
+
+  evidenceLinks QualityEvidenceLink[]
+
+  @@index([deliverableVersionId])
+}
+
+// Provenance Evidence d'une Quality — N:M, jamais une copie de contenu
+// (contrat A27 §14/§15/§16/§33-36) : référence l'EXACTE ligne
+// DeliveryEvidence citée au moment de l'évaluation. Une Evidence
+// supersédée PLUS TARD par une nouvelle ligne reste légalement
+// référencée ici, jamais déplacée vers la nouvelle (contrat A27 §16) —
+// aucune vérification de supersession n'est faite à la création du lien,
+// volontairement. Ajout/retrait uniquement tant que la Quality parente
+// est DRAFT (contrôlé par le service, jamais en base) — une fois
+// FINALIZED, le contenu de la Quality (y compris ses liens Evidence)
+// devient immuable, même discipline que DeliverableVersion (contrat
+// A25 §18).
+//
+// Hard delete (même discipline que DeliverableWorkItemLink, A25 §44) : ce
+// lien ne porte lui-même aucun fait métier à historiser, seul un
+// pointeur de traçabilité — son retrait ne détruit ni la Quality ni
+// l'Evidence référencée.
+model QualityEvidenceLink {
+  id String @id @default(cuid())
+
+  qualityGate   DeliveryQualityGate @relation(fields: [qualityGateId], references: [id], onDelete: Cascade)
+  qualityGateId String
+
+  // onDelete: Restrict (jamais Cascade) : une DeliveryEvidence est un
+  // fait historique de A26, jamais supprimée silencieusement parce
+  // qu'une Quality la référence (même doctrine que DeliverableWorkItemLink.
+  // workItemId, A25).
+  deliveryEvidence   DeliveryEvidence @relation(fields: [deliveryEvidenceId], references: [id], onDelete: Restrict)
+  deliveryEvidenceId String
+
+  createdAt      DateTime @default(now())
+  createdByEmail String
+
+  // Idempotence : jamais deux liens identiques entre la même Quality et
+  // la même Evidence (contrat A27 §33-36, "optionnellement empêcher les
+  // doublons exacts").
+  @@unique([qualityGateId, deliveryEvidenceId])
+  @@index([qualityGateId])
+  @@index([deliveryEvidenceId])
+}
+
+// COMPANY ATLAS — A29 : Financial Result Foundation (05/10/2026).
+//
+// Répond à "quel résultat financier réel cette Mission a-t-elle produit ?"
+// — JAMAIS "quel était l'objectif commercial ?" (Mission.tjmVente/nbJours/
+// margeCible, contrat A29 §2/§5/§18, intégralement conservés tels quels :
+// CIBLE commerciale, jamais renommée/transformée en "réel"). N'implique
+// JAMAIS OutcomeAssessment ni DeliveryQualityGate (contrat A29 §6/§7/§33) :
+// `Outcome PASS/ACHIEVED + Financial Result LOSS` et
+// `Quality FAIL + Financial Result PROFIT` doivent tous deux rester
+// possibles — Mission reste le seul point d'articulation commun, jamais
+// une FK directe vers l'un ou l'autre.
+//
+// AUDIT DES SOURCES FINANCIÈRES RÉELLES (contrat A29 §3/§8, mené avant
+// toute décision de modèle) : grep "margeCible/tjmVente/nbJours/cout/
+// revenu/financial/finance/margin" sur app/lib/prisma/tests a révélé :
+//   A — Prévision : Mission.tjmVente/nbJours/margeCible (déjà existants,
+//       jamais touchés ici).
+//   B — Réalisé existant : Facture/Paiement (V2.2-B, Decimal(12,2), déjà
+//       une facturation RÉELLE — montantHT/TTC facturé, Paiement.montant
+//       réellement encaissé si statut=CONFIRME) ; FeuilleDeTemps.statut=
+//       "ValideeClient" (seul statut définitif, déjà utilisé par
+//       lib/finance/margin-intelligence.ts comme unique source de "jours
+//       réels"). AUCUNE donnée de COÛT TALENT réellement payé n'existe
+//       (Profil.montantSaisi est un TJM NÉGOCIÉ/catalogue, jamais une
+//       dépense réellement engagée — contrat A29 §16, confirmé par cet
+//       audit : calculerTjmCout() produit un TAUX modélisé via des
+//       Hypotheses globales, jamais un montant payé).
+//   C — Déclaratif : un ADMIN peut déclarer un montant qu'il affirme réel
+//       (même doctrine que DeliveryEvidence.contenu/A27 criteresEvalues :
+//       une assertion humaine, jamais une invention du service).
+//   D — Calculé : Profit = Revenue - Cost, Margin% = Profit/Revenue
+//       (uniquement si les deux entrées sont connues — jamais déduit d'un
+//       seul côté).
+//   E — Inconnu : par défaut, pour toute Mission sans donnée fiable
+//       déclarée — jamais un 0 implicite (contrat A29 §10 : "0 et UNKNOWN
+//       sont deux états différents").
+//
+// DÉCISION DE MODÉLISATION EXPLICITE (contrat A29 §16/§26, documentée
+// ici) : compte tenu de l'absence totale de coût Talent réellement payé
+// dans ce schéma, ce lot n'implémente AUCUN calcul automatique de coût
+// (jamais allocationPct × un TJM quelconque, contrat A29 §16) — Revenue
+// ET Cost sont tous deux des montants DÉCLARÉS par un ADMIN
+// (provenance obligatoire, jamais une valeur stockée sans savoir d'où
+// elle vient), exactement l'exemple du contrat A29 §26. Une Mission sans
+// déclaration ADMIN reste structurellement NOT_DETERMINABLE, jamais
+// recalculée depuis Mission.tjmVente/nbJours/margeCible (contrat A29
+// §47 : la cible commerciale ne devient jamais un réalisé par magie).
+// Réutiliser Facture/Paiement comme calcul automatique de Revenue a été
+// délibérément écarté pour ce lot V1 (périmètre minimal, contrat A29 §37/
+// §38 "pas de système comptable") — reste une extension documentée
+// possible pour un lot futur, jamais construite ici sans nécessité
+// démontrée.
+//
+// CIBLE (contrat A29 §33) : FK directe vers Mission UNIQUEMENT — jamais
+// vers OutcomeAssessment/DeliveryQualityGate, pour préserver
+// l'indépendance totale entre les trois moteurs.
+//
+// LIFECYCLE / SUCCESSION (contrat A29 §20/§35/§36, décision explicite) :
+// DRAFT -> FINALIZED (même machine minimale que DeliveryQualityGate, A27)
+// ; `supersedesId` TOUJOURS explicite, jamais auto-détecté (contrat A29
+// §35 : "ne pas créer de contrainte unique avant d'avoir déterminé le
+// besoin" — contrairement à OutcomeAssessment, A6.1, qui impose UN SEUL
+// courant par Mission). Plusieurs FinancialResult peuvent légitimement
+// coexister pour la même Mission (ex. un DRAFT en préparation et un
+// FINALIZED déjà figé) — même doctrine que DeliveryEvidence (A26) :
+// aucune notion de "ligne courante unique" à auto-détecter, une
+// correction après FINALIZED est une NOUVELLE ligne, qui peut
+// explicitement superséder l'ancienne si l'appelant le précise.
+//
+// MONEY (contrat A29 §11) : Decimal(12,2), même convention que Facture/
+// Paiement (V2.2-B) — jamais Float (contrairement à Mission.tjmVente/
+// margeCible, déjà Float, jamais changés ici). `marginPct` en Decimal
+// (7,4), fraction (0.30 = 30%) — même convention que Mission.margeCible
+// (Float, mais déjà une fraction, jamais un pourcentage littéral), arrondi
+// déterministe via Prisma.Decimal.ROUND_HALF_UP (jamais un flottant
+// binaire imprévisible).
+//
+// DEVISE (contrat A29 §12) : `currency` requis, jamais un défaut "EUR"
+// codé en dur dans le SCHÉMA (contrairement à Mission.deviseVente, qui,
+// lui, porte un défaut applicatif historique) — le SERVICE renseigne
+// `currency` depuis Mission.deviseVente si l'appelant ne le fournit pas
+// explicitement, jamais une supposition implicite au niveau du modèle.
+enum FinancialResultStatut {
+  DRAFT
+  FINALIZED
+}
+
+// Vocabulaire DÉDIÉ à Financial Result (contrat A29 §9/§27), jamais
+// réutilisé depuis DeliveryEvidenceConfidence (A26)/OutcomeConfiance
+// (A6.1) — même discipline que chaque domaine précédent (A26 §11/§20).
+// DECLARE : un ADMIN affirme ce montant sans vérification croisée
+// supplémentaire documentée. VERIFIE : l'ADMIN atteste explicitement
+// avoir vérifié ce montant contre une source réelle (ex. Facture/
+// Paiement déjà existants) — toujours une assertion humaine, jamais un
+// calcul automatique qui le rendrait "vérifié" par construction (contrat
+// A29 §27 : "ne pas appeler verified une donnée simplement saisie" —
+// VERIFIE exige donc en plus `justification` non vide expliquant la
+// vérification, contrôlé par le service).
+enum FinancialResultProvenance {
+  DECLARE
+  VERIFIE
+}
+
+// Vocabulaire verrouillé (contrat A29 §13), jamais réutilisé depuis
+// OutcomeStatut/DeliveryQualityResult (A6.1/A27) — bounded context
+// distinct. NOT_DETERMINABLE couvre à la fois "Revenue ou Cost inconnu"
+// ET "Revenue connu mais égal à zéro" pour le pourcentage de marge
+// (contrat A29 §24, division par zéro jamais calculée) — jamais un déni
+// de ce dernier cas comme une simple absence de champ.
+enum FinancialResultGlobal {
+  PROFIT
+  BREAK_EVEN
+  LOSS
+  NOT_DETERMINABLE
+}
+
+model FinancialResult {
+  id String @id @default(cuid())
+
+  // onDelete: Restrict (jamais Cascade) : un FinancialResult est un fait
+  // historique, il ne doit jamais disparaître silencieusement si la
+  // Mission était supprimée (même doctrine que toutes les cibles A26/A27).
+  mission   Mission @relation(fields: [missionId], references: [id], onDelete: Restrict)
+  missionId String
+
+  // Devise de CE résultat — requise, jamais déduite implicitement d'un
+  // défaut codé en dur ici (le service la renseigne depuis
+  // Mission.deviseVente si absente à l'appel, contrat A29 §12).
+  currency String
+
+  // Revenue/Cost — tous deux optionnels (null = UNKNOWN, jamais 0 par
+  // défaut, contrat A29 §10). Si renseigné : provenance ET justification
+  // non vide sont OBLIGATOIRES (contrôlé par le service, jamais en base) —
+  // jamais un montant stocké sans savoir d'où il vient (contrat A29 §9).
+  revenueAmount        Decimal?                   @db.Decimal(12, 2)
+  revenueProvenance    FinancialResultProvenance?
+  revenueJustification String?
+
+  costAmount        Decimal?                   @db.Decimal(12, 2)
+  costProvenance    FinancialResultProvenance?
+  costJustification String?
+
+  // Dérivés — TOUJOURS calculés par le service (lib/financial-result/
+  // financial-result.ts::calculerResultat), jamais fournis par l'appelant
+  // (contrat A29 §10/§23/§24) : Profit = Revenue - Cost et Margin% =
+  // Profit/Revenue UNIQUEMENT si les deux entrées sont connues ET
+  // Revenue != 0 pour Margin% ; sinon NOT_DETERMINABLE explicite, jamais
+  // NaN/Infinity/0 par défaut.
+  profitAmount   Decimal?               @db.Decimal(12, 2)
+  marginPct      Decimal?               @db.Decimal(7, 4)
+  resultatGlobal FinancialResultGlobal
+
+  // DRAFT à la création, jamais choisi par l'appelant (contrat A29 §20).
+  statut FinancialResultStatut @default(DRAFT)
+
+  // "Date" métier minimale du contrat A29 §9/§21 — distincte de
+  // `createdAt` (infra) par discipline, même si identique en pratique à
+  // la création (même convention que DeliveryQualityGate.evaluatedAt,
+  // A27). periodStart/periodEnd explicitement HORS PÉRIMÈTRE A29 (contrat
+  // A29 §22 : "résultat sur le périmètre complet de la Mission", jamais
+  // périodique dans ce lot) — extension future documentée, jamais
+  // construite ici sans besoin démontré.
+  calculatedAt      DateTime @default(now())
+  calculatedByEmail String
+  calculatedByRole  String
+
+  // Succession EXPLICITE, jamais auto-détectée (contrat A29 §35/§36, voir
+  // commentaire de modèle ci-dessus) — @unique empêche toute branche
+  // (E1->E2->E3, jamais E1->{E2,E3}, même doctrine que DeliveryEvidence/
+  // A26).
+  supersedesId String?           @unique
+  supersedes   FinancialResult? @relation("FinancialResultSuccession", fields: [supersedesId], references: [id], onDelete: Restrict)
+  supersededBy FinancialResult? @relation("FinancialResultSuccession")
+
+  createdAt      DateTime @default(now())
+  createdByEmail String
+
+  @@index([missionId])
+}
+
+// ============================================================================
+// COMPANY ATLAS — A30 : LEARNING FOUNDATION (05/10/2026).
+//
+// Objectif (contrat A30, Learning Contract validé) : transformer
+// l'expérience passée d'une Mission en connaissance traçable et
+// réutilisable, sans jamais réécrire l'historique ni automatiser de
+// décision future. Dernier maillon de la chaîne Need -> Solution ->
+// Mission -> Talent/Capability -> Delivery -> Evidence -> Quality ->
+// Outcome -> FinancialResult -> Learning -> Future Context.
+//
+// LEARNING != SOURCE (contrat A30 §3.1) : référence sa source par simple
+// pointeur texte, jamais une relation Prisma forçant un champ inverse sur
+// le modèle source (même discipline que OutcomeAssessment.decisionOptionId/
+// SolutionOption.sourceOptionId, A6.1/V2.1-A, auditée en A30-AUDIT §6) —
+// Deliverable/DeliverableVersion/WorkItem/DeliveryEvidence/
+// DeliveryQualityGate/OutcomeAssessment/FinancialResult restent
+// strictement INCHANGÉS par ce lot (contrat A30 §3.3, aucune modification
+// d'un moteur précédent).
+//
+// LEARNING != DECISION (contrat A30 §3.3) : aucune route/service de ce
+// lot ne modifie jamais Need/NeedFact/SolutionOption/CapabilityRequirement/
+// Talent/Mission — un Learning reste une entrée CONTEXTUELLE potentielle
+// pour une décision humaine future, jamais une décision elle-même.
+//
+// LEARNING != AI MEMORY (contrat A30 §3.4) : aucun embedding, aucun
+// pgvector, aucun RAG, aucune recherche vectorielle, aucun knowledge
+// graph, aucun pipeline LLM — substrat métier uniquement (table
+// relationnelle classique, contenu texte libre).
+model Learning {
+  id String @id @default(cuid())
+
+  // Source PRIMAIRE obligatoire (contrat A30 §7) — onDelete: Restrict
+  // (jamais Cascade) : un Learning est un fait historique, il ne doit
+  // jamais disparaître silencieusement si sa Mission source était
+  // supprimée (même doctrine que FinancialResult/OutcomeAssessment).
+  mission   Mission @relation(fields: [missionId], references: [id], onDelete: Restrict)
+  missionId String
+
+  // Source PRÉCISE optionnelle (contrat A30 §7/§8) — au plus UNE des sept
+  // colonnes ci-dessous est renseignée (invariant contrôlé par le
+  // service, jamais en base), jamais une table polymorphe générique
+  // "LearningSource" (interdiction explicite contrat A30 §8, anti-patron
+  // déjà présent dans ce schéma avec AuditEvent.objectId — audité et
+  // délibérément non reproduit ici). Simples colonnes texte, jamais une
+  // relation Prisma complète — même discipline que §3.1 ci-dessus : aucun
+  // champ inverse n'est ajouté sur WorkItem/Deliverable/DeliverableVersion/
+  // DeliveryEvidence/DeliveryQualityGate/OutcomeAssessment/FinancialResult.
+  // Chacune est vérifiée par le service comme appartenant à la MÊME
+  // Mission que `missionId` ci-dessus (contrat A30 §7, règle absolue) —
+  // "introuvable" et "appartient à une autre Mission" produisent la même
+  // erreur (même doctrine IDOR que A26/A27/A29).
+  sourceWorkItemId             String?
+  sourceDeliverableId          String?
+  sourceDeliverableVersionId   String?
+  sourceDeliveryEvidenceId     String?
+  sourceDeliveryQualityGateId  String?
+  sourceOutcomeAssessmentId    String?
+  sourceFinancialResultId      String?
+
+  // Typologie verrouillée par le Learning Contract (contrat A30 §5) —
+  // volontairement les six valeurs explicitement listées par le mandat
+  // d'implémentation (dérogeant à la réduction à 3 proposée par l'audit
+  // A30-AUDIT §10 : le contrat validé par le CTO retient la typologie
+  // complète). Aucun type ne change automatiquement un comportement
+  // système (contrat A30 §5, dernière ligne) — champ purement descriptif,
+  // jamais lu par aucune condition applicative hors validation d'entrée.
+  type LearningType
+
+  // Contenu minimal (contrat A30 §11) : `title` + `statement` doivent se
+  // comprendre indépendamment de la source (jamais une simple référence
+  // du type "voir Evidence X"). Écrit-une-fois : aucune route de ce lot
+  // n'autorise la modification de ces deux champs après création (contrat
+  // A30 §13, "ne jamais réécrire l'apprentissage historique" — une
+  // correction de contenu crée une NOUVELLE ligne via supersession,
+  // jamais une mutation en place).
+  title     String
+  statement String
+
+  // Provenance (contrat A30 §3.2/§6) — distincte de `confidence`
+  // ci-dessous (contrat A30 §12 : "INFERRED + HIGH reste une inférence").
+  // INFERRED ne devient jamais automatiquement VERIFIED/DECLARED (contrat
+  // A30 §3.2/§6, "aucune promotion automatique") — seule une nouvelle
+  // ligne explicite (création humaine) peut porter une provenance
+  // différente pour la même observation.
+  provenance LearningProvenance
+
+  // Confiance (contrat A30 §12) — jamais un score algorithmique, jamais
+  // calculée : toujours déclarée explicitement par le créateur au moment
+  // de la création, au même titre que provenance.
+  confidence LearningConfidence
+
+  // Portée d'applicabilité (contrat A30 §9) — MISSION par défaut,
+  // jamais élargie automatiquement par le système (contrat A30 §9,
+  // "la portée ne doit jamais être automatiquement élargie" — un
+  // Learning créé pour une Mission reste limité à cette Mission tant
+  // qu'un processus explicite ne l'élargit pas). Immuable après création
+  // dans ce lot (aucun "moteur de réutilisation contrôlé" construit ici,
+  // contrat A30 §17) : seul un ADMIN peut déclarer directement une
+  // portée plus large qu'une Mission AU MOMENT de la création (jamais un
+  // Ingénieur, contrôlé par le service — contrat A30 §18, "il ne doit
+  // jamais pouvoir transformer seul une inférence en connaissance ATLAS
+  // globale").
+  scope LearningScope @default(MISSION)
+
+  // Statut de VALIDATION (contrat A30 §18 "valider"/§22
+  // "learning.validated") — distinct de `applicabilite` ci-dessous.
+  // PROPOSE à la création quel que soit le rôle du créateur, jamais
+  // choisi par l'appelant. Transition PROPOSE -> VALIDE réservée ADMIN
+  // (contrat A30 §18), jamais l'inverse (même discipline append-only que
+  // ClientNeedFait.statutActivite : une "dévalidation" créerait une
+  // nouvelle ligne, jamais une réécriture). Ne modifie JAMAIS
+  // `provenance` : valider un Learning INFERRED ne le transforme jamais
+  // en VERIFIED (contrat A30 §3.2/§6, règle absolue).
+  statut          LearningStatut @default(PROPOSE)
+  validatedAt     DateTime?
+  validatedByEmail String?
+
+  // Statut d'APPLICABILITÉ (contrat A30 §10) — distinct de `statut`
+  // ci-dessus : sépare la vérité historique (toujours vraie, jamais
+  // supprimée) de la validité actuelle (peut devenir obsolète dans le
+  // temps, même sans correction de contenu ni successeur). ACTIVE par
+  // défaut, jamais OBSOLETE -> ACTIVE (réactivation = nouvelle ligne,
+  // même discipline que NeedFactStatus/ClientNeedFait). Transition
+  // traçable (`obsoleteAt`/`obsoleteByEmail`, même patron que
+  // EmergencyStop.liftedAt/liftedBy) — réservée ADMIN (contrat A30 §18).
+  applicabilite    LearningApplicabilite @default(ACTIVE)
+  obsoleteAt       DateTime?
+  obsoleteByEmail  String?
+
+  // Succession EXPLICITE, jamais auto-détectée (contrat A30 §14, "le
+  // caller doit explicitement déclarer la succession") — @unique empêche
+  // toute branche concurrente (même doctrine que DeliveryEvidence/
+  // OutcomeAssessment/FinancialResult, interdiction de branching). Cross-
+  // Mission et cross-client structurellement impossibles : le service
+  // vérifie que l'ancien Learning référencé appartient exactement à la
+  // même Mission (donc au même client, Mission.clientId étant fixe)
+  // avant toute création (contrat A30 §14). La création d'une ligne
+  // successeur NE modifie JAMAIS l'ancienne ligne (ni son `statut`, ni
+  // son `applicabilite`) — aucune automatisation, aucune mutation
+  // silencieuse (contrat A30 §13).
+  supersedesId String?    @unique
+  supersedes   Learning?  @relation("LearningSuccession", fields: [supersedesId], references: [id], onDelete: Restrict)
+  supersededBy Learning?  @relation("LearningSuccession")
+
+  createdAt      DateTime @default(now())
+  createdByEmail String
+  createdByRole  String
+
+  // COMPANY ATLAS — A34 : Learning Loop Runtime (06/10/2026).
+  //
+  // Mécanisme de liaison PUR vers l'AgenticRun (A32) qui a proposé ce
+  // Learning — jamais une relation Prisma (même discipline que les
+  // pointeurs sourceXxxId ci-dessus, contrat A33 §10/§29 décision CTO D1) :
+  // Learning reste un modèle fermé, AgenticRun ne gagne aucun champ
+  // inverse. Nullable à dessein : un Learning créé directement par un
+  // humain (A30, API existante, inchangée) garde correlationId=NULL —
+  // aucun backfill historique (contrat A34 §6, "ne rétro-remplis aucun
+  // historique"). Lorsqu'un Learning Run (A34) produit ce Learning,
+  // le service copie EXACTEMENT AgenticRun.correlationId ici, jamais une
+  // nouvelle valeur générée localement — permet de reconstruire la chaîne
+  // Mission -> AgenticRun -> AgenticStep -> Learning via une seule requête
+  // JournalActivite/Learning sur ce correlationId (contrat A34 §30).
+  correlationId String?
+
+  @@index([missionId])
+  @@index([sourceWorkItemId])
+  @@index([sourceDeliverableId])
+  @@index([sourceDeliverableVersionId])
+  @@index([sourceDeliveryEvidenceId])
+  @@index([sourceDeliveryQualityGateId])
+  @@index([sourceOutcomeAssessmentId])
+  @@index([sourceFinancialResultId])
+  @@index([statut])
+  @@index([scope])
+  @@index([correlationId])
+}
+
+// Typologie verrouillée (contrat A30 §5) — six valeurs explicitement
+// nommées par le Learning Contract. LESSON : constat factuel dérivé
+// d'une expérience précise. PATTERN : récurrence observée à travers
+// plusieurs expériences. BEST_PRACTICE : pratique jugée à reproduire.
+// ANTI_PATTERN : approche jugée à éviter (distincte de BEST_PRACTICE,
+// jamais un simple "négatif" de celle-ci — un évaluateur doit pouvoir
+// distinguer "à faire" de "à éviter" au premier coup d'oeil). RECOMMENDATION :
+// préconisation actionnable pour une future Mission similaire. INSIGHT :
+// observation qualitative ne rentrant dans aucune des catégories
+// précédentes. Aucune valeur ne déclenche de comportement système
+// automatique (contrat A30 §5).
+enum LearningType {
+  LESSON
+  PATTERN
+  BEST_PRACTICE
+  ANTI_PATTERN
+  RECOMMENDATION
+  INSIGHT
+}
+
+// Provenance verrouillée (contrat A30 §3.2/§6) — quatre valeurs
+// explicitement nommées. OBSERVED : constat direct par le créateur,
+// sans déclaration tierce. DECLARED : rapporté par un tiers (ex. un
+// Ingénieur rapportant un fait vécu sur sa Mission). VERIFIED :
+// vérification humaine active contre une source réelle. INFERRED :
+// proposition d'une IA — jamais suffisant seul pour un Learning VALIDE
+// sans revue humaine explicite (contrat A30 §3.2, "aucune promotion
+// automatique"), même doctrine que OutcomeMethodeVerification.INFERE_IA
+// (A6.1) et DeliveryEvidenceMethod côté Evidence (A26) — vocabulaire
+// volontairement NON partagé entre domaines (contrat A6 §A6.3/§A6.10,
+// "5e instance du même vocabulaire à dessein jamais partagée").
+enum LearningProvenance {
+  OBSERVED
+  DECLARED
+  VERIFIED
+  INFERRED
+}
+
+// Confiance verrouillée (contrat A30 §12) — jamais confondue avec
+// `LearningProvenance` ci-dessus (ex. "INFERRED + HIGH" reste une
+// inférence, "VERIFIED + MEDIUM" reste vérifiée mais limitée en
+// confiance). Jamais un score algorithmique (contrat A30 §12, "pas de
+// scoring automatique") — toujours une déclaration humaine explicite au
+// moment de la création.
+enum LearningConfidence {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+// Portée verrouillée (contrat A30 §9) — cinq valeurs explicitement
+// nommées. MISSION : expérience spécifique à cette Mission précise.
+// CLIENT : réutilisable uniquement dans le contexte du même client.
+// DOMAIN : connaissance réutilisable dans un domaine métier. CAPABILITY :
+// connaissance liée à une capacité précise. ATLAS : connaissance
+// généralisée à l'ensemble d'ATLAS. Jamais élargie automatiquement par
+// le système (contrat A30 §9) — voir commentaire du champ `scope`
+// ci-dessus pour la restriction de rôle à la création.
+enum LearningScope {
+  MISSION
+  CLIENT
+  DOMAIN
+  CAPABILITY
+  ATLAS
+}
+
+// Statut de VALIDATION (contrat A30 §18/§22) — PROPOSE à la création,
+// VALIDE uniquement après une action ADMIN explicite ("valider"). Jamais
+// l'inverse (append-only, même doctrine que NeedFactStatus). Distinct de
+// LearningApplicabilite ci-dessous — deux axes indépendants (contrat A30
+// §10 vs §18).
+enum LearningStatut {
+  PROPOSE
+  VALIDE
+}
+
+// Statut d'APPLICABILITÉ (contrat A30 §10) — sépare la vérité historique
+// (toujours vraie) de la validité actuelle (peut devenir obsolète).
+// ACTIVE par défaut, jamais OBSOLETE -> ACTIVE (même discipline
+// append-only que NeedFactStatus/ClientNeedFait.statutActivite — une
+// réactivation crée un nouveau Learning, jamais une réécriture).
+enum LearningApplicabilite {
+  ACTIVE
+  OBSOLETE
+}
+
+// ============================================================================
+// COMPANY ATLAS — A32 : AGENTIC RUNTIME FOUNDATION (05/10/2026).
+//
+// Socle d'exécution contrôlée pour de futures boucles agentiques — PAS une
+// boucle métier autonome (contrat A32 §1/§18). Implémente exactement le
+// contrat validé par l'audit A31 : GOAL -> CONTEXT -> OBSERVE -> PROPOSE ->
+// AUTHORIZE -> ACT -> VERIFY -> STOP/CONTINUE, sans jamais introduire de
+// nouveau système Agent/RBAC/Permission/Approval/EmergencyStop/AuditEvent/
+// Evidence/Learning/Outcome (contrat A32 §4, liste d'interdictions).
+//
+// ZÉRO MODIFICATION D'UN MODÈLE EXISTANT (B19/B20/B22/A18-A30) : toute
+// référence vers AgentIdentity/AgentPermission/Decision/Delegation/
+// AuthorizationRequest/EmergencyStop/Mission/ClientNeed/SolutionOption est
+// un simple pointeur texte (String, jamais @relation) — même discipline
+// que Learning.sourceFinancialResultId (A30) et OutcomeAssessment.
+// decisionOptionId (A6.1) : une relation Prisma forcerait un champ inverse
+// sur ces modèles, modification structurellement hors périmètre de ce
+// lot. Vérifié par le service (lib/agentic/runtime.ts), jamais en base.
+//
+// AgenticLoopType/AgenticLoopVersion : contrat A32 §6 interdit explicitement
+// une table "AgenticLoop" — un seul type technique de fondation ("FOUNDATION")
+// existe pour ce lot ; le registre fermé des loopType/loopVersion valides
+// vit dans le code (lib/agentic/runtime.ts::REGISTRE_LOOPS), jamais en base.
+// L'enum ci-dessous reste additif (une future boucle ajoute une valeur,
+// jamais une table parallèle). LEARNING ajoutée par A34 (contrat A33/A34,
+// décision CTO) : premier type de boucle métier réelle, productrice de
+// propositions Learning (A30) — voir lib/learning-loop/.
+enum AgenticLoopType {
+  FOUNDATION
+  LEARNING
+}
+
+// Machine d'état validée par l'audit A31 §7, réduite à 9 états (WAITING_INPUT
+// du contrat initial fusionné dans WAITING_APPROVAL — aucun flux existant
+// n'a jamais eu besoin d'un second mécanisme de blocage sur une question
+// humaine libre, voir A31 §7). SUCCEEDED/FAILED/STOPPED/ESCALATED sont
+// terminaux — aucune route de ce lot ne permet de les rouvrir (contrat
+// A32 §7, "aucun terminal state ne peut être réouvert").
+enum AgenticRunStatut {
+  DRAFT
+  READY
+  RUNNING
+  WAITING_APPROVAL
+  PAUSED
+  SUCCEEDED
+  FAILED
+  STOPPED
+  ESCALATED
+}
+
+// Vocabulaire FERMÉ (contrat A32 §11) — jamais une chaîne arbitraire
+// fournie par le client. Couvre exactement les 11 catégories mandatées
+// par A32, plus NOT_DETERMINABLE ajoutée par A34 (contrat A33 §21/§23,
+// décision CTO D2) : un Run SUCCEEDED avec stopReason=NOT_DETERMINABLE
+// signifie "le Run a terminé correctement son mandat et a conclu
+// qu'aucun Learning suffisamment déterminable ne pouvait être proposé"
+// — jamais un échec, jamais un nouveau statut de Run (AgenticRunStatut
+// reste inchangé, 9 valeurs).
+enum AgenticStopReason {
+  GOAL_REACHED
+  MAX_ITERATIONS_REACHED
+  TIMEOUT
+  PERMISSION_DENIED
+  APPROVAL_REJECTED
+  INVARIANT_VIOLATION
+  EXECUTION_ERROR
+  VERIFICATION_FAILED
+  EMERGENCY_STOP
+  HUMAN_STOP
+  ESCALATION_REQUIRED
+  NOT_DETERMINABLE
+}
+
+// Deux formes de Step suffisent pour la fondation (contrat A31 §8 : une
+// itération = UN passage OBSERVE->REASON->PROPOSE->AUTHORIZE->ACT->VERIFY,
+// persisté comme UNE ligne à champs multiples, jamais une ligne par
+// sous-étape — même discipline que DeliveryQualityGate, A27).
+// OBSERVE_ONLY : la Step ne lit/observe que le contexte, ne produit aucune
+// proposition (ex. vérification de contexte avant démarrage). PROPOSE_AND_ACT :
+// la Step observe PUIS propose une action classée server-side (ActionClass,
+// B22, réutilisé tel quel) — éventuellement suivie d'une autorisation et
+// d'une tentative d'exécution via le Tool Registry.
+enum AgenticStepType {
+  OBSERVE_ONLY
+  PROPOSE_AND_ACT
+}
+
+enum AgenticStepStatut {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+enum ActionExecutionStatut {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+model AgenticRun {
+  id String @id @default(cuid())
+
+  // Registre fermé CODE (lib/agentic/runtime.ts), jamais une table
+  // "AgenticLoop" (contrat A32 §6). loopVersion est un entier simple,
+  // validé contre le registre à la création — jamais incrémenté en place.
+  loopType    AgenticLoopType @default(FOUNDATION)
+  loopVersion Int
+
+  // AgentIdentity (B19) — pointeur texte pur, jamais @relation (voir
+  // commentaire de bloc ci-dessus). Validé par le service : doit exister
+  // ET être ACTIVE au moment de la création (contrat A32 §13 : "AgentIdentity
+  // ≠ utilisateur humain ≠ autorité métier" — ce champ documente SOUS QUELLE
+  // identité déclarée le Run agit, jamais une autorité en lui-même).
+  agentIdentityId String
+
+  // Action/scope DÉCLARÉS pour toute la durée du Run — vocabulaire B20
+  // réutilisé EXACTEMENT (AgentPermissionAction/AgentPermissionScope,
+  // déjà présents dans ce schéma, jamais redéclarés). La classification
+  // réelle (ActionClass) est TOUJOURS recalculée server-side à chaque
+  // tentative de proposition (lib/control-plane/commitment.ts::classifierAction,
+  // réutilisé tel quel, contrat A32 §15) — jamais fournie par le client,
+  // jamais stockée ici en amont de cette classification.
+  declaredAction AgentPermissionAction
+  declaredScope  AgentPermissionScope
+
+  goal String
+
+  // Contexte PINNÉ, immuable après création (contrat A32 §12, A31 §13) —
+  // jamais une relation Prisma (voir commentaire de bloc). Tous optionnels :
+  // un Run FOUNDATION peut exister sans aucune Mission (ex. un run purement
+  // diagnostique) ; si missionId est renseigné, needVersionId/solutionDecisionId
+  // (si fournis) doivent être EXACTEMENT ceux déjà pinnés sur cette Mission
+  // (Mission.needVersionId/solutionDecisionId, A18) — vérifié par le service
+  // à la création (DRAFT) et revérifié à chaque reprise PAUSED->RUNNING
+  // (contrat A32 §8 : "si le contexte n'est plus valide, ne reprends pas
+  // silencieusement").
+  missionId          String?
+  needVersionId      String?
+  solutionDecisionId String?
+
+  statut AgenticRunStatut @default(DRAFT)
+
+  // Borne stricte, positive, définie à la création, jamais modifiée
+  // pendant le Run (contrat A32 §10) — plafonnée par le service
+  // (lib/agentic/runtime.ts::MAX_ITERATIONS_PLAFOND) pour interdire toute
+  // boucle infinie même à la création.
+  maxIterations  Int
+  iterationCount Int @default(0)
+
+  // Pointeur texte pur vers l'AuthorizationRequest (B22) qui bloque
+  // actuellement le Run en WAITING_APPROVAL — jamais @relation (voir
+  // commentaire de bloc). NULL hors de cet état.
+  currentAuthorizationRequestId String?
+
+  stopReason   AgenticStopReason?
+  resultSummary String?
+  errorDetail   String?
+
+  // Chaîne tous les événements Run->Step->ActionExecution (JournalActivite,
+  // jamais AuditEvent B22 — contrat A32 §26, "AuditEvent reste réservé au
+  // bounded context B22 existant"). Généré à la création, jamais fourni
+  // par l'appelant (même discipline que lib/security/events.ts::nouveauCorrelationId).
+  correlationId String
+
+  createdAt      DateTime  @default(now())
+  createdByEmail String
+  createdByRole  String
+  startedAt      DateTime?
+  pausedAt       DateTime?
+  resumedAt      DateTime?
+  completedAt    DateTime?
+
+  steps AgenticStep[]
+
+  @@index([statut])
+  @@index([missionId])
+  @@index([agentIdentityId])
+  @@index([correlationId])
+}
+
+model AgenticStep {
+  id String @id @default(cuid())
+
+  run   AgenticRun @relation(fields: [runId], references: [id], onDelete: Restrict)
+  runId String
+
+  // Server-assigné, strictement croissant à partir de 1 par Run — jamais
+  // choisi par l'appelant (même discipline que DeliverableVersion.version,
+  // A25). @@unique ci-dessous est le filet de sécurité concurrence pour
+  // le compteur d'itérations (contrat A32 §9/§10).
+  stepIndex Int
+  stepType  AgenticStepType
+
+  // Conclusion d'observation, JAMAIS la chaîne de raisonnement brute d'un
+  // LLM (contrat A32 §5, "ne crée pas de stockage de chain of thought") —
+  // texte court, factuel, suffisant pour l'audit.
+  observation String
+
+  // Rempli uniquement pour PROPOSE_AND_ACT — jamais une conversion
+  // implicite en action (contrat A32 §20 : Proposal -> Authorization ->
+  // Action -> Verification, aucune étape sautée).
+  proposal String?
+
+  // Snapshot de la classification server-side AU MOMENT de cette Step
+  // (lib/control-plane/commitment.ts::classifierAction, B22, réutilisé
+  // tel quel — AUCUNE redéclaration d'enum, voir le champ lui-même qui
+  // référence directement ActionClass, B22).
+  actionClass ActionClass?
+
+  // Pointeur texte pur vers l'AuthorizationRequest (B22) créée pour cette
+  // Step, si la classification l'a exigé — jamais @relation.
+  authorizationRequestId String?
+
+  // Pointeur texte pur vers le Tool invoqué (registre CODE, lib/agentic/tools.ts)
+  // — jamais une table Tool (contrat A32 §17, préférence registre code-first).
+  toolId String?
+
+  verificationResult  String?
+  verificationPassed  Boolean?
+
+  statut      AgenticStepStatut @default(PENDING)
+  errorDetail String?
+
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  actionExecution ActionExecution?
+
+  @@unique([runId, stepIndex])
+  @@index([runId])
+}
+
+// Trace CHAQUE tentative d'invocation d'un Tool (contrat A32 §16) —
+// distincte d'Evidence (A26, réutilisée SANS modification lorsqu'une
+// action produit réellement une preuve métier, contrat A32 §24 : "ne crée
+// pas une nouvelle table Evidence générique", "ActionExecution != Evidence").
+// 1:1 avec AgenticStep dans ce lot (une Step propose au plus une action) —
+// relation conservée extensible (pas de contrainte empêchant une évolution
+// future), mais jamais exploitée au-delà de 1:1 ici.
+model ActionExecution {
+  id String @id @default(cuid())
+
+  step   AgenticStep @relation(fields: [stepId], references: [id], onDelete: Restrict)
+  stepId String      @unique
+  // Dénormalisé depuis step.runId — vérification directe sans jointure,
+  // même patron que SolutionOption.clientId (dénormalisation en lecture
+  // seule, jamais une seconde source de vérité : toujours écrit depuis
+  // step.runId par le service, jamais fourni par l'appelant).
+  runId String
+
+  toolId String
+
+  // Clé d'idempotence serveur = `${runId}:${stepIndex}:${toolId}` — jamais
+  // fournie par l'appelant (contrat A32 §16, A31 §14). @@unique est le
+  // filet de sécurité concurrence contre une double exécution.
+  idempotencyKey String @unique
+
+  // Entrée VALIDÉE/normalisée réellement transmise au Tool — jamais une
+  // copie brute non validée de l'entrée agent (contrat A32 §16/§30). Aucun
+  // secret/token/mot de passe n'est jamais stocké ici (rédaction obligatoire
+  // à la charge du Tool, même discipline que AuditEvent.metadata, B22, et
+  // EvenementSecurite.detail, B16).
+  inputNormalise Json?
+  resultat       Json?
+
+  statut      ActionExecutionStatut @default(PENDING)
+  erreur      String?
+  correlationId String
+
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  @@index([runId])
+  @@index([toolId])
 }

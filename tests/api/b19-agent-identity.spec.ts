@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 
 // COMPANY ATLAS — B19 : registre Agent Identity (GET /api/security/agents).
 // Couvre la checklist de tests de la directive B19 (Phase 11) : les 4
@@ -8,16 +9,27 @@ import { test, expect, APIRequestContext } from "@playwright/test";
 // tests/unit/agent-identity.spec.ts), aucune usurpation possible via une
 // entrée client arbitraire, RBAC (réservé ADMIN), absence de secret.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 const AGENTS_ATTENDUS = ["PRINCIPAL", "ATLAS_TALENT", "ATLAS_OS_SERVICES", "COMPANY_OS"].sort();
 
 test.describe("COMPANY ATLAS B19 — Agent Identity (API)", () => {
-  test("les 4 identités officielles existent, jamais un 5e agent (registre seedé par migration)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("les 4 identités officielles existent, jamais un 5e agent (registre seedé par migration)", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/security/agents");
     expect(reponse.ok(), await reponse.text()).toBeTruthy();
     const { agents } = await reponse.json();
@@ -26,8 +38,8 @@ test.describe("COMPANY ATLAS B19 — Agent Identity (API)", () => {
     expect(noms).toEqual(AGENTS_ATTENDUS);
   });
 
-  test("chaque identité possède un identifiant stable, identique d'un appel à l'autre", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("chaque identité possède un identifiant stable, identique d'un appel à l'autre", async () => {
+    let request = await connecter("ADMIN");
     const premier = await (await request.get("/api/security/agents")).json();
     const second = await (await request.get("/api/security/agents")).json();
     const idsA = premier.agents.map((a: { id: string; agent: string }) => `${a.agent}:${a.id}`).sort();
@@ -42,7 +54,7 @@ test.describe("COMPANY ATLAS B19 — Agent Identity (API)", () => {
   test("les identités agent sont structurellement distinctes d'un compte User humain (aucun champ d'authentification humaine)", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const { agents } = await (await request.get("/api/security/agents")).json();
     const champs = Object.keys(agents[0]);
     expect(champs.some((c) => /email|passwordHash|role\b|clientId|profilId/i.test(c))).toBe(false);
@@ -51,8 +63,8 @@ test.describe("COMPANY ATLAS B19 — Agent Identity (API)", () => {
     );
   });
 
-  test("toutes les identités seedées sont ACTIVE par défaut (aucune DISABLED sans décision explicite)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("toutes les identités seedées sont ACTIVE par défaut (aucune DISABLED sans décision explicite)", async () => {
+    let request = await connecter("ADMIN");
     const { agents } = await (await request.get("/api/security/agents")).json();
     expect(agents.every((a: { statut: string }) => a.statut === "ACTIVE")).toBe(true);
   });
@@ -60,7 +72,7 @@ test.describe("COMPANY ATLAS B19 — Agent Identity (API)", () => {
   test("une entrée client arbitraire (paramètre de requête) ne peut jamais usurper ou injecter une 5e identité", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const reponse = await request.get("/api/security/agents?agent=HACKER_AGENT&nomTechnique=usurpe");
     expect(reponse.ok()).toBeTruthy();
     const { agents } = await reponse.json();
@@ -71,7 +83,7 @@ test.describe("COMPANY ATLAS B19 — Agent Identity (API)", () => {
   test("aucune route de création n'existe : POST /api/security/agents est refusé (405/404), jamais un 5e agent créé", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const reponse = await request.post("/api/security/agents", {
       data: { agent: "NOUVEL_AGENT", nomTechnique: "intrus" },
     });
@@ -82,12 +94,12 @@ test.describe("COMPANY ATLAS B19 — Agent Identity (API)", () => {
     expect(agents.length).toBe(4);
   });
 
-  test("SÉCURITÉ : un CLIENT et un INGENIEUR n'ont jamais accès au registre Agent Identity (403)", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("SÉCURITÉ : un CLIENT et un INGENIEUR n'ont jamais accès au registre Agent Identity (403)", async () => {
+    let request = await connecter("CLIENT");
     const refusClient = await request.get("/api/security/agents");
     expect(refusClient.status()).toBe(403);
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     const refusIngenieur = await request.get("/api/security/agents");
     expect(refusIngenieur.status()).toBe(403);
   });
@@ -101,8 +113,8 @@ test.describe("COMPANY ATLAS B19 — Agent Identity (API)", () => {
     expect(reponse.status()).toBe(403);
   });
 
-  test("absence de secrets : aucun champ du registre n'accepte un identifiant de type mot de passe/token", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("absence de secrets : aucun champ du registre n'accepte un identifiant de type mot de passe/token", async () => {
+    let request = await connecter("ADMIN");
     const { agents } = await (await request.get("/api/security/agents")).json();
     const champs = Object.keys(agents[0]);
     expect(champs.some((c) => /password|motdepasse|token|secret|apikey/i.test(c))).toBe(false);

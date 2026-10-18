@@ -29,7 +29,12 @@ export default function ImporterCVPage() {
       setError(data.error ?? "Échec de l'import.");
       return;
     }
-    router.push("/ingenieur/cv/verifier");
+    // ATLAS ENGINEER INTELLIGENCE PROFILE — Phase 1 (28/09/2026) : si
+    // l'extraction IA a échoué (clé API absente, erreur réseau...), le
+    // profil arrive avec des champs vides — la page de profil doit pouvoir
+    // le dire explicitement plutôt que de laisser croire que l'IA a
+    // simplement trouvé un CV sans information (voir lib/cv-extraction.ts).
+    router.push(data.extractionReussie ? "/ingenieur/cv/verifier" : "/ingenieur/cv/verifier?extraction=echec");
   }
 
   return (

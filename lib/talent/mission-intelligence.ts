@@ -33,7 +33,7 @@ export type MetriqueSimple<T> = {
 export type Tendance = "HAUSSE" | "BAISSE" | "STABLE" | "INCONNUE";
 
 export type MissionPourAnalytics = {
-  statut: string; // "Terminée" | "En cours" | "Annulée" (Mission.statut, texte libre existant)
+  statut: string; // "TERMINEE" | "EN_COURS" | "ANNULEE" (Mission.statut, enum StatutMission depuis Lot 16.2)
   nbJours: number;
   createdAt: Date;
 };
@@ -99,9 +99,9 @@ function moyenne(valeurs: number[]): number {
 
 function construireBlocActivite(missions: MissionPourAnalytics[]): BlocActivite {
   const total = missions.length;
-  const terminees = missions.filter((m) => m.statut === "Terminée").length;
-  const enCours = missions.filter((m) => m.statut === "En cours").length;
-  const annulees = missions.filter((m) => m.statut === "Annulée").length;
+  const terminees = missions.filter((m) => m.statut === "TERMINEE").length;
+  const enCours = missions.filter((m) => m.statut === "EN_COURS").length;
+  const annulees = missions.filter((m) => m.statut === "ANNULEE").length;
   const cloturees = terminees + annulees;
   const tauxReussite: MetriqueSimple<number> =
     cloturees === 0
@@ -115,7 +115,7 @@ function construireBlocActivite(missions: MissionPourAnalytics[]): BlocActivite 
 }
 
 function construireBlocDuree(missions: MissionPourAnalytics[]): BlocDuree {
-  const terminees = missions.filter((m) => m.statut === "Terminée");
+  const terminees = missions.filter((m) => m.statut === "TERMINEE");
   if (terminees.length === 0) {
     return { moyenneJours: { valeur: null, statut: "INSUFFISANTE", echantillon: 0 }, minJours: null, maxJours: null };
   }

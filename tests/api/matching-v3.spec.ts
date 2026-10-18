@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 
 // ATLAS TALENT — Matching Engine V3 : Context & Trust (Batch 7) — chemin
 // API : RBAC, isolation, absence de crash, déterminisme, non-régression du
@@ -9,13 +10,24 @@ import { test, expect, APIRequestContext } from "@playwright/test";
 // GET .../matching-v3 recalcule le Matching Engine V2 à la volée, en
 // lecture seule, exactement comme GET .../recommandations.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function creerDemande(request: APIRequestContext, description: string) {
-  await connecter(request, "client-demo@example.com");
+  request = await connecter("CLIENT");
   const creation = await request.post("/api/talent/demandes", { data: { description } });
   expect(creation.status()).toBe(201);
   return creation.json();
@@ -25,7 +37,7 @@ test.describe("ATLAS TALENT — Matching Engine V3 : Context & Trust — API", (
   test("22. réponse 200, structure cohérente, aucun crash sur une demande fraîchement créée", async ({ request }) => {
     const demande = await creerDemande(request, "Recherche un développeur Java, budget 700 EUR/jour.");
 
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const reponse = await request.get(`/api/talent/demandes/${demande.id}/matching-v3`);
     expect(reponse.ok(), await reponse.text()).toBeTruthy();
     const { demandeId, matchingV3 } = await reponse.json();
@@ -42,7 +54,7 @@ test.describe("ATLAS TALENT — Matching Engine V3 : Context & Trust — API", (
 
   test("23. le Matching V2 (GET/POST .../matching) reste inchangé après consultation de .../matching-v3", async ({ request }) => {
     const demande = await creerDemande(request, "Recherche un développeur, budget 600 EUR/jour.");
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     await request.patch(`/api/talent/demandes/${demande.id}`, { data: { competencesExtraites: ["Java"] } });
 
     // POST .../matching (V2, existant, jamais modifié par ce Batch) — calcule
@@ -72,20 +84,20 @@ test.describe("ATLAS TALENT — Matching Engine V3 : Context & Trust — API", (
     const refusClient = await request.get(`/api/talent/demandes/${demande.id}/matching-v3`);
     expect(refusClient.status()).toBe(403);
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     const refusIngenieur = await request.get(`/api/talent/demandes/${demande.id}/matching-v3`);
     expect(refusIngenieur.status()).toBe(403);
   });
 
-  test("25. demande inexistante : 404, jamais un crash serveur", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("25. demande inexistante : 404, jamais un crash serveur", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/talent/demandes/inexistante-xyz/matching-v3");
     expect(reponse.status()).toBe(404);
   });
 
   test("26. déterminisme : deux appels consécutifs sur la même demande renvoient le même résultat", async ({ request }) => {
     const demande = await creerDemande(request, "Recherche un développeur, budget 500 EUR/jour.");
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const r1 = await request.get(`/api/talent/demandes/${demande.id}/matching-v3`);
     const r2 = await request.get(`/api/talent/demandes/${demande.id}/matching-v3`);
     const j1 = await r1.json();

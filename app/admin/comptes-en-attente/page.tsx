@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
 type CompteEnAttente = {
   id: string;
@@ -40,15 +41,6 @@ export default function ComptesEnAttentePage() {
   const pageEffective = Math.min(page, nombrePages);
   const comptesPage = comptes.slice((pageEffective - 1) * PAR_PAGE, pageEffective * PAR_PAGE);
 
-  async function valider(userId: string) {
-    await fetch("/api/comptes", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId }),
-    });
-    charger();
-  }
-
   return (
     <div>
       <h1>Comptes en attente de validation</h1>
@@ -87,7 +79,17 @@ export default function ComptesEnAttentePage() {
                 Le type de contrat et le TJM seront déterminés après import et validation de son CV.
               </p>
             )}
-            <button onClick={() => valider(c.id)} style={{ marginTop: 8 }}>Valider ce compte</button>
+            {/* ENGINEER ACCESS & TRUST (09/10/2026) : la décision
+                (approuver/refuser/demander des informations) se prend
+                désormais depuis le dossier complet (identité, candidature,
+                Access Integrity) plutôt qu'en un clic aveugle depuis cette
+                liste — contrat §13/§14. */}
+            <Link
+              href={`/admin/comptes-en-attente/${c.id}`}
+              style={{ marginTop: 8, display: "inline-block", fontSize: 13, color: "#2a4ab0" }}
+            >
+              Examiner le dossier →
+            </Link>
           </li>
           );
         })}

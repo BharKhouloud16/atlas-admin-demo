@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 
 // COMPANY ATLAS — CLIENT COMPLETION PROGRAM (16/09/2026).
@@ -12,9 +13,20 @@ import { prisma } from "@/lib/prisma";
 // donc le comportement "best-effort, jamais bloquant" plutôt qu'une
 // écriture réussie, qui n'est vérifiable qu'en environnement Vercel réel.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function creerProfil() {
@@ -30,8 +42,8 @@ async function creerDemande(clientId: string, extra: Record<string, unknown> = {
 }
 
 test.describe("CLIENT COMPLETION — C4 : GET /api/client/missions expose le contexte LOT6", () => {
-  test("dateDebut/dateFin/modeTravail/sourceDemande sont présents, jamais les tarifs", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("dateDebut/dateFin/modeTravail/sourceDemande sont présents, jamais les tarifs", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const profil = await creerProfil();
     const demande = await creerDemande(client!.id, { titre: "Besoin CLIENT-CONNECT C4", mobilite: "Remote" });
@@ -42,7 +54,7 @@ test.describe("CLIENT COMPLETION — C4 : GET /api/client/missions expose le con
     expect(creation.status(), await creation.text()).toBe(201);
     const missionAdmin = await creation.json();
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const liste = await request.get("/api/client/missions");
     expect(liste.ok()).toBeTruthy();
     const missions = await liste.json();
@@ -58,14 +70,14 @@ test.describe("CLIENT COMPLETION — C4 : GET /api/client/missions expose le con
     expect(mission).not.toHaveProperty("ca");
   });
 
-  test("mission sans sourceDemandeId : sourceDemande/dateDebut/modeTravail restent null, jamais une valeur inventée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("mission sans sourceDemandeId : sourceDemande/dateDebut/modeTravail restent null, jamais une valeur inventée", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const profil = await creerProfil();
     const creation = await request.post("/api/missions", { data: { clientId: client!.id, profilId: profil.id, nbJours: 5, tjmVente: 500 } });
     const missionAdmin = await creation.json();
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const liste = await request.get("/api/client/missions");
     const missions = await liste.json();
     const mission = missions.find((m: { id: string }) => m.id === missionAdmin.id);
@@ -76,8 +88,8 @@ test.describe("CLIENT COMPLETION — C4 : GET /api/client/missions expose le con
 });
 
 test.describe("CLIENT COMPLETION — C6 : contrats générés, Document, et téléchargement authentifié", () => {
-  test("génération contrat_prestation/nda (client) : réponse inchangée, persistance best-effort sans jamais bloquer", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("génération contrat_prestation/nda (client) : réponse inchangée, persistance best-effort sans jamais bloquer", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const profil = await creerProfil();
     const creation = await request.post("/api/missions", { data: { clientId: client!.id, profilId: profil.id, nbJours: 3, tjmVente: 500 } });
@@ -97,8 +109,8 @@ test.describe("CLIENT COMPLETION — C6 : contrats générés, Document, et tél
     expect(apres).toBeGreaterThanOrEqual(avant);
   });
 
-  test("génération d'un modèle interne (cdi/freelance/portage) : jamais persisté en Document visible client", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("génération d'un modèle interne (cdi/freelance/portage) : jamais persisté en Document visible client", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const profil = await creerProfil();
     const creation = await request.post("/api/missions", { data: { clientId: client!.id, profilId: profil.id, nbJours: 3, tjmVente: 500 } });
@@ -117,8 +129,8 @@ test.describe("CLIENT COMPLETION — C6 : contrats générés, Document, et tél
     expect(documentsInternes).toBe(0);
   });
 
-  test("GET /api/client/documents n'expose jamais fileUrl (URL de stockage privée)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("GET /api/client/documents n'expose jamais fileUrl (URL de stockage privée)", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const profil = await creerProfil();
     const mission = await prisma.mission.create({ data: { clientId: client!.id, profilId: profil.id, nbJours: 3, tjmVente: 500 } });
@@ -126,7 +138,7 @@ test.describe("CLIENT COMPLETION — C6 : contrats générés, Document, et tél
       data: { titre: `Contrat de test ${Date.now()}`, type: "CONTRAT", fileUrl: "https://blob.example/documents/secret-token-path.docx", missionId: mission.id, clientId: client!.id },
     });
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const liste = await request.get("/api/client/documents");
     expect(liste.ok()).toBeTruthy();
     const documents = await liste.json();
@@ -147,12 +159,12 @@ test.describe("CLIENT COMPLETION — C6 : contrats générés, Document, et tél
       const sansSession = await request.get(`/api/client/documents/${idQuelconque}/fichier`);
       expect(sansSession.status()).toBe(403);
 
-      await connecter(request, "admin-demo@example.com");
+      request = await connecter("ADMIN");
       const commeAdmin = await request.get(`/api/client/documents/${idQuelconque}/fichier`);
       expect(commeAdmin.status()).toBe(403);
     });
 
-    test("IDOR : le document d'un autre client renvoie 404, jamais une fuite d'existence", async ({ request }) => {
+    test("IDOR : le document d'un autre client renvoie 404, jamais une fuite d'existence", async () => {
       const autreClient = await prisma.client.create({ data: { nom: `Client CLIENT-CONNECT IDOR ${Date.now()}` } });
       const profil = await creerProfil();
       const mission = await prisma.mission.create({ data: { clientId: autreClient.id, profilId: profil.id, nbJours: 3, tjmVente: 500 } });
@@ -160,19 +172,19 @@ test.describe("CLIENT COMPLETION — C6 : contrats générés, Document, et tél
         data: { titre: "Contrat confidentiel d'un autre client", type: "CONTRAT", fileUrl: "https://blob.example/documents/x.docx", missionId: mission.id, clientId: autreClient.id },
       });
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const tentative = await request.get(`/api/client/documents/${documentEtranger.id}/fichier`);
       expect(tentative.status()).toBe(404);
     });
 
-    test("document inexistant -> 404", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("document inexistant -> 404", async () => {
+      let request = await connecter("CLIENT");
       const reponse = await request.get("/api/client/documents/inexistant-xyz/fichier");
       expect(reponse.status()).toBe(404);
     });
 
-    test("document du client courant, stockage indisponible dans cet environnement -> 503 géré proprement (jamais un crash)", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("document du client courant, stockage indisponible dans cet environnement -> 503 géré proprement (jamais un crash)", async () => {
+      let request = await connecter("ADMIN");
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const profil = await creerProfil();
       const mission = await prisma.mission.create({ data: { clientId: client!.id, profilId: profil.id, nbJours: 3, tjmVente: 500 } });
@@ -180,7 +192,7 @@ test.describe("CLIENT COMPLETION — C6 : contrats générés, Document, et tél
         data: { titre: "Contrat de test", type: "CONTRAT", fileUrl: "https://blob.example/documents/inaccessible.docx", missionId: mission.id, clientId: client!.id },
       });
 
-      await connecter(request, "client-demo@example.com");
+      request = await connecter("CLIENT");
       const reponse = await request.get(`/api/client/documents/${document.id}/fichier`);
       // Ownership déjà vérifiée avant l'appel au stockage : le statut
       // exact dépend uniquement de la disponibilité du stockage dans cet
@@ -197,8 +209,8 @@ test.describe("CLIENT COMPLETION — C7 : facture générée, persistance best-e
     return profils.find((p: { nom: string }) => p.nom === "Ingénieur Démo").id;
   }
 
-  test("le circuit CRA -> double validation -> facture reste inchangé même si la persistance échoue silencieusement", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("le circuit CRA -> double validation -> facture reste inchangé même si la persistance échoue silencieusement", async () => {
+    let request = await connecter("ADMIN");
     const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
     const profilId = await idProfilIngenieurDemo(request);
     const creation = await request.post("/api/missions", {
@@ -206,20 +218,20 @@ test.describe("CLIENT COMPLETION — C7 : facture générée, persistance best-e
     });
     const mission = await creation.json();
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     const soumission = await request.post("/api/feuilles-de-temps", {
       data: { missionId: mission.id, mois: "2027-04", joursTravailles: 5, heuresSupplementaires: 0, soumettre: true },
     });
     expect(soumission.status(), await soumission.text()).toBe(201);
     const feuille = await soumission.json();
 
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     await request.patch("/api/feuilles-de-temps", { data: { id: feuille.id, action: "validerAdmin" } });
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     await request.patch("/api/feuilles-de-temps", { data: { id: feuille.id, action: "validerClient" } });
 
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const avant = await prisma.document.count({ where: { missionId: mission.id, type: "FACTURE" } });
     const facture = await request.get(`/api/feuilles-de-temps/facture?feuilleId=${feuille.id}`);
     expect(facture.status(), await facture.text()).toBe(200);

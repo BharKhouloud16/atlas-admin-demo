@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { DISPONIBILITES, STATUTS_EN_MISSION, MISSIONS_APRES, PREAVIS } from "@/lib/disponibilite";
 import { PAYS, NATIONALITES, DEVISES, calculerRegimeSuggere } from "@/lib/localisation";
 import { COMPETENCES_GROUPES } from "@/lib/competences";
@@ -66,9 +67,6 @@ type ProfilData = {
   competences: string[];
   entretiensRealises: number;
   realisations: Realisation[] | null;
-  videoUrl: string | null;
-  videoNomFichier: string | null;
-  videoImporteLe: string | null;
   evaluationMoyenne: number | null;
   nombreEvaluations: number;
   missionsTerminees: number;
@@ -96,7 +94,7 @@ export default function EspaceIngenieur() {
     return <main style={{ maxWidth: 900, margin: "60px auto", padding: 24 }}>Chargement...</main>;
   }
 
-  const missionActive = data.missions.some((m) => m.statut === "En cours");
+  const missionActive = data.missions.some((m) => m.statut === "EN_COURS");
 
   return (
     <>
@@ -117,7 +115,15 @@ export default function EspaceIngenieur() {
             Espace Ingénieur
           </span>
         </div>
-        <BoutonDeconnexion />
+        {/* DB-01 — Delivery UI (08/10/2026) : seul point d'entrée vers
+            /ingenieur/livraison — EspaceIngenieur ne liait auparavant vers
+            aucune autre page (constat de l'audit Product V1, DB-01). */}
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <Link href="/ingenieur/livraison" style={{ fontSize: 13, fontWeight: 600, color: bleu }}>
+            Mon travail
+          </Link>
+          <BoutonDeconnexion />
+        </div>
       </header>
       <main style={{ maxWidth: 1000, margin: "40px auto", padding: "0 24px", display: "flex", gap: 32 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -265,8 +271,8 @@ function BadgeConfianceIngenieur({ data }: { data: ProfilData }) {
 // Chiffres tirés des missions réellement enregistrées côté Atlas (pas des
 // déclarations de l'ingénieur) + entretiensRealises, saisi par l'Admin.
 function Statistiques({ data }: { data: ProfilData }) {
-  const missionsValidees = data.missions.filter((m) => m.statut === "Terminée").length;
-  const missionsEnCours = data.missions.filter((m) => m.statut === "En cours").length;
+  const missionsValidees = data.missions.filter((m) => m.statut === "TERMINEE").length;
+  const missionsEnCours = data.missions.filter((m) => m.statut === "EN_COURS").length;
   const membreDepuis = new Date(data.createdAt);
   const moisAnciennete = Math.max(
     0,
@@ -322,13 +328,6 @@ function OngletProfil({ data, recharger }: { data: ProfilData; recharger: () => 
           Réalisations
         </p>
         <RealisationsSection data={data} recharger={recharger} />
-      </div>
-
-      <div>
-        <p style={{ fontSize: 12, textTransform: "uppercase", color: "#888", marginBottom: 8 }}>
-          Vidéo de présentation
-        </p>
-        <VideoPresentationSection data={data} recharger={recharger} />
       </div>
 
       {categories.map((cat) => (
@@ -456,91 +455,6 @@ function RealisationsSection({ data, recharger }: { data: ProfilData; recharger:
           </button>
         )}
       </div>
-    </div>
-  );
-}
-
-const TAILLE_MAX_VIDEO_OCTETS = 80 * 1024 * 1024;
-
-// Courte vidéo de présentation (60-90s conseillé), façon "CV vidéo" :
-// humanise le profil avant l'appel client, en complément du portfolio de
-// réalisations ci-dessus. Upload immédiat (comme le CV), remplace la vidéo
-// existante s'il y en a une. Visible par l'Admin (panneau de détail dans
-// /admin/profils) et par un Client ayant une mission avec ce profil (voir
-// /api/ingenieur/video/fichier).
-function VideoPresentationSection({ data, recharger }: { data: ProfilData; recharger: () => void }) {
-  const [envoi, setEnvoi] = useState(false);
-  const [erreur, setErreur] = useState("");
-
-  async function importer(e: React.ChangeEvent<HTMLInputElement>) {
-    const fichier = e.target.files?.[0];
-    e.target.value = "";
-    if (!fichier) return;
-    setErreur("");
-    if (fichier.size > TAILLE_MAX_VIDEO_OCTETS) {
-      setErreur("Fichier trop volumineux (80 Mo maximum).");
-      return;
-    }
-    setEnvoi(true);
-    const form = new FormData();
-    form.append("video", fichier);
-    const res = await fetch("/api/ingenieur/video", { method: "POST", body: form });
-    setEnvoi(false);
-    if (!res.ok) {
-      const d = await res.json().catch(() => ({}));
-      setErreur(d.error ?? "Échec de l'import.");
-      return;
-    }
-    recharger();
-  }
-
-  async function supprimer() {
-    setErreur("");
-    setEnvoi(true);
-    const res = await fetch("/api/ingenieur/video", { method: "DELETE" });
-    setEnvoi(false);
-    if (!res.ok) {
-      const d = await res.json().catch(() => ({}));
-      setErreur(d.error ?? "Erreur, réessayez.");
-      return;
-    }
-    recharger();
-  }
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>
-        Une courte vidéo (60 à 90 secondes, MP4/WebM/MOV, 80 Mo max) où vous vous présentez — visible uniquement par
-        l&apos;Admin et par les clients avec qui vous avez une mission en cours ou passée.
-      </p>
-      {data.videoUrl ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <video
-            src="/api/ingenieur/video/fichier"
-            controls
-            style={{ maxWidth: 360, borderRadius: 8, border: `1px solid ${bordure}` }}
-          />
-          <div style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 12, color: "#888" }}>
-            <span>
-              {data.videoNomFichier} — importée le{" "}
-              {data.videoImporteLe ? new Date(data.videoImporteLe).toLocaleDateString("fr-FR") : "—"}
-            </span>
-            <button onClick={supprimer} disabled={envoi} style={{ fontSize: 12, padding: "5px 10px" }}>
-              Supprimer
-            </button>
-          </div>
-        </div>
-      ) : (
-        <input
-          type="file"
-          accept="video/mp4,video/webm,video/quicktime"
-          onChange={importer}
-          disabled={envoi}
-          style={{ border: `1px solid ${bordure}`, borderRadius: 8, padding: 10, fontSize: 13 }}
-        />
-      )}
-      {envoi && <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Envoi en cours...</p>}
-      {erreur && <p style={{ color: "crimson", fontSize: 13, margin: 0 }}>{erreur}</p>}
     </div>
   );
 }
@@ -990,6 +904,13 @@ const LABEL_TYPE_CONTRAT: Record<string, string> = {
 };
 
 function OngletHistorique({ missions, typeContrat }: { missions: Mission[]; typeContrat: string | null }) {
+  // PHASE 2B-1 — section légère "Compétences mobilisées" par mission,
+  // repliée par défaut (pas de nouvel écran, pas de dashboard — mandat
+  // section 18) : une mission sélectionnée déploie son panneau juste
+  // en-dessous du tableau, même idiome que la console Admin
+  // (app/admin/profils/[id]/page.tsx, clic sur une ligne -> détail).
+  const [missionOuverte, setMissionOuverte] = useState<string | null>(null);
+
   if (missions.length === 0) {
     return (
       <p style={{ fontSize: 14, color: "#4b5567" }}>
@@ -1013,6 +934,7 @@ function OngletHistorique({ missions, typeContrat }: { missions: Mission[]; type
             <th style={{ padding: "6px 8px" }}>Fin (ou prévisionnelle)</th>
             <th style={{ padding: "6px 8px" }}>Jours</th>
             <th style={{ padding: "6px 8px" }}>Évaluation client</th>
+            <th style={{ padding: "6px 8px" }}>Compétences</th>
           </tr>
         </thead>
         <tbody>
@@ -1024,7 +946,7 @@ function OngletHistorique({ missions, typeContrat }: { missions: Mission[]; type
               <td style={{ padding: "6px 8px" }}>{typeContrat ? LABEL_TYPE_CONTRAT[typeContrat] ?? typeContrat : "—"}</td>
               <td style={{ padding: "6px 8px" }}>
                 {m.statut}
-                {m.statut === "Terminée" && (
+                {m.statut === "TERMINEE" && (
                   <span
                     title="Mission menée à terme avec Atlas Quality Partners, historique vérifié — à distinguer de l'expérience déclarée depuis le CV"
                     style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: "#16a34a" }}
@@ -1035,7 +957,7 @@ function OngletHistorique({ missions, typeContrat }: { missions: Mission[]; type
               </td>
               <td style={{ padding: "6px 8px" }}>{new Date(m.createdAt).toLocaleDateString("fr-FR")}</td>
               <td style={{ padding: "6px 8px" }}>
-                {m.statut === "En cours" ? "En cours" : new Date(m.updatedAt).toLocaleDateString("fr-FR")}
+                {m.statut === "EN_COURS" ? "En cours" : new Date(m.updatedAt).toLocaleDateString("fr-FR")}
               </td>
               <td style={{ padding: "6px 8px" }}>{m.nbJours}</td>
               <td style={{ padding: "6px 8px" }}>
@@ -1048,10 +970,174 @@ function OngletHistorique({ missions, typeContrat }: { missions: Mission[]; type
                   <span style={{ color: "#aaa" }}>—</span>
                 )}
               </td>
+              <td style={{ padding: "6px 8px" }}>
+                <button
+                  onClick={() => setMissionOuverte((v) => (v === m.id ? null : m.id))}
+                  style={{ fontSize: 12, padding: "2px 8px", border: "1px solid #e4e7ee", background: "#fff", cursor: "pointer" }}
+                >
+                  {missionOuverte === m.id ? "Fermer" : "Proposer / voir"}
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {missionOuverte && <PropositionsCompetencesMission missionId={missionOuverte} />}
+    </div>
+  );
+}
+
+// PHASE 2B-1 — MISSION SKILL PROPOSAL — section Ingénieur (mandat section
+// 18). Volontairement minimale : proposer une compétence, voir l'état de
+// ses propositions déjà soumises, les modifier tant qu'EN_ATTENTE. Jamais
+// de validation ici (réservée Admin, voir app/admin/profils/[id]/page.tsx)
+// — une proposition reste une proposition tant qu'un Admin ne l'a pas
+// explicitement décidée.
+type PropositionCompetenceIngenieur = {
+  id: string;
+  competence: string;
+  niveauPropose: number | null;
+  contexte: string | null;
+  statut: "EN_ATTENTE" | "VALIDEE" | "REFUSEE";
+  motifRefus: string | null;
+  createdAt: string;
+};
+
+const LABEL_STATUT_PROPOSITION_INGENIEUR: Record<PropositionCompetenceIngenieur["statut"], string> = {
+  EN_ATTENTE: "À examiner par l'Admin",
+  VALIDEE: "Validée",
+  REFUSEE: "Refusée",
+};
+
+function PropositionsCompetencesMission({ missionId }: { missionId: string }) {
+  const [propositions, setPropositions] = useState<PropositionCompetenceIngenieur[] | null>(null);
+  const [competence, setCompetence] = useState("");
+  const [niveauPropose, setNiveauPropose] = useState("");
+  const [contexte, setContexte] = useState("");
+  const [envoi, setEnvoi] = useState(false);
+  const [erreur, setErreur] = useState("");
+  const [modificationId, setModificationId] = useState<string | null>(null);
+
+  function charger() {
+    fetch(`/api/missions/${missionId}/skill-proposals`)
+      .then((r) => (r.ok ? r.json() : { propositions: [] }))
+      .then((d) => setPropositions(d.propositions ?? []))
+      .catch(() => setPropositions([]));
+  }
+
+  useEffect(() => {
+    charger();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [missionId]);
+
+  async function proposer(e: React.FormEvent) {
+    e.preventDefault();
+    if (!competence) {
+      setErreur("Choisissez une compétence.");
+      return;
+    }
+    setErreur("");
+    setEnvoi(true);
+    const res = await fetch(`/api/missions/${missionId}/skill-proposals`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        competence,
+        niveauPropose: niveauPropose ? Number(niveauPropose) : undefined,
+        contexte: contexte.trim() || undefined,
+      }),
+    });
+    setEnvoi(false);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setErreur(data.error ?? "Échec de la proposition.");
+      return;
+    }
+    setCompetence("");
+    setNiveauPropose("");
+    setContexte("");
+    charger();
+  }
+
+  async function modifierNiveau(propositionId: string, nouveauNiveau: string) {
+    setModificationId(propositionId);
+    await fetch(`/api/missions/${missionId}/skill-proposals/${propositionId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ niveauPropose: nouveauNiveau ? Number(nouveauNiveau) : null }),
+    });
+    setModificationId(null);
+    charger();
+  }
+
+  return (
+    <div style={{ border: "1px solid #e4e7ee", borderTop: "none", padding: 14, background: "#fafbfc" }}>
+      <p style={{ margin: "0 0 10px", fontWeight: 600, fontSize: 13, color: "#1f2937" }}>Compétences mobilisées sur cette mission</p>
+
+      {propositions === null ? (
+        <p style={{ fontSize: 12, color: "#888" }}>Chargement...</p>
+      ) : propositions.length === 0 ? (
+        <p style={{ fontSize: 12, color: "#888", marginBottom: 12 }}>Aucune compétence proposée pour l&apos;instant.</p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+          {propositions.map((p) => (
+            <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, fontSize: 12, border: "1px solid #eee", borderRadius: 6, padding: 8, background: "#fff" }}>
+              <div>
+                <strong>{p.competence}</strong>
+                {p.statut === "EN_ATTENTE" ? (
+                  <>
+                    {" "}— niveau proposé :{" "}
+                    <input
+                      type="number"
+                      min={1}
+                      max={5}
+                      defaultValue={p.niveauPropose ?? ""}
+                      onBlur={(e) => e.target.value !== String(p.niveauPropose ?? "") && modifierNiveau(p.id, e.target.value)}
+                      disabled={modificationId === p.id}
+                      style={{ width: 44, padding: 2 }}
+                    />
+                  </>
+                ) : (
+                  p.niveauPropose != null && <span> — niveau proposé : {p.niveauPropose}</span>
+                )}
+                {p.contexte && <div style={{ color: "#666", marginTop: 2 }}>{p.contexte}</div>}
+                {p.statut === "REFUSEE" && p.motifRefus && <div style={{ color: "#b91c1c", marginTop: 2 }}>Motif : {p.motifRefus}</div>}
+              </div>
+              <span style={{ color: p.statut === "VALIDEE" ? "#16a34a" : p.statut === "REFUSEE" ? "#b91c1c" : "#d97706", fontWeight: 600, whiteSpace: "nowrap" }}>
+                {LABEL_STATUT_PROPOSITION_INGENIEUR[p.statut]}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <form onSubmit={proposer} style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+        <label style={{ fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
+          Compétence
+          <select value={competence} onChange={(e) => setCompetence(e.target.value)} style={{ padding: 6, minWidth: 180 }}>
+            <option value="">Choisir...</option>
+            {COMPETENCES_GROUPES.map((groupe) => (
+              <optgroup key={groupe.categorie} label={groupe.categorie}>
+                {groupe.competences.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </label>
+        <label style={{ fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
+          Niveau (optionnel)
+          <input type="number" min={1} max={5} value={niveauPropose} onChange={(e) => setNiveauPropose(e.target.value)} style={{ padding: 6, width: 70 }} />
+        </label>
+        <label style={{ fontSize: 12, display: "flex", flexDirection: "column", gap: 4, flex: 1, minWidth: 200 }}>
+          Contexte (optionnel)
+          <input value={contexte} onChange={(e) => setContexte(e.target.value)} style={{ padding: 6 }} />
+        </label>
+        <button type="submit" disabled={envoi} style={{ padding: "7px 14px", fontSize: 12, fontWeight: 600 }}>
+          {envoi ? "Envoi..." : "Proposer"}
+        </button>
+      </form>
+      {erreur && <p style={{ fontSize: 12, color: "#b91c1c", marginTop: 8 }}>{erreur}</p>}
     </div>
   );
 }
@@ -1359,7 +1445,7 @@ function OngletEmploiDuTemps({ missionActive }: { missionActive: boolean }) {
   }
   if (chargement) return <p style={{ fontSize: 14, color: "#888" }}>Chargement...</p>;
 
-  const missionsEnCours = missions.filter((m) => m.statut === "En cours");
+  const missionsEnCours = missions.filter((m) => m.statut === "EN_COURS");
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>

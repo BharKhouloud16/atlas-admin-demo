@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 
 // COMPANY ATLAS — V2.2-B (17/09/2026) : API Billing + Fiscal & Regulatory
@@ -11,9 +12,20 @@ import { prisma } from "@/lib/prisma";
 // (V2.1-C/E) et tests/api/facturation-devise.spec.ts (route pré-existante,
 // non modifiée par ce lot — toujours verte, non touchée ici).
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 // FIX (17/09/2026) — Ce fichier appelait initialement /api/auth/login à
@@ -106,7 +118,7 @@ async function feuilleDeTest(
 // par étape.
 async function factureEnvoyeeDeTest(request: APIRequestContext, mois: string, options: { tjmVente?: number; deviseVente?: string } = {}) {
   const { feuilleDeTempsId, montantTTCAttendu, devise } = await feuilleDeTest(mois, options);
-  await connecter(request, "admin-demo@example.com");
+  request = await connecter("ADMIN");
   const creation = await request.post("/api/factures", { data: { feuilleDeTempsId } });
   expect(creation.status()).toBe(201);
   const { facture } = await creation.json();
@@ -117,9 +129,9 @@ async function factureEnvoyeeDeTest(request: APIRequestContext, mois: string, op
 }
 
 test.describe("V2.2-B — Création de Facture (POST /api/factures)", () => {
-  test("Admin peut créer une Facture depuis un CRA ValideeClient", async ({ request }) => {
+  test("Admin peut créer une Facture depuis un CRA ValideeClient", async () => {
     const { feuilleDeTempsId, montantTTCAttendu, devise } = await feuilleDeTest("2026-04");
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const reponse = await request.post("/api/factures", { data: { feuilleDeTempsId } });
     expect(reponse.status()).toBe(201);
     const { facture, dejaExistante } = await reponse.json();
@@ -130,9 +142,9 @@ test.describe("V2.2-B — Création de Facture (POST /api/factures)", () => {
     expect(facture.dateEmission).toBeNull(); // pas encore validée
   });
 
-  test("un CRA pas encore ValideeClient (ex. ValideeAdmin seulement) -> 409, aucune Facture créée", async ({ request }) => {
+  test("un CRA pas encore ValideeClient (ex. ValideeAdmin seulement) -> 409, aucune Facture créée", async () => {
     const { feuilleDeTempsId } = await feuilleDeTest("2026-05", { statut: "ValideeAdmin" });
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
 
     const avant = await prisma.facture.count();
     const reponse = await request.post("/api/factures", { data: { feuilleDeTempsId } });
@@ -140,9 +152,9 @@ test.describe("V2.2-B — Création de Facture (POST /api/factures)", () => {
     expect(await prisma.facture.count()).toBe(avant);
   });
 
-  test("Idempotence — un second appel pour la même FeuilleDeTemps renvoie la même Facture (200, jamais un doublon)", async ({ request }) => {
+  test("Idempotence — un second appel pour la même FeuilleDeTemps renvoie la même Facture (200, jamais un doublon)", async () => {
     const { feuilleDeTempsId } = await feuilleDeTest("2026-06");
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const premier = await request.post("/api/factures", { data: { feuilleDeTempsId } });
     const premiereFacture = await premier.json();
 
@@ -155,9 +167,9 @@ test.describe("V2.2-B — Création de Facture (POST /api/factures)", () => {
     expect(await prisma.facture.count({ where: { feuilleDeTempsId } })).toBe(1);
   });
 
-  test("Concurrence — deux créations simultanées pour la même FeuilleDeTemps -> une seule Facture en base", async ({ request }) => {
+  test("Concurrence — deux créations simultanées pour la même FeuilleDeTemps -> une seule Facture en base", async () => {
     const { feuilleDeTempsId } = await feuilleDeTest("2026-07");
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const [r1, r2] = await Promise.all([
       request.post("/api/factures", { data: { feuilleDeTempsId } }),
       request.post("/api/factures", { data: { feuilleDeTempsId } }),
@@ -166,13 +178,13 @@ test.describe("V2.2-B — Création de Facture (POST /api/factures)", () => {
     expect(await prisma.facture.count({ where: { feuilleDeTempsId } })).toBe(1);
   });
 
-  test("RBAC — INGENIEUR et Client ne peuvent jamais créer de Facture, non authentifié non plus", async ({ request }) => {
+  test("RBAC — INGENIEUR et Client ne peuvent jamais créer de Facture, non authentifié non plus", async () => {
     const { feuilleDeTempsId } = await feuilleDeTest("2026-08");
 
-    await connecter(request, "ingenieur-demo@example.com");
+    let request = await connecter("INGENIEUR");
     expect((await request.post("/api/factures", { data: { feuilleDeTempsId } })).status()).toBe(403);
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     expect((await request.post("/api/factures", { data: { feuilleDeTempsId } })).status()).toBe(403);
 
     expect(await prisma.facture.count({ where: { feuilleDeTempsId } })).toBe(0);
@@ -185,29 +197,29 @@ test.describe("V2.2-B — RBAC / IDOR sur la liste et le détail (GET /api/factu
     expect((await request.get("/api/factures/inexistant")).status()).toBe(403);
   });
 
-  test("INGENIEUR -> 403 sur la liste", async ({ request }) => {
-    await connecter(request, "ingenieur-demo@example.com");
+  test("INGENIEUR -> 403 sur la liste", async () => {
+    let request = await connecter("INGENIEUR");
     expect((await request.get("/api/factures")).status()).toBe(403);
   });
 
-  test("un Client ne voit une Facture (liste et détail) qu'une fois ENVOYEE — jamais une facture BROUILLON/VALIDEE, même la sienne", async ({ request }) => {
+  test("un Client ne voit une Facture (liste et détail) qu'une fois ENVOYEE — jamais une facture BROUILLON/VALIDEE, même la sienne", async () => {
     const { feuilleDeTempsId } = await feuilleDeTest("2026-09");
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const { facture } = await (await request.post("/api/factures", { data: { feuilleDeTempsId } })).json();
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     let liste = await (await request.get("/api/factures")).json();
     expect(liste.factures.some((f: { id: string }) => f.id === facture.id)).toBe(false);
     expect((await request.get(`/api/factures/${facture.id}`)).status()).toBe(404);
 
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     await request.patch(`/api/factures/${facture.id}/transition`, { data: { action: "valider" } });
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     expect((await request.get(`/api/factures/${facture.id}`)).status()).toBe(404); // VALIDEE mais pas encore ENVOYEE
 
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     await request.patch(`/api/factures/${facture.id}/transition`, { data: { action: "envoyer" } });
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     liste = await (await request.get("/api/factures")).json();
     expect(liste.factures.some((f: { id: string }) => f.id === facture.id)).toBe(true);
     const detail = await request.get(`/api/factures/${facture.id}`);
@@ -221,19 +233,19 @@ test.describe("V2.2-B — RBAC / IDOR sur la liste et le détail (GET /api/factu
     expect(factureClient).not.toHaveProperty("complianceSnapshot");
   });
 
-  test("IDOR — le Client A ne peut jamais voir une Facture ENVOYEE du Client B (404, jamais une fuite d'existence)", async ({ request }) => {
+  test("IDOR — le Client A ne peut jamais voir une Facture ENVOYEE du Client B (404, jamais une fuite d'existence)", async () => {
     const clientB = await creerClientDeTest(`${Date.now()}-idor`);
     try {
       const feuille = await feuilleDeTest("2026-10");
       // Réattribue la Facture au Client B après création (isolation testée
       // au niveau lecture, pas au niveau du circuit de création lui-même).
-      await connecter(request, "admin-demo@example.com");
+      let request = await connecter("ADMIN");
       const { facture } = await (await request.post("/api/factures", { data: { feuilleDeTempsId: feuille.feuilleDeTempsId } })).json();
       await prisma.facture.update({ where: { id: facture.id }, data: { clientId: clientB.id } });
       await request.patch(`/api/factures/${facture.id}/transition`, { data: { action: "valider" } });
       await request.patch(`/api/factures/${facture.id}/transition`, { data: { action: "envoyer" } });
 
-      await connecter(request, "client-demo@example.com");
+      request = await connecter("CLIENT");
       expect((await request.get(`/api/factures/${facture.id}`)).status()).toBe(404);
       const liste = await (await request.get("/api/factures")).json();
       expect(liste.factures.some((f: { id: string }) => f.id === facture.id)).toBe(false);
@@ -243,9 +255,9 @@ test.describe("V2.2-B — RBAC / IDOR sur la liste et le détail (GET /api/factu
     }
   });
 
-  test("Admin voit toujours la Facture brute (montants inclus), quel que soit son statut", async ({ request }) => {
+  test("Admin voit toujours la Facture brute (montants inclus), quel que soit son statut", async () => {
     const { feuilleDeTempsId } = await feuilleDeTest("2026-11");
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const { facture } = await (await request.post("/api/factures", { data: { feuilleDeTempsId } })).json();
     const detail = await request.get(`/api/factures/${facture.id}`);
     expect(detail.status()).toBe(200);
@@ -256,9 +268,9 @@ test.describe("V2.2-B — RBAC / IDOR sur la liste et le détail (GET /api/factu
 });
 
 test.describe("V2.2-B — Transitions de statut (PATCH /api/factures/[id]/transition)", () => {
-  test("cycle complet BROUILLON -> VALIDEE -> ENVOYEE, avec compliance snapshot et échéance figés à la validation", async ({ request }) => {
+  test("cycle complet BROUILLON -> VALIDEE -> ENVOYEE, avec compliance snapshot et échéance figés à la validation", async () => {
     const { feuilleDeTempsId } = await feuilleDeTest("2026-12");
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const { facture } = await (await request.post("/api/factures", { data: { feuilleDeTempsId } })).json();
 
     const valider = await request.patch(`/api/factures/${facture.id}/transition`, { data: { action: "valider" } });
@@ -278,9 +290,9 @@ test.describe("V2.2-B — Transitions de statut (PATCH /api/factures/[id]/transi
     expect(envoyee.dateEnvoi).not.toBeNull();
   });
 
-  test("transition invalide -> 409, jamais une mutation silencieuse", async ({ request }) => {
+  test("transition invalide -> 409, jamais une mutation silencieuse", async () => {
     const { feuilleDeTempsId } = await feuilleDeTest("2027-01");
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const { facture } = await (await request.post("/api/factures", { data: { feuilleDeTempsId } })).json();
 
     // BROUILLON -> ENVOYEE directement (sans passer par VALIDEE) est interdit.
@@ -290,9 +302,9 @@ test.describe("V2.2-B — Transitions de statut (PATCH /api/factures/[id]/transi
     expect(enBase!.statut).toBe("BROUILLON");
   });
 
-  test("annulation — motif obligatoire persisté, jamais une suppression", async ({ request }) => {
+  test("annulation — motif obligatoire persisté, jamais une suppression", async () => {
     const { feuilleDeTempsId } = await feuilleDeTest("2027-02");
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const { facture } = await (await request.post("/api/factures", { data: { feuilleDeTempsId } })).json();
     const annuler = await request.patch(`/api/factures/${facture.id}/transition`, { data: { action: "annuler", motif: "Erreur de saisie" } });
     expect(annuler.ok()).toBeTruthy();
@@ -302,14 +314,14 @@ test.describe("V2.2-B — Transitions de statut (PATCH /api/factures/[id]/transi
     expect(await prisma.facture.count({ where: { id: facture.id } })).toBe(1); // toujours là, jamais supprimée
   });
 
-  test("RBAC — jamais le Client ni l'Ingénieur ne peuvent transitionner une Facture", async ({ request }) => {
+  test("RBAC — jamais le Client ni l'Ingénieur ne peuvent transitionner une Facture", async () => {
     const { feuilleDeTempsId } = await feuilleDeTest("2027-03");
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const { facture } = await (await request.post("/api/factures", { data: { feuilleDeTempsId } })).json();
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     expect((await request.patch(`/api/factures/${facture.id}/transition`, { data: { action: "valider" } })).status()).toBe(403);
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     expect((await request.patch(`/api/factures/${facture.id}/transition`, { data: { action: "valider" } })).status()).toBe(403);
 
     const enBase = await prisma.facture.findUnique({ where: { id: facture.id } });
@@ -318,9 +330,9 @@ test.describe("V2.2-B — Transitions de statut (PATCH /api/factures/[id]/transi
 });
 
 test.describe("V2.2-B — Paiements (GET/POST /api/factures/[id]/paiements)", () => {
-  test("un paiement ne peut être enregistré que sur une Facture ENVOYEE/PARTIELLEMENT_PAYEE, jamais BROUILLON/VALIDEE", async ({ request }) => {
+  test("un paiement ne peut être enregistré que sur une Facture ENVOYEE/PARTIELLEMENT_PAYEE, jamais BROUILLON/VALIDEE", async () => {
     const { feuilleDeTempsId } = await feuilleDeTest("2027-04");
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const { facture } = await (await request.post("/api/factures", { data: { feuilleDeTempsId } })).json();
 
     const reponse = await request.post(`/api/factures/${facture.id}/paiements`, {
@@ -332,7 +344,7 @@ test.describe("V2.2-B — Paiements (GET/POST /api/factures/[id]/paiements)", ()
 
   test("paiement partiel -> PARTIELLEMENT_PAYEE, paiement du solde restant -> PAYEE", async ({ request }) => {
     const { factureId, montantTTC, devise } = await factureEnvoyeeDeTest(request, "2027-05");
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
 
     const partiel = await request.post(`/api/factures/${factureId}/paiements`, {
       data: { montant: montantTTC / 2, devise, reference: `REF-A-${Date.now()}`, methode: "Virement" },
@@ -349,7 +361,7 @@ test.describe("V2.2-B — Paiements (GET/POST /api/factures/[id]/paiements)", ()
 
   test("un paiement qui dépasserait le solde restant est refusé (409), jamais accepté puis clampé", async ({ request }) => {
     const { factureId, montantTTC, devise } = await factureEnvoyeeDeTest(request, "2027-06");
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const reponse = await request.post(`/api/factures/${factureId}/paiements`, {
       data: { montant: montantTTC + 1, devise, reference: `REF-${Date.now()}`, methode: "Virement" },
     });
@@ -361,7 +373,7 @@ test.describe("V2.2-B — Paiements (GET/POST /api/factures/[id]/paiements)", ()
   test("devise incohérente avec la Facture -> 409, aucun paiement enregistré", async ({ request }) => {
     const { factureId, devise } = await factureEnvoyeeDeTest(request, "2027-07", { deviseVente: "EUR" });
     expect(devise).toBe("EUR");
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const reponse = await request.post(`/api/factures/${factureId}/paiements`, {
       data: { montant: 100, devise: "USD", reference: `REF-${Date.now()}`, methode: "Virement" },
     });
@@ -371,7 +383,7 @@ test.describe("V2.2-B — Paiements (GET/POST /api/factures/[id]/paiements)", ()
 
   test("Idempotence — un second appel avec la MÊME référence renvoie le même paiement, jamais comptabilisé deux fois", async ({ request }) => {
     const { factureId, montantTTC, devise } = await factureEnvoyeeDeTest(request, "2027-08");
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const reference = `REF-IDEMPOTENT-${Date.now()}`;
     const montant = montantTTC / 4;
 
@@ -387,7 +399,7 @@ test.describe("V2.2-B — Paiements (GET/POST /api/factures/[id]/paiements)", ()
 
   test("Concurrence — deux paiements simultanés qui, ensemble, dépasseraient le solde : au plus un seul accepté, jamais un solde négatif", async ({ request }) => {
     const { factureId, montantTTC, devise } = await factureEnvoyeeDeTest(request, "2027-09");
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const montantChacun = montantTTC * 0.7; // deux fois 70% > 100% du montant
 
     const [r1, r2] = await Promise.all([
@@ -407,10 +419,10 @@ test.describe("V2.2-B — Paiements (GET/POST /api/factures/[id]/paiements)", ()
 
   test("RBAC — seul l'Admin enregistre un paiement ; le Client peut consulter les siens (une fois envoyés) mais jamais en créer", async ({ request }) => {
     const { factureId, montantTTC, devise } = await factureEnvoyeeDeTest(request, "2027-10");
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     await request.post(`/api/factures/${factureId}/paiements`, { data: { montant: montantTTC, devise, reference: `REF-${Date.now()}`, methode: "Virement" } });
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const refusClient = await request.post(`/api/factures/${factureId}/paiements`, {
       data: { montant: 1, devise, reference: `REF-CLIENT-${Date.now()}`, methode: "Virement" },
     });
@@ -421,22 +433,22 @@ test.describe("V2.2-B — Paiements (GET/POST /api/factures/[id]/paiements)", ()
     const { paiements } = await lectureClient.json();
     expect(paiements.length).toBe(1);
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     expect((await request.get(`/api/factures/${factureId}/paiements`)).status()).toBe(403);
   });
 });
 
 test.describe("V2.2-B — Document PDF (GET /api/factures/[id]/document)", () => {
-  test("document indisponible tant que la Facture n'est pas au moins VALIDEE (409)", async ({ request }) => {
+  test("document indisponible tant que la Facture n'est pas au moins VALIDEE (409)", async () => {
     const { feuilleDeTempsId } = await feuilleDeTest("2027-11");
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const { facture } = await (await request.post("/api/factures", { data: { feuilleDeTempsId } })).json();
     expect((await request.get(`/api/factures/${facture.id}/document`)).status()).toBe(409);
   });
 
-  test("génère le PDF une fois VALIDEE, le persiste, et sert le même document aux appels suivants (jamais deux PDF divergents)", async ({ request }) => {
+  test("génère le PDF une fois VALIDEE, le persiste, et sert le même document aux appels suivants (jamais deux PDF divergents)", async () => {
     const { feuilleDeTempsId } = await feuilleDeTest("2027-12");
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const { facture } = await (await request.post("/api/factures", { data: { feuilleDeTempsId } })).json();
     await request.patch(`/api/factures/${facture.id}/transition`, { data: { action: "valider" } });
 
@@ -464,19 +476,19 @@ test.describe("V2.2-B — Document PDF (GET /api/factures/[id]/document)", () =>
     }
   });
 
-  test("le Client ne peut télécharger le PDF qu'une fois la Facture envoyée, jamais avant (404 anti-fuite)", async ({ request }) => {
+  test("le Client ne peut télécharger le PDF qu'une fois la Facture envoyée, jamais avant (404 anti-fuite)", async () => {
     const { feuilleDeTempsId } = await feuilleDeTest("2028-01");
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const { facture } = await (await request.post("/api/factures", { data: { feuilleDeTempsId } })).json();
     await request.patch(`/api/factures/${facture.id}/transition`, { data: { action: "valider" } });
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     expect((await request.get(`/api/factures/${facture.id}/document`)).status()).toBe(404);
 
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     await request.patch(`/api/factures/${facture.id}/transition`, { data: { action: "envoyer" } });
 
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     expect((await request.get(`/api/factures/${facture.id}/document`)).status()).toBe(200);
   });
 });

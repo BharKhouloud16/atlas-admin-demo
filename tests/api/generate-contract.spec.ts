@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 
 // B15 — aucun test ne couvrait /api/generate-contract avant ce fichier :
 // c'est ce qui a laissé passer un bug de déploiement réel (les 5 modèles
@@ -12,9 +13,20 @@ import { test, expect, APIRequestContext } from "@playwright/test";
 // verrouille le comportement correct de la route pour éviter toute
 // régression future, et confirme que next.config.js reste valide.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function idProfilIngenieurDemo(request: APIRequestContext): Promise<string> {
@@ -37,8 +49,8 @@ async function idPremierClient(request: APIRequestContext): Promise<string> {
 const TEMPLATES = ["contrat_prestation", "nda", "cdi", "freelance", "portage"];
 
 test.describe("API — /api/generate-contract", () => {
-  test("un Admin génère avec succès un .docx pour chacun des 5 modèles", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("un Admin génère avec succès un .docx pour chacun des 5 modèles", async () => {
+    let request = await connecter("ADMIN");
     const clientId = await idPremierClient(request);
     const profilId = await idProfilIngenieurDemo(request);
 
@@ -62,8 +74,8 @@ test.describe("API — /api/generate-contract", () => {
     }
   });
 
-  test("rejette un templateKey inconnu (400)", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("rejette un templateKey inconnu (400)", async () => {
+    let request = await connecter("ADMIN");
     const clientId = await idPremierClient(request);
     const profilId = await idProfilIngenieurDemo(request);
     const creation = await request.post("/api/missions", {
@@ -77,16 +89,16 @@ test.describe("API — /api/generate-contract", () => {
     expect(reponse.status()).toBe(400);
   });
 
-  test("SÉCURITÉ : un Client ne peut pas générer de contrat (403)", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("SÉCURITÉ : un Client ne peut pas générer de contrat (403)", async () => {
+    let request = await connecter("CLIENT");
     const reponse = await request.post("/api/generate-contract", {
       data: { missionId: "peu-importe", templateKey: "contrat_prestation" },
     });
     expect(reponse.status()).toBe(403);
   });
 
-  test("SÉCURITÉ : un Ingénieur ne peut pas générer de contrat (403)", async ({ request }) => {
-    await connecter(request, "ingenieur-demo@example.com");
+  test("SÉCURITÉ : un Ingénieur ne peut pas générer de contrat (403)", async () => {
+    let request = await connecter("INGENIEUR");
     const reponse = await request.post("/api/generate-contract", {
       data: { missionId: "peu-importe", templateKey: "contrat_prestation" },
     });

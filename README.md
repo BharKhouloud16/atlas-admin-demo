@@ -50,19 +50,29 @@ Ce filtrage est appliqué à trois niveaux, jamais côté affichage seul :
 
 ## Ce qui reste à faire avant mise en production
 
-1. **`npm install`**, créer une base PostgreSQL (Supabase/Neon/Render),
-   copier `.env.example` → `.env`, `npm run prisma:migrate`.
-2. **Créer votre compte Admin** :
-   `npx tsx prisma/create-admin.ts vous@atlas-qa.com votre_mot_de_passe`
-3. **Brancher le stockage des documents** : `Document.fileUrl` suppose un
-   stockage externe (Supabase Storage, S3...) — il n'y a pas encore de route
-   d'upload ; à ajouter dans `/admin` pour que l'Admin dépose les rapports
-   et factures des clients.
-4. **Construire `/admin/clients` et `/admin/profils`** (formulaires
-   d'ajout/édition) — pour l'instant seules les routes API existent.
-5. **Emails transactionnels** : prévenir un utilisateur quand son compte est
-   validé (aujourd'hui, il doit revenir tester lui-même).
-6. **Déployer** sur Vercel (frontend/API) + Supabase/Neon (base).
+Le stockage de documents (Vercel Blob), les pages `/admin/clients` et
+`/admin/profils`, et les emails transactionnels (Resend, avec repli en
+mode démo si non configuré) sont déjà implémentés — voir `.env.example`
+pour la liste complète des variables. Ce qui reste réellement à valider
+avant d'accueillir un premier Client réel :
+
+1. **Déployer sur un projet Vercel dédié**, avec sa propre base
+   PostgreSQL — jamais le même `DATABASE_URL` qu'un déploiement Preview.
+   `npm run build` n'exécute plus `prisma migrate deploy` automatiquement
+   (corrigé le 24/09/2026, voir `package.json` — les migrations sont
+   désormais une étape explicite via `npm run migrate:deploy`), mais une
+   base partagée reste à éviter par principe.
+2. **Configurer `RESEND_API_KEY`** pour un envoi d'email réel — sans elle,
+   les emails sont seulement journalisés (voir `lib/email.ts`). Le parcours
+   Admin-crée-un-Client (`/admin/clients`) fonctionne sans email : le mot
+   de passe temporaire est affiché une fois dans l'interface.
+3. **Configurer `SENTRY_DSN`** pour capturer les erreurs serveur réelles
+   (voir `instrumentation.ts`) — sans elle, une erreur non instrumentée ne
+   laisse aucune trace durable.
+4. **Créer le premier compte ADMIN** via `npx tsx prisma/create-admin.ts
+   <email> <mot_de_passe>`, exécuté par un opérateur depuis un terminal
+   avec `DATABASE_URL` pointant vers la base réelle (LOT 15.2 : il n'existe
+   plus de route HTTP publique pour cela — `/api/dev-seed` a été retiré).
 
 ## Sécurité — points à ne pas sauter
 

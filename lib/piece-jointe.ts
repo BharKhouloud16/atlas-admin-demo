@@ -6,8 +6,7 @@ import { MIME_AUTORISES, TAILLE_MAX_OCTETS, type MimeAutorise } from "./piece-jo
 // Validation strictement AVANT tout appel à uploaderFichier() (voir
 // lib/storage.ts, qui ne valide ni MIME ni taille lui-même — laissé aux
 // appelants, voir audit V2.4) : allowlist MIME fermée + plafond de taille
-// explicite en dur (même patron que app/api/ingenieur/video/route.ts,
-// TAILLE_MAX_OCTETS ; constantes partagées avec le client dans
+// explicite en dur (TAILLE_MAX_OCTETS) ; constantes partagées avec le client dans
 // lib/piece-jointe-constants.ts, qui n'importe pas "crypto" pour rester
 // bundlable côté navigateur) + vérification des premiers octets (magic
 // bytes) quand une signature fiable existe pour le type déclaré — jamais

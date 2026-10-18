@@ -339,6 +339,33 @@ test.describe("Matching Engine V2 — intégration Skill Graph V1", () => {
     expect(rA.statut).toBe(rB.statut);
   });
 
+  // LOT 11 — ATLAS SKILL INTELLIGENCE V1 (§10-12 du mandat) : le fallback
+  // historique doit désormais être identifiable, sans que cela ne change le
+  // score lui-même (aucune pondération introduite dans ce lot — voir
+  // rapport final, décision produit distincte non prise ici).
+  test("11. sourceCompetences = SKILL_GRAPH quand competencesGraph est présent et non vide", () => {
+    const r = scorerProfil(profil("p-source-1", [preuveJava("VERIFIE", "ADMIN")]), criteresJava);
+    expect(r.sourceCompetences).toBe("SKILL_GRAPH");
+    expect(r.motifs.some((m) => m.critere === "Source des compétences" && m.detail.includes("Skill Graph"))).toBe(true);
+  });
+
+  test("12. sourceCompetences = LEGACY_PROFILE_COMPETENCES quand competencesGraph est absent ou vide (fallback)", () => {
+    const sansGraph: ProfilPourMatching = { id: "p-source-2", competences: ["Java"], seniorite: null, disponibilite: null, cvValide: true, tjmEstime: null };
+    const r1 = scorerProfil(sansGraph, criteresJava);
+    expect(r1.sourceCompetences).toBe("LEGACY_PROFILE_COMPETENCES");
+
+    const grapheVide = profil("p-source-3", []);
+    const r2 = scorerProfil(grapheVide, criteresJava);
+    expect(r2.sourceCompetences).toBe("LEGACY_PROFILE_COMPETENCES");
+    expect(r2.motifs.some((m) => m.critere === "Source des compétences" && m.detail.includes("Repli historique"))).toBe(true);
+  });
+
+  test("13. le motif d'observabilité \"Source des compétences\" a un poids nul : il ne modifie jamais le score", () => {
+    const avecGraph = scorerProfil(profil("p-source-4", [preuveJava("VERIFIE", "ADMIN")]), criteresJava);
+    const motifSource = avecGraph.motifs.find((m) => m.critere === "Source des compétences");
+    expect(motifSource?.poids).toBe(0);
+  });
+
   // Test 9 + Test 10 : plusieurs candidats évalués ensemble, chacun avec son
   // propre Skill Graph (ou aucun) — jamais de mélange entre profils, chacun
   // ne voit que ses propres compétences.

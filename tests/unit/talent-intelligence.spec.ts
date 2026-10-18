@@ -71,7 +71,7 @@ test.describe("Talent Intelligence V1 (lib/talent/talent-intelligence)", () => {
 
   test("7. expérience : technologies/types de mission toujours vides (aucun champ équivalent), jamais fabriqués", () => {
     const profil = profilVide();
-    profil.missions = [{ statut: "Terminée", nbJours: 20, createdAt: new Date("2025-01-01") }];
+    profil.missions = [{ statut: "TERMINEE", nbJours: 20, createdAt: new Date("2025-01-01") }];
     const r = talent(profil);
     expect(r.experience.technologies).toEqual([]);
     expect(r.experience.statut).toBe("DECLARE");

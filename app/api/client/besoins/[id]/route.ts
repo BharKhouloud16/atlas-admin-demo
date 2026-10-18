@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
-import type { ClientNeedStatut } from "@prisma/client";
+import { estVersionCourante, executerForkAvecRetry, forkerVersion, VersionNonCouranteError } from "@/lib/client-need/versioning";
+import type { ClientNeedStatut, NeedLifecycleStatut } from "@prisma/client";
 
 // COMPANY ATLAS — LOT 2 : Client Need Intelligence Foundation (15/09/2026).
 //
@@ -45,13 +46,22 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: "Accès non autorisé" }, { status: 403 });
   }
 
-  const besoin = await prisma.clientNeed.findUnique({ where: { id: params.id } });
+  const besoin = await prisma.clientNeed.findUnique({ where: { id: params.id }, include: { faits: true } });
   if (!besoin || besoin.clientId !== session.clientId) {
     return NextResponse.json({ error: "Besoin introuvable." }, { status: 404 });
   }
 
+  // A5.2 — ATLAS FUNCTIONAL SPECIFICATION vFINAL (30/09/2026) : Need
+  // Versioning Core (gate A5.1 §19/§25). Une version historique
+  // (needSuivantId !== null) refuse TOUTE écriture, même si son
+  // lifecycleStatut est encore VALIDATED — le critère d'historicité est
+  // needSuivantId, jamais lifecycleStatut seul.
+  if (!estVersionCourante(besoin)) {
+    return NextResponse.json({ error: "Cette version n'est plus la version courante — elle a été remplacée par une version plus récente." }, { status: 409 });
+  }
+
   const body = await req.json().catch(() => null);
-  const data: { titre?: string | null; statut?: ClientNeedStatut } = {};
+  const data: { titre?: string | null; statut?: ClientNeedStatut; lifecycleStatut?: NeedLifecycleStatut } = {};
 
   if (body?.titre !== undefined) {
     if (body.titre !== null && (typeof body.titre !== "string" || body.titre.trim().length === 0)) {
@@ -68,10 +78,50 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       );
     }
     data.statut = body.statut as ClientNeedStatut;
+    // Mapping trivial verrouillé par le gate A0 §2. Le cas SOUMIS (le
+    // client peut re-soumettre un besoin VALIDE, comportement préexistant
+    // inchangé par ce lot) est un point d'ambiguïté distinct, également
+    // documenté : déterminer UNDERSTANDING vs STRUCTURING exigerait de
+    // relire les faits et `coherenceDetail` ici (logique aujourd'hui
+    // uniquement présente dans [id]/faits/route.ts) — non implémenté,
+    // `lifecycleStatut` reste donc inchangé dans ce cas précis plutôt que
+    // deviné.
+    if (data.statut === "VALIDE") data.lifecycleStatut = "VALIDATED";
+    if (data.statut === "ARCHIVE") data.lifecycleStatut = "ARCHIVED";
   }
 
   if (Object.keys(data).length === 0) {
     return NextResponse.json({ error: "Aucune modification fournie." }, { status: 400 });
+  }
+
+  // A5.2 — gate A5.1 §19/§25 : le déclenchement du fork est scopé au
+  // contenu (`titre`), jamais à une transition de lifecycle pure
+  // (ARCHIVE, ou VALIDE re-soumis) — archiver une version courante ne
+  // modifie aucun fait ni aucune information substantielle du besoin,
+  // c'est une fin de cycle de vie, pas une "modification" au sens de A0/
+  // A5 ("modification post-validation" = contenu). Seul un `titre` fourni
+  // sur un besoin courant déjà VALIDATED déclenche réellement un fork.
+  const declencheFork = besoin.lifecycleStatut === "VALIDATED" && data.titre !== undefined;
+
+  if (declencheFork) {
+    try {
+      const suivant = await executerForkAvecRetry((tx) =>
+        forkerVersion(tx, besoin, {
+          titre: data.titre,
+          statut: data.statut,
+          lifecycleStatut: data.lifecycleStatut,
+        })
+      );
+      return NextResponse.json({ ancienneVersion: { id: besoin.id, version: besoin.version }, besoin: suivant });
+    } catch (erreur) {
+      if (erreur instanceof VersionNonCouranteError) {
+        return NextResponse.json(
+          { error: "Cette version n'est plus la version courante — elle a été remplacée par une version plus récente." },
+          { status: 409 }
+        );
+      }
+      throw erreur;
+    }
   }
 
   const misAJour = await prisma.clientNeed.update({

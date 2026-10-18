@@ -35,7 +35,6 @@ type Profil = {
   competences: string[];
   entretiensRealises: number;
   realisations: Realisation[] | null;
-  videoUrl: string | null;
   missionsTerminees: number;
   evaluationMoyenne: number | null;
   nombreEvaluations: number;
@@ -691,21 +690,6 @@ function DetailProfil({ l, badge }: { l: Ligne; badge: ReturnType<typeof calcule
             ))}
           </div>
         )}
-        {l.p.videoUrl && (
-          <div style={{ marginTop: 14 }}>
-            <p style={{ fontSize: 12, textTransform: "uppercase", color: "#888", marginBottom: 8 }}>
-              Vidéo de présentation
-            </p>
-            <video
-              src={`/api/ingenieur/video/fichier?profilId=${l.p.id}`}
-              controls
-              style={{ maxWidth: 280, borderRadius: 8, border: "1px solid #e4e7ee" }}
-            />
-            <div style={{ marginTop: 6 }}>
-              <BoutonLienPartage type="video" profilId={l.p.id} />
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -771,10 +755,10 @@ function HistoriqueCv({ profilId }: { profilId: string }) {
 }
 
 // Génère un lien de partage temporaire (24h, voir lib/url-signee.ts et
-// POST /api/ingenieur/{cv,video}/lien-partage) vers le CV ou la vidéo d'un
-// ingénieur, utilisable sans compte — utile pour l'envoyer par email à un
-// prospect qui n'a pas encore de compte sur la plateforme.
-function BoutonLienPartage({ type, profilId }: { type: "cv" | "video"; profilId: string }) {
+// POST /api/ingenieur/cv/lien-partage) vers le CV d'un ingénieur, utilisable
+// sans compte — utile pour l'envoyer par email à un prospect qui n'a pas
+// encore de compte sur la plateforme.
+function BoutonLienPartage({ type, profilId }: { type: "cv"; profilId: string }) {
   const [etat, setEtat] = useState<"repos" | "chargement" | "copie" | "erreur">("repos");
 
   async function genererEtCopier() {

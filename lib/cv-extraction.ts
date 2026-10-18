@@ -26,7 +26,34 @@ export type ResultatExtractionCV = {
   horsSecteur: boolean;
   secteurDetecte: string; // court résumé du métier/domaine détecté, pour affichage dans le message d'erreur
   champs: ChampCV[];
+  // ATLAS ENGINEER INTELLIGENCE PROFILE — Phase 1 (28/09/2026) : distingue
+  // explicitement un échec technique de l'extraction (clé absente, réseau,
+  // réponse inexploitable) d'un vrai succès avec des champs vides parce que
+  // le CV ne contenait pas l'information. Avant ce champ, les deux cas
+  // produisaient exactement la même sortie (champs vides) et étaient donc
+  // indiscernables pour l'appelant — voir app/api/ingenieur/cv/route.ts, qui
+  // propage cette valeur telle quelle dans sa réponse, jamais recalculée.
+  extractionReussie: boolean;
+  // LOT 11 — ATLAS SKILL INTELLIGENCE V1 (§4 du mandat) : `extractionReussie`
+  // dit seulement que l'appel a techniquement réussi (JSON exploitable
+  // reçu) — pas que son CONTENU est exploitable. Un CV illisible (scanné,
+  // mal structuré) et un CV réellement vide de contenu produisaient jusqu'à
+  // présent le même signal. `champsNonVides`/`qualiteExtraction` restent
+  // purement descriptifs et additifs : jamais utilisés pour bloquer
+  // l'import (voir app/api/ingenieur/cv/route.ts, inchangé sur ce point),
+  // jamais une note de qualité du CV lui-même — seulement un décompte
+  // factuel des champs réellement remplis par cette extraction précise.
+  champsNonVides: number; // nombre de champs (sur MODELE_CHAMPS_CV.length) dont la valeur extraite n'est pas vide
+  qualiteExtraction: "EXPLOITABLE" | "PARTIELLE" | "VIDE";
 };
+
+// Libellés référencés ailleurs (voir app/api/ingenieur/cv/finaliser/route.ts,
+// qui copie CES DEUX valeurs extraites — et uniquement celles-ci — vers
+// Profil.anneesExperience/seniorite à la finalisation). Exportées comme
+// source unique de vérité pour éviter toute divergence si ce libellé change
+// un jour ici sans que l'appelant soit mis à jour.
+export const LIBELLE_ANNEES_EXPERIENCE = "Années d'expérience";
+export const LIBELLE_SENIORITE = "Séniorité (Junior / Confirmé / Senior / Expert)";
 
 const MODELE_CHAMPS_CV: Omit<ChampCV, "valeur">[] = [
   { categorie: "identite", libelle: "Nom complet", ordre: 0 },
@@ -34,8 +61,8 @@ const MODELE_CHAMPS_CV: Omit<ChampCV, "valeur">[] = [
   { categorie: "contact", libelle: "Email", ordre: 2 },
   { categorie: "contact", libelle: "Téléphone", ordre: 3 },
   { categorie: "contact", libelle: "Localisation", ordre: 4 },
-  { categorie: "profil", libelle: "Années d'expérience", ordre: 5 },
-  { categorie: "profil", libelle: "Séniorité (Junior / Confirmé / Senior / Expert)", ordre: 6 },
+  { categorie: "profil", libelle: LIBELLE_ANNEES_EXPERIENCE, ordre: 5 },
+  { categorie: "profil", libelle: LIBELLE_SENIORITE, ordre: 6 },
   { categorie: "profil", libelle: "Résumé / profil professionnel", ordre: 7 },
   { categorie: "competence", libelle: "Compétences techniques principales", ordre: 8 },
   { categorie: "competence", libelle: "Compétences secondaires / outils", ordre: 9 },
@@ -55,13 +82,27 @@ export function modeleChampsVides(): ChampCV[] {
   return MODELE_CHAMPS_CV.map((champ) => ({ ...champ, valeur: "" }));
 }
 
+// LOT 11 — dérive champsNonVides/qualiteExtraction à partir des champs
+// réellement obtenus, quelle que soit la voie (succès IA ou résultat
+// neutre). Seuil volontairement simple et documenté (pas une politique
+// complexe) : 0 champ non vide -> VIDE ; moins d'un tiers des champs
+// -> PARTIELLE ; sinon EXPLOITABLE. Purement diagnostique, jamais un motif
+// de blocage de l'import.
+function calculerQualite(champs: ChampCV[]): { champsNonVides: number; qualiteExtraction: ResultatExtractionCV["qualiteExtraction"] } {
+  const champsNonVides = champs.filter((c) => c.valeur.trim() !== "").length;
+  const qualiteExtraction: ResultatExtractionCV["qualiteExtraction"] =
+    champsNonVides === 0 ? "VIDE" : champsNonVides < champs.length / 3 ? "PARTIELLE" : "EXPLOITABLE";
+  return { champsNonVides, qualiteExtraction };
+}
+
 // Résultat "neutre" utilisé quand l'extraction/l'analyse IA est indisponible
 // (clé absente, erreur réseau, réponse inexploitable) : horsSecteur reste
 // false — on ne bloque JAMAIS l'import d'un CV à cause d'un problème
 // technique côté IA, seulement quand l'IA a effectivement pu analyser le CV
 // et a détecté qu'il n'était pas dans le secteur informatique/QA.
-function resultatNeutre(): ResultatExtractionCV {
-  return { horsSecteur: false, secteurDetecte: "", champs: modeleChampsVides() };
+export function resultatNeutre(): ResultatExtractionCV {
+  const champs = modeleChampsVides();
+  return { horsSecteur: false, secteurDetecte: "", champs, extractionReussie: false, ...calculerQualite(champs) };
 }
 
 // Extrait les informations d'un CV (PDF) à partir de son contenu binaire, et
@@ -194,5 +235,7 @@ Pour "champs" : si une information est absente du CV, mets une chaîne vide "" p
     horsSecteur: objet?.secteurInformatique === false,
     secteurDetecte: typeof objet?.secteurDetecte === "string" ? objet.secteurDetecte : "",
     champs,
+    extractionReussie: true,
+    ...calculerQualite(champs),
   };
 }

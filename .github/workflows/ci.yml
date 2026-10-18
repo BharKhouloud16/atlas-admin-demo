@@ -16,9 +16,11 @@ jobs:
     runs-on: ubuntu-latest
 
     # Base Postgres jetable pour ce run uniquement (jamais la base de
-    # production) — nécessaire car `npm run build` exécute
-    # `prisma migrate deploy` (voir package.json), et les tests E2E ont
-    # besoin de données réelles (voir prisma/seed.ts).
+    # production) — les migrations sont appliquées explicitement ci-dessous
+    # (voir "Migrations (base CI jetable)" ; `npm run build` ne les exécute
+    # plus automatiquement, voir package.json et la note du 24/09/2026 plus
+    # bas), et les tests E2E ont besoin de données réelles (voir
+    # prisma/seed.ts).
     services:
       postgres:
         image: postgres:16
@@ -37,7 +39,6 @@ jobs:
     env:
       DATABASE_URL: postgresql://atlas:atlas@localhost:5432/atlas_ci
       SESSION_SECRET: ci-secret-uniquement-pour-les-tests-jamais-en-production
-      SEED_TOKEN: ci-secret-uniquement-pour-les-tests
       # Toutes les requêtes de test partagent la même IP locale ("inconnue",
       # voir lib/rate-limit.ts) : sans ce relèvement, la suite API+E2E
       # complète (bien plus de 20 connexions au total) déclenche le
@@ -63,12 +64,29 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          # Pas de `cache: npm` ici : ce dépôt est géré sans installation
-          # locale (déploiement par upload web GitHub, voir mémoire projet),
-          # donc aucun package-lock.json n'est commité — `actions/setup-node`
-          # exigerait un fichier de verrouillage pour son cache, et `npm ci`
-          # aussi. On utilise `npm install` ci-dessous à la place.
+          node-version: 22
+          # FIX (18/10/2026) — passé de Node 20 à Node 22 après un diagnostic
+          # contrôlé de 5 échecs consécutifs de "Installation des
+          # dépendances" avec l'erreur interne npm "Cannot read properties
+          # of null (reading 'edgesOut')" (bug de résolution récursive des
+          # peerDependencies optionnelles dans @npmcli/arborist, atteint via
+          # la chaîne d'instrumentation OpenTelemetry de @sentry/nextjs qui
+          # référence l'écosystème vitest). Comparaison contrôlée, même
+          # commit/package.json, même commande (`npm install`), cache npm
+          # isolé et vidé à chaque essai, PATH vérifié à chaque fois
+          # (`node -v`/`npm -v`/`which`) :
+          #   Node 20.20.2 + npm 10.8.2  -> échec reproduit (identique)
+          #   Node 20.20.2 + npm 10.9.4  -> échec reproduit (identique)
+          #   Node 22.22.0 + npm 10.8.2  -> réussite
+          #   Node 22.22.0 + npm 10.9.4  -> réussite
+          # La version de npm n'a aucun effet (10.8.2 et 10.9.4 échouent
+          # tous les deux sous Node 20) ; seule la version de Node fait la
+          # différence. Aucun lockfile ajouté : cette absence reste une
+          # décision volontaire et documentée de ce dépôt, non remise en
+          # cause ici faute de preuve qu'elle soit la cause (elle ne l'est
+          # pas — la même absence de lockfile n'empêche pas Node 22 de
+          # réussir). Pas de `cache: npm` ici pour la même raison qu'avant :
+          # aucun package-lock.json n'est commité.
 
       - name: Installation des dépendances
         run: npm install
@@ -76,7 +94,17 @@ jobs:
       - name: Vérification des types TypeScript
         run: npx tsc --noEmit
 
-      - name: Build (génère le client Prisma, applique les migrations sur la base CI, build Next.js)
+      # FIX (24/09/2026) — `npm run build` (donc aussi tout build Vercel,
+      # Preview comme Production) n'exécute plus `prisma migrate deploy`
+      # automatiquement : un build ne doit jamais pouvoir appliquer des
+      # migrations à l'insu de qui le déclenche, surtout si un environnement
+      # Preview partage un jour une base avec la Production. Les migrations
+      # restent une étape explicite et contrôlée — ici, appliquées
+      # volontairement à la base CI jetable créée pour ce run uniquement.
+      - name: Migrations (base CI jetable)
+        run: npm run migrate:deploy
+
+      - name: Build (génère le client Prisma, build Next.js)
         run: npm run build
 
       - name: Données de démo (pour les tests E2E)

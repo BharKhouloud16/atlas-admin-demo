@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 
 // COMPANY ATLAS — B24 Lot C1 (14/09/2026) : FERMETURE STRUCTURELLE DU
@@ -18,9 +19,20 @@ import { prisma } from "@/lib/prisma";
 // Emergency Stop/Delegation/Risk n'est exercée ici CÔTÉ B21 — seul B22 les
 // exerce, via /request-authorization, voir tests/api/b24-lot-b-authorization-request.spec.ts).
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function idAgent(request: APIRequestContext, nom: string): Promise<string> {
@@ -66,7 +78,7 @@ test.describe("COMPANY ATLAS B24 Lot C1 — Fermeture structurelle du chemin d'a
   test("1. legacy toujours refusée pour une proposition valide — aucune StrategicAuthorization créée, statut inchangé", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
 
@@ -91,7 +103,7 @@ test.describe("COMPANY ATLAS B24 Lot C1 — Fermeture structurelle du chemin d'a
   test("2. IMPORTANT — legacy refusée même pour une proposition SANS AUCUN StrategicAuthorizationLink (le refus ne dépend jamais de la présence d'un Link)", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
 
@@ -119,7 +131,7 @@ test.describe("COMPANY ATLAS B24 Lot C1 — Fermeture structurelle du chemin d'a
   test("3. legacy refusée même AVEC un StrategicAuthorizationLink présent (la présence d'un Link ne réactive jamais le chemin legacy)", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
 
@@ -147,7 +159,7 @@ test.describe("COMPANY ATLAS B24 Lot C1 — Fermeture structurelle du chemin d'a
   test("4. le compteur StrategicAuthorization n'augmente jamais, quel que soit le nombre de tentatives legacy", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
 
@@ -166,8 +178,8 @@ test.describe("COMPANY ATLAS B24 Lot C1 — Fermeture structurelle du chemin d'a
 
   // ---- TEST 5 --------------------------------------------------------------
 
-  test("5. le chemin B22 (/request-authorization) continue de fonctionner normalement — B24 Lot B intact", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("5. le chemin B22 (/request-authorization) continue de fonctionner normalement — B24 Lot B intact", async () => {
+    let request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
 
@@ -186,7 +198,7 @@ test.describe("COMPANY ATLAS B24 Lot C1 — Fermeture structurelle du chemin d'a
   test("6. Emergency Stop actif : legacy toujours refusée (aucune StrategicAuthorization créée) — B22 reste la seule autorité qui applique réellement l'Emergency Stop", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
 
@@ -225,7 +237,7 @@ test.describe("COMPANY ATLAS B24 Lot C1 — Fermeture structurelle du chemin d'a
   test("7. régression — les StrategicAuthorization historiques (créées avant B24 Lot C1) restent lisibles, rien n'est supprimé ni migré", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
 
@@ -260,7 +272,7 @@ test.describe("COMPANY ATLAS B24 Lot C1 — Fermeture structurelle du chemin d'a
   test("8. IDOR/BOLA — refus identique (403) pour un proposalId inexistant et pour le proposalId réel d'une autre proposition", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId: proposalIdAutrui } = await creerPropositionDeTest(request, agentId);
 
@@ -282,7 +294,7 @@ test.describe("COMPANY ATLAS B24 Lot C1 — Fermeture structurelle du chemin d'a
   test("9. concurrence — N tentatives legacy simultanées sur la même proposition restent toutes refusées, zéro StrategicAuthorization créée", async ({
     request,
   }) => {
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const agentId = await idAgent(request, "ATLAS_TALENT");
     const { proposalId } = await creerPropositionDeTest(request, agentId);
 

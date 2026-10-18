@@ -36,7 +36,19 @@ async function messageNonLuOuvertesDuThread(clientId: string) {
   });
 }
 
-const BASE_URL = process.env.EMAIL_APP_BASE_URL || "https://atlas-admin-demo.vercel.app";
+// LOT 15.1 — EMAIL PRODUCTION SAFETY CLEANUP : avant ce lot, une
+// EMAIL_APP_BASE_URL absente/vide retombait silencieusement sur
+// https://atlas-admin-demo.vercel.app (domaine de démo tiers) — le seul
+// fallback de ce type encore actif après Lot 14.1. Même politique
+// fail-closed que lib/email.ts désormais : aucun lien fictif, aucune
+// notification envoyée si la base n'est pas correctement configurée. Un
+// "/" final éventuel est retiré pour ne jamais produire de double "/" avec
+// les chemins ci-dessous, qui commencent déjà par "/".
+function resoudreBaseUrl(): string | null {
+  const valeur = process.env.EMAIL_APP_BASE_URL;
+  if (!valeur || valeur.trim() === "") return null;
+  return valeur.trim().replace(/\/+$/, "");
+}
 
 async function notifierDestinataire(
   clientId: string,
@@ -53,10 +65,24 @@ async function notifierDestinataire(
   const preference = await lirePreferenceNotification(compte.id);
   if (!preference.emailActif || !preference.categoriesEmail.includes(attention.categorie)) return;
 
+  // Vérifié après le filtrage par préférence (pas avant) : on ne loggue une
+  // configuration manquante que lorsqu'une notification aurait réellement
+  // dû partir, jamais pour un destinataire qui l'a désactivée.
+  const base = resoudreBaseUrl();
+  if (!base) {
+    // Jamais l'email/clientId/attentionId dans ce log — seulement le fait
+    // que l'envoi est abandonné et pourquoi (même discipline que
+    // lib/email.ts). Ce chemin reste best-effort : early return, jamais un
+    // throw (synchroniserEtNotifierMessage catche déjà tout appel à
+    // notifierDestinataire, mais ne doit pas avoir à le faire pour ce cas).
+    console.error("[email:configuration] EMAIL_APP_BASE_URL manquant ou vide — notification de message non lu non envoyée.");
+    return;
+  }
+
   const client = attention.recipientType === "CLIENT" ? await prisma.client.findUnique({ where: { id: clientId }, select: { nom: true } }) : null;
   const chemin = attention.recipientType === "CLIENT" ? "/client/communication" : `/admin/clients/${clientId}/messages`;
 
-  await envoyerEmailMessageNonLu({ to: compte.email, nom: client?.nom, lien: `${BASE_URL}${chemin}` });
+  await envoyerEmailMessageNonLu({ to: compte.email, nom: client?.nom, lien: `${base}${chemin}` });
 }
 
 // Point d'entrée unique appelé depuis les routes POST Message (Client et

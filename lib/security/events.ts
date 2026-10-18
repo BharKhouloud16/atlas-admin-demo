@@ -46,6 +46,12 @@ export const ACTIONS_EVENEMENT_SECURITE = [
   "auth.login.totp_invalide",
   "auth.login.email_non_verifie",
   "auth.login.compte_inactif",
+  // ENGINEER ACCESS & TRUST (09/10/2026) — connexion réussie mais limitée à
+  // l'espace candidature (INGENIEUR, actif=false, email vérifié) : distincte
+  // de "auth.login.succes" (accès complet) pour permettre de distinguer les
+  // deux cas dans les signaux de sécurité existants, jamais une fusion
+  // silencieuse des deux.
+  "auth.login.acces_candidat_limite",
   "rbac.acces_refuse",
   "contrat.generation",
   "objet.consultation",

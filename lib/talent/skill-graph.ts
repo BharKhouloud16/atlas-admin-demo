@@ -108,17 +108,34 @@ export async function construireCompetencesInferees(
 
   const provider = resoudreAiProvider();
   const suggestion = await provider.analyserTexte(texteCv, competencesConnues);
-  const confiance = confianceDepuisScore(suggestion.confiance);
+  const confianceGlobale = confianceDepuisScore(suggestion.confiance);
 
-  return suggestion.competences.map((competence) => ({
+  // LOT 11 — ATLAS SKILL INTELLIGENCE V1 : `detailCompetences` (voir
+  // lib/ai/provider.ts, additif) porte la méthode réelle de détection par
+  // compétence — EXACT (nom canonique littéralement présent dans le texte)
+  // ou ALIAS (variante d'écriture explicitement listée, voir
+  // lib/talent/skill-resolution.ts). Repli sur la liste plate + confiance
+  // globale si un provider tiers ne l'implémente pas encore (comportement
+  // strictement identique à avant ce lot dans ce cas).
+  const details =
+    suggestion.detailCompetences ?? suggestion.competences.map((competence) => ({ competence, methode: "EXACT" as const }));
+
+  return details.map(({ competence, methode }) => ({
     competence,
     statut: "INFERE",
-    confiance,
+    // Une détection par ALIAS (abréviation/variante reconnue explicitement,
+    // ex. "K8s") reste une inférence plus incertaine qu'une mention
+    // littérale du nom canonique — jamais VERIFIE dans les deux cas, seule
+    // la confiance affichée diffère.
+    confiance: methode === "ALIAS" ? "BASSE" : confianceGlobale,
     niveau: null, // le provider ne fournit aucun niveau — jamais estimé ici
     anneesExperience: null, // idem : pas de champ fiable renvoyé par SuggestionAnalyse aujourd'hui
     contexte: null,
     secteur: null,
-    preuve: { source: "CV", detail: `Détecté dans le texte CV analysé (provider: ${provider.nom})` },
+    preuve: {
+      source: "CV",
+      detail: `Détecté dans le texte CV analysé (provider: ${provider.nom}, méthode: ${methode})`,
+    },
   }));
 }
 

@@ -5,6 +5,235 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { bleu, bordure, grisTexte, vert, orange, rouge } from "@/lib/theme";
 
+// COMPANY ATLAS — DB-05 : Decision Context UI (08/10/2026).
+//
+// Rend visible, dans l'écran de revue de Solution déjà existant (ci-
+// dessous), la connaissance DÉJÀ consultée par ATLAS via A36 — consomme
+// STRICTEMENT GET /api/talent/besoins/[id]/solutions (enrichi par ce
+// même lot, voir route.ts) : aucun nouveau calcul de pertinence, aucun
+// score, aucun classement frontend, aucun arbitrage de conflit. L'ordre
+// reçu du backend (DIRECT avant CONTEXTUAL, A36.1) est conservé tel quel.
+
+type DecisionLearningVue = {
+  learningId: string;
+  relevance: "DIRECT" | "CONTEXTUAL";
+  scope: string;
+  type: string;
+  provenance: string;
+  confidence: string;
+  title: string;
+  statement: string;
+  missionId: string;
+  applicability: string;
+  source: { sourceType: string; sourceId: string } | null;
+  reason: string;
+};
+
+type DecisionConflictVue = { learningAId: string; learningBId: string; type: string };
+
+type DecisionContextVue = {
+  subjectId: string;
+  subjectNiveau: "RECOMMANDATION" | "DECISION";
+  status: "RELEVANT_CONTEXT" | "NO_RELEVANT_LEARNING" | "CONFLICTING_CONTEXT";
+  learnings: DecisionLearningVue[];
+  conflicts: DecisionConflictVue[];
+} | null;
+
+type SolutionLigneVue = {
+  id: string;
+  niveau: "OPTION" | "RECOMMANDATION" | "DECISION";
+  titre: string;
+  justification: string;
+  niveauConfiance: string;
+  decideParEmail: string | null;
+  decideLe: string | null;
+  createdAt: string;
+};
+
+type ReponseSolutionsAdmin = {
+  options: SolutionLigneVue[];
+  recommandations: SolutionLigneVue[];
+  decisions: SolutionLigneVue[];
+  decisionContext: DecisionContextVue;
+};
+
+const COULEUR_RELEVANCE: Record<string, string> = { DIRECT: vert, CONTEXTUAL: bleu };
+const COULEUR_CONFIDENCE: Record<string, string> = { LOW: grisTexte, MEDIUM: orange, HIGH: bleu };
+const COULEUR_PROVENANCE_LEARNING: Record<string, string> = { OBSERVED: grisTexte, DECLARED: bleu, VERIFIED: vert, INFERRED: orange };
+
+function PetitBadge({ valeur, couleur }: { valeur: string; couleur: string }) {
+  return (
+    <span style={{ fontSize: 10, fontWeight: 600, padding: "1px 7px", borderRadius: 999, border: `1px solid ${couleur}`, color: couleur, whiteSpace: "nowrap" }}>
+      {valeur}
+    </span>
+  );
+}
+
+// Lien vers la page Learning DB-04 déjà existante — jamais une seconde
+// page Learning (contrat DB-05 §12).
+function LienLearning({ learning }: { learning: DecisionLearningVue }) {
+  return (
+    <Link href={`/admin/missions/${learning.missionId}/learning/${learning.learningId}`} style={{ fontSize: 11, color: bleu }}>
+      Voir le Learning →
+    </Link>
+  );
+}
+
+function PanneauConnaissancesConsultees({ decisionContext }: { decisionContext: DecisionContextVue }) {
+  if (!decisionContext) return null;
+  const { learnings, conflicts } = decisionContext;
+
+  // Résolution de titre par id, à partir des données DÉJÀ reçues — jamais
+  // une seconde requête (même discipline que la supersession Learning,
+  // DB-04).
+  const titreParId = new Map(learnings.map((l) => [l.learningId, l.title]));
+
+  return (
+    <section style={{ marginBottom: 20 }}>
+      <h2 style={{ fontSize: 15 }}>Connaissances consultées par ATLAS</h2>
+      <p style={{ fontSize: 12, color: grisTexte, margin: "0 0 10px" }}>
+        {decisionContext.subjectNiveau === "DECISION"
+          ? "Pour la décision Solution prise sur ce besoin."
+          : "Pour la recommandation Solution actuelle de ce besoin."}{" "}
+        Connaissances déjà validées (statut VALIDE) et actives (applicabilité ACTIVE) — jamais une proposition, jamais une connaissance obsolète.
+      </p>
+
+      {learnings.length === 0 && <p style={{ fontSize: 13, color: "#888" }}>Aucune connaissance pertinente disponible.</p>}
+
+      {learnings.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: conflicts.length > 0 ? 12 : 0 }}>
+          {learnings.map((l) => (
+            <div key={l.learningId} style={{ border: `1px solid ${bordure}`, borderRadius: 8, padding: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                <p style={{ margin: 0, fontSize: 13, fontWeight: 600 }}>{l.title}</p>
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                  <PetitBadge valeur={l.relevance} couleur={COULEUR_RELEVANCE[l.relevance] ?? grisTexte} />
+                  <PetitBadge valeur={l.confidence} couleur={COULEUR_CONFIDENCE[l.confidence] ?? grisTexte} />
+                  <PetitBadge valeur={l.provenance} couleur={COULEUR_PROVENANCE_LEARNING[l.provenance] ?? grisTexte} />
+                </div>
+              </div>
+              <p style={{ margin: "4px 0 0", fontSize: 12, color: grisTexte }}>{l.statement}</p>
+              <p style={{ margin: "4px 0 0", fontSize: 11, color: "#888" }}>
+                Scope {l.scope} · {l.reason}
+              </p>
+              <div style={{ marginTop: 6 }}>
+                <LienLearning learning={l} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {conflicts.length > 0 && (
+        <div style={{ border: `1px solid ${orange}`, borderRadius: 8, padding: 10, background: "#fff8f0" }}>
+          <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: orange }}>⚠ Conflit de connaissances détecté</p>
+          <p style={{ margin: "4px 0 0", fontSize: 12, color: grisTexte }}>
+            ATLAS a identifié une tension entre des connaissances pertinentes — aucune n&apos;est écartée, aucun gagnant n&apos;est choisi ici.
+          </p>
+          <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+            {conflicts.map((c, i) => (
+              <p key={i} style={{ margin: 0, fontSize: 12 }}>
+                {titreParId.get(c.learningAId) ?? c.learningAId} ↔ {titreParId.get(c.learningBId) ?? c.learningBId}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SectionSolutions({ besoinId, besoinStatut }: { besoinId: string; besoinStatut: string }) {
+  const [donnees, setDonnees] = useState<ReponseSolutionsAdmin | null>(null);
+  const [chargement, setChargement] = useState(true);
+  const [erreur, setErreur] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (besoinStatut !== "VALIDE") {
+      setChargement(false);
+      return;
+    }
+    fetch(`/api/talent/besoins/${besoinId}/solutions`)
+      .then(async (r) => {
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `Erreur ${r.status}`);
+        return r.json();
+      })
+      .then((d: ReponseSolutionsAdmin) => {
+        setDonnees(d);
+        setErreur(null);
+      })
+      .catch((e) => setErreur(e.message))
+      .finally(() => setChargement(false));
+  }, [besoinId, besoinStatut]);
+
+  if (besoinStatut !== "VALIDE") return null;
+  if (chargement) return <p style={{ color: "#888", fontSize: 13 }}>Chargement des solutions…</p>;
+  if (erreur) return <p style={{ color: rouge, fontSize: 13 }}>{erreur}</p>;
+  if (!donnees) return null;
+
+  const { options, recommandations, decisions, decisionContext } = donnees;
+  const derniereRecommandation = recommandations[recommandations.length - 1] ?? null;
+  const alternatives = derniereRecommandation ? options.filter((o) => o.id !== derniereRecommandation.id) : options;
+
+  if (options.length === 0 && recommandations.length === 0 && decisions.length === 0) {
+    return (
+      <section style={{ marginBottom: 20 }}>
+        <h2 style={{ fontSize: 15 }}>Solutions</h2>
+        <p style={{ fontSize: 13, color: "#888" }}>Aucune solution générée pour ce besoin pour l&apos;instant.</p>
+      </section>
+    );
+  }
+
+  return (
+    <>
+      <section style={{ marginBottom: 20 }}>
+        <h2 style={{ fontSize: 15 }}>Solutions</h2>
+
+        {decisions.length > 0 && (
+          <div style={{ marginBottom: 10 }}>
+            <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 6px" }}>Décisions du client</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {decisions.map((d) => (
+                <div key={d.id} style={{ border: `1px solid ${vert}`, borderRadius: 8, padding: 10, background: "#f2faf5" }}>
+                  <p style={{ margin: 0, fontSize: 13, fontWeight: 600 }}>{d.titre}</p>
+                  <p style={{ margin: "4px 0 0", fontSize: 12, color: grisTexte }}>
+                    Décidé le {d.decideLe ? new Date(d.decideLe).toLocaleDateString("fr-FR") : "—"} par {d.decideParEmail ?? "—"}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {derniereRecommandation && (
+          <div style={{ marginBottom: 10 }}>
+            <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 6px" }}>Recommandation ATLAS actuelle</p>
+            <div style={{ border: `1px solid ${bleu}`, borderRadius: 8, padding: 10, background: "#f8fafd" }}>
+              <p style={{ margin: 0, fontSize: 13, fontWeight: 600 }}>{derniereRecommandation.titre}</p>
+              <p style={{ margin: "4px 0 0", fontSize: 12, color: grisTexte }}>{derniereRecommandation.justification}</p>
+            </div>
+          </div>
+        )}
+
+        {alternatives.length > 0 && (
+          <div>
+            <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 6px" }}>Options</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {alternatives.map((o) => (
+                <p key={o.id} style={{ margin: 0, fontSize: 12, color: grisTexte }}>
+                  {o.titre}
+                </p>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+
+      <PanneauConnaissancesConsultees decisionContext={decisionContext} />
+    </>
+  );
+}
+
 type Fait = { cle: string; valeur: string; statut: string };
 
 type ChampSuggere<T> = { valeur: T; statut: string } | null;
@@ -200,6 +429,8 @@ export default function BesoinTalentAdminDetailPage() {
           </div>
         </section>
       )}
+
+      <SectionSolutions besoinId={besoin.id} besoinStatut={besoin.statut} />
 
       {!demandeTalentCreee && eligibilite.eligible && (
         <section>

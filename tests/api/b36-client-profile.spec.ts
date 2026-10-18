@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 
 // COMPANY ATLAS — LOT 4 : Profil Client Intelligence Foundation (15/09/2026).
@@ -6,9 +7,20 @@ import { prisma } from "@/lib/prisma";
 // historique additif, supersession logique (confirmeDepuis), anti-doublon,
 // singleton vs répétable, isolation client, IDOR/BOLA, accès non autorisé.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function lireProfil(request: APIRequestContext) {
@@ -23,8 +35,8 @@ async function repondre(request: APIRequestContext, cle: string, action: "AJOUTE
 
 test.describe("COMPANY ATLAS LOT 4 — Profil Client (API)", () => {
   test.describe("GET — lecture et création paresseuse", () => {
-    test("GET crée le profil au premier accès et retourne identité + résumés", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("GET crée le profil au premier accès et retourne identité + résumés", async () => {
+      let request = await connecter("CLIENT");
       const data = await lireProfil(request);
       expect(data.client.nom).toBeTruthy();
       expect(data.profile.id).toBeTruthy();
@@ -34,8 +46,8 @@ test.describe("COMPANY ATLAS LOT 4 — Profil Client (API)", () => {
       expect(Array.isArray(data.signauxRecurrence)).toBe(true);
     });
 
-    test("un second GET réutilise le même ClientProfile (pas de doublon créé)", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("un second GET réutilise le même ClientProfile (pas de doublon créé)", async () => {
+      let request = await connecter("CLIENT");
       const premier = await lireProfil(request);
       const second = await lireProfil(request);
       expect(second.profile.id).toBe(premier.profile.id);
@@ -43,29 +55,29 @@ test.describe("COMPANY ATLAS LOT 4 — Profil Client (API)", () => {
   });
 
   test.describe("PATCH — identité", () => {
-    test("modifie un champ autorisé (secteur)", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("modifie un champ autorisé (secteur)", async () => {
+      let request = await connecter("CLIENT");
       const reponse = await request.fetch("/api/client/profil", { method: "PATCH", data: { secteur: "Industrie QA" } });
       expect(reponse.status(), await reponse.text()).toBe(200);
       expect((await reponse.json()).client.secteur).toBe("Industrie QA");
     });
 
-    test("nom vide refusé (400) — jamais un nom effacé", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("nom vide refusé (400) — jamais un nom effacé", async () => {
+      let request = await connecter("CLIENT");
       const reponse = await request.fetch("/api/client/profil", { method: "PATCH", data: { nom: "   " } });
       expect(reponse.status()).toBe(400);
     });
 
-    test("aucune modification fournie -> 400", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("aucune modification fournie -> 400", async () => {
+      let request = await connecter("CLIENT");
       const reponse = await request.fetch("/api/client/profil", { method: "PATCH", data: { champInconnu: "x" } });
       expect(reponse.status()).toBe(400);
     });
   });
 
   test.describe("AJOUTER — clé répétable", () => {
-    test("crée un fait statut DECLARE, source client", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("crée un fait statut DECLARE, source client", async () => {
+      let request = await connecter("CLIENT");
       const reponse = await repondre(request, "ENJEU", "AJOUTER", { valeur: `Pénurie de talents QA ${Date.now()}` });
       expect(reponse.status(), await reponse.text()).toBe(201);
       const { fait } = await reponse.json();
@@ -74,16 +86,16 @@ test.describe("COMPANY ATLAS LOT 4 — Profil Client (API)", () => {
       expect(fait.confirmeDepuis).toBeNull();
     });
 
-    test("anti-doublon : une valeur déjà active (normalisée) est refusée (409)", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("anti-doublon : une valeur déjà active (normalisée) est refusée (409)", async () => {
+      let request = await connecter("CLIENT");
       const valeur = `Disponibilité stricte ${Date.now()}`;
       await repondre(request, "CONTRAINTE_DURABLE", "AJOUTER", { valeur });
       const doublon = await repondre(request, "CONTRAINTE_DURABLE", "AJOUTER", { valeur: `  ${valeur.toUpperCase()}  ` });
       expect(doublon.status()).toBe(409);
     });
 
-    test("deux valeurs distinctes de la même clé répétable -> toutes deux actives simultanément", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("deux valeurs distinctes de la même clé répétable -> toutes deux actives simultanément", async () => {
+      let request = await connecter("CLIENT");
       const suffixe = Date.now();
       await repondre(request, "RISQUE_DURABLE", "AJOUTER", { valeur: `Turnover élevé ${suffixe}` });
       await repondre(request, "RISQUE_DURABLE", "AJOUTER", { valeur: `Dépendance à un seul fournisseur ${suffixe}` });
@@ -93,14 +105,14 @@ test.describe("COMPANY ATLAS LOT 4 — Profil Client (API)", () => {
       expect(risques).toContain(`Dépendance à un seul fournisseur ${suffixe}`);
     });
 
-    test("valeur vide refusée (400) — jamais une valeur inventée", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("valeur vide refusée (400) — jamais une valeur inventée", async () => {
+      let request = await connecter("CLIENT");
       const reponse = await repondre(request, "ENJEU", "AJOUTER", { valeur: "" });
       expect(reponse.status()).toBe(400);
     });
 
-    test("clé hors périmètre (répétable ClientNeed ou inexistante) refusée (400)", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("clé hors périmètre (répétable ClientNeed ou inexistante) refusée (400)", async () => {
+      let request = await connecter("CLIENT");
       const competence = await repondre(request, "COMPETENCE", "AJOUTER", { valeur: "Java" });
       expect(competence.status()).toBe(400);
       const inexistante = await repondre(request, "CLE_INEXISTANTE", "AJOUTER", { valeur: "x" });
@@ -109,8 +121,8 @@ test.describe("COMPANY ATLAS LOT 4 — Profil Client (API)", () => {
   });
 
   test.describe("AJOUTER — clé singleton (CONTEXTE_ACTIVITE)", () => {
-    test("une nouvelle valeur remplace la précédente (dernière gagne), l'ancienne reste en base", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("une nouvelle valeur remplace la précédente (dernière gagne), l'ancienne reste en base", async () => {
+      let request = await connecter("CLIENT");
       const suffixe = Date.now();
       await repondre(request, "CONTEXTE_ACTIVITE", "AJOUTER", { valeur: `Entreprise industrielle ${suffixe}` });
       await repondre(request, "CONTEXTE_ACTIVITE", "AJOUTER", { valeur: `Entreprise industrielle, forte saisonnalité ${suffixe}` });
@@ -128,8 +140,8 @@ test.describe("COMPANY ATLAS LOT 4 — Profil Client (API)", () => {
   });
 
   test.describe("CONFIRMER — supersession logique", () => {
-    test("crée une nouvelle ligne VERIFIE avec confirmeDepuis, l'original devient inactif mais reste en base", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("crée une nouvelle ligne VERIFIE avec confirmeDepuis, l'original devient inactif mais reste en base", async () => {
+      let request = await connecter("CLIENT");
       const valeur = `Saisonnalité forte ${Date.now()}`;
       const creation = await repondre(request, "ENJEU", "AJOUTER", { valeur });
       const { fait: original } = await creation.json();
@@ -150,8 +162,8 @@ test.describe("COMPANY ATLAS LOT 4 — Profil Client (API)", () => {
       expect(original_toujours_en_base).not.toBeNull(); // jamais supprimé
     });
 
-    test("confirmer un fait déjà confirmé (superseded) -> 404, jamais deux instances actives pour la même info", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("confirmer un fait déjà confirmé (superseded) -> 404, jamais deux instances actives pour la même info", async () => {
+      let request = await connecter("CLIENT");
       const creation = await repondre(request, "PREFERENCE_DURABLE", "AJOUTER", { valeur: `Communication hebdomadaire ${Date.now()}` });
       const { fait: original } = await creation.json();
       await repondre(request, "PREFERENCE_DURABLE", "CONFIRMER", { factIdACopier: original.id });
@@ -160,8 +172,8 @@ test.describe("COMPANY ATLAS LOT 4 — Profil Client (API)", () => {
       expect(doubleConfirmation.status()).toBe(404);
     });
 
-    test("factIdACopier manquant ou vide -> 400", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("factIdACopier manquant ou vide -> 400", async () => {
+      let request = await connecter("CLIENT");
       const reponse = await repondre(request, "ENJEU", "CONFIRMER", {});
       expect(reponse.status()).toBe(400);
     });
@@ -177,24 +189,24 @@ test.describe("COMPANY ATLAS LOT 4 — Profil Client (API)", () => {
       expect(post.status()).toBe(403);
     });
 
-    test("ADMIN / INGENIEUR : 403 sur toutes les routes /api/client/profil*", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("ADMIN / INGENIEUR : 403 sur toutes les routes /api/client/profil*", async () => {
+      let request = await connecter("ADMIN");
       const admin = await request.get("/api/client/profil");
       expect(admin.status()).toBe(403);
 
-      await connecter(request, "ingenieur-demo@example.com");
+      request = await connecter("INGENIEUR");
       const ingenieur = await request.get("/api/client/profil");
       expect(ingenieur.status()).toBe(403);
     });
 
-    test("IDOR — confirmer le fait d'un autre client (factIdACopier étranger) est refusé (404), aucune fuite, aucune écriture", async ({ request }) => {
+    test("IDOR — confirmer le fait d'un autre client (factIdACopier étranger) est refusé (404), aucune fuite, aucune écriture", async () => {
       const autreClient = await prisma.client.create({ data: { nom: `Client LOT4 IDOR ${Date.now()}` } });
       const autreProfil = await prisma.clientProfile.create({ data: { clientId: autreClient.id } });
       const autreFait = await prisma.clientProfileFact.create({
         data: { profileId: autreProfil.id, cle: "ENJEU", valeur: "Information confidentielle d'un autre client", statut: "DECLARE", source: "client" },
       });
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const tentative = await repondre(request, "ENJEU", "CONFIRMER", { factIdACopier: autreFait.id });
       expect(tentative.status()).toBe(404);
 
@@ -205,24 +217,24 @@ test.describe("COMPANY ATLAS LOT 4 — Profil Client (API)", () => {
       expect(data.faits.some((f: { valeur: string }) => f.valeur === "Information confidentielle d'un autre client")).toBe(false);
     });
 
-    test("un client ne voit jamais les faits de profil d'un autre client dans son propre GET", async ({ request }) => {
+    test("un client ne voit jamais les faits de profil d'un autre client dans son propre GET", async () => {
       const autreClient = await prisma.client.create({ data: { nom: `Client LOT4 Isolation ${Date.now()}` } });
       const autreProfil = await prisma.clientProfile.create({ data: { clientId: autreClient.id } });
       await prisma.clientProfileFact.create({
         data: { profileId: autreProfil.id, cle: "RISQUE_DURABLE", valeur: "Risque propre à un autre client", statut: "DECLARE", source: "client" },
       });
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const data = await lireProfil(request);
       expect(data.faits.some((f: { valeur: string }) => f.valeur === "Risque propre à un autre client")).toBe(false);
       expect(data.profile.id).not.toBe(autreProfil.id);
     });
 
-    test("clientId fourni dans le corps de PATCH est structurellement ignoré — toujours celui de la session", async ({ request }) => {
+    test("clientId fourni dans le corps de PATCH est structurellement ignoré — toujours celui de la session", async () => {
       const autreClient = await prisma.client.create({ data: { nom: `Client LOT4 Spoof ${Date.now()}` } });
       const nomAvant = autreClient.nom;
 
-      await connecter(request, "client-demo@example.com");
+      let request = await connecter("CLIENT");
       const reponse = await request.fetch("/api/client/profil", {
         method: "PATCH",
         data: { secteur: "Tentative", clientId: autreClient.id, id: autreClient.id },

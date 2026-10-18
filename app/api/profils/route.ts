@@ -36,7 +36,7 @@ export async function GET() {
     return {
       ...p,
       tjmCout: calculerTjmCout(p.type, p.montantSaisi, hyp),
-      missionsTerminees: missions.filter((m) => m.statut === "Terminée").length,
+      missionsTerminees: missions.filter((m) => m.statut === "TERMINEE").length,
       evaluationMoyenne,
       nombreEvaluations: evaluations.length,
     };

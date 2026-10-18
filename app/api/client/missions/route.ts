@@ -37,7 +37,6 @@ export async function GET() {
           nom: true,
           prenom: true,
           realisations: true,
-          videoUrl: true,
           missions: { select: { statut: true, evaluation: { select: { note: true } } } },
         },
       },
@@ -46,14 +45,14 @@ export async function GET() {
   });
 
   const enrichies = missions.map((m) => {
-    const { missions: missionsProfil, videoUrl, ...profilBase } = m.profil;
+    const { missions: missionsProfil, ...profilBase } = m.profil;
     const evaluations = missionsProfil.map((mp) => mp.evaluation?.note).filter((n): n is number => n != null);
     const evaluationMoyenne = evaluations.length > 0 ? evaluations.reduce((s, n) => s + n, 0) / evaluations.length : null;
-    const missionsTerminees = missionsProfil.filter((mp) => mp.statut === "Terminée").length;
+    const missionsTerminees = missionsProfil.filter((mp) => mp.statut === "TERMINEE").length;
     const badge = calculerBadgeConfiance({ evaluationMoyenne, nombreEvaluations: evaluations.length, missionsTerminees });
     return {
       ...m,
-      profil: { ...profilBase, badge, aVideo: Boolean(videoUrl) },
+      profil: { ...profilBase, badge },
     };
   });
 

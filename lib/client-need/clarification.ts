@@ -13,7 +13,10 @@
 //
 // Périmètre LOT 3 (décision CEO) : uniquement les clés NON RÉPÉTABLES —
 // les clés répétables (COMPETENCE, CONTRAINTE, CRITERE_REUSSITE, PRIORITE,
-// RISQUE, PREFERENCE) restent hors périmètre.
+// RISQUE, PREFERENCE) restent hors périmètre. Décision non réouverte par
+// A6.1 (01/10/2026) : RESULTAT_ATTENDU rejoint cette liste car il est
+// singleton (une seule valeur courante, comme ROLE/SENIORITE/etc.) ;
+// CRITERE_REUSSITE reste exclu, toujours répétable.
 
 import type { ClientNeedFaitCle } from "@prisma/client";
 import type { ReglePlateforme } from "./coherence";
@@ -38,6 +41,11 @@ export const CLES_CLARIFIABLES: ClientNeedFaitCle[] = [
   "DISPONIBILITE",
   "LOCALISATION",
   "REMOTE",
+  // A6.1 — Outcome Foundation : singleton, donc éligible à la même boucle
+  // CONFIRMER/CORRIGER que les clés ci-dessus — aucun changement de
+  // structure de route nécessaire (app/api/client/besoins/[id]/faits/
+  // route.ts reste générique sur ce vocabulaire).
+  "RESULTAT_ATTENDU",
 ];
 
 // Pour chaque règle du moteur de cohérence : quelle(s) clé(s), si

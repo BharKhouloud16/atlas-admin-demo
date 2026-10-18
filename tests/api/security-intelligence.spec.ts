@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 
 // ATLAS OS — TRUST & SECURITY INTELLIGENCE FOUNDATION (Batch 16, 08/09/2026).
 // Tests API : RBAC sur les nouvelles routes /api/security/*, escalade de
@@ -8,21 +9,32 @@ import { test, expect, APIRequestContext } from "@playwright/test";
 // une réponse API) — voir directive B16, section 7.
 const MOT_DE_PASSE = "Demo1234";
 
-async function connecter(request: APIRequestContext, email: string, password = MOT_DE_PASSE) {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 test.describe("Sécurité — RBAC sur /api/security/*", () => {
   for (const chemin of ["/api/security/evenements", "/api/security/runtime", "/api/security/propositions"]) {
-    test(`${chemin} refuse un Client (403) — escalade verticale`, async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test(`${chemin} refuse un Client (403) — escalade verticale`, async () => {
+      let request = await connecter("CLIENT");
       const reponse = await request.get(chemin);
       expect(reponse.status()).toBe(403);
     });
 
-    test(`${chemin} refuse un Ingénieur (403) — escalade verticale`, async ({ request }) => {
-      await connecter(request, "ingenieur-demo@example.com");
+    test(`${chemin} refuse un Ingénieur (403) — escalade verticale`, async () => {
+      let request = await connecter("INGENIEUR");
       const reponse = await request.get(chemin);
       expect(reponse.status()).toBe(403);
     });
@@ -32,8 +44,8 @@ test.describe("Sécurité — RBAC sur /api/security/*", () => {
       expect(reponse.status()).toBe(403);
     });
 
-    test(`${chemin} accepte l'Admin (200)`, async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test(`${chemin} accepte l'Admin (200)`, async () => {
+      let request = await connecter("ADMIN");
       const reponse = await request.get(chemin);
       expect(reponse.status()).toBe(200);
     });
@@ -46,7 +58,7 @@ test.describe("Sécurité — traçabilité de l'audit (EvenementSecurite)", () 
     const echec = await request.post("/api/auth/login", { data: { email: emailInexistant, password: "peu-importe" } });
     expect(echec.status()).toBe(401);
 
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     const evenements = await request.get("/api/security/evenements?action=auth.login.echec&limite=50");
     expect(evenements.status()).toBe(200);
     const { evenements: liste } = await evenements.json();
@@ -54,15 +66,15 @@ test.describe("Sécurité — traçabilité de l'audit (EvenementSecurite)", () 
     expect(liste.some((e: { acteurEmail: string | null; resultat: string }) => e.acteurEmail === emailInexistant && e.resultat === "REFUSE")).toBeTruthy();
   });
 
-  test("une connexion réussie crée un événement SUCCES", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("une connexion réussie crée un événement SUCCES", async () => {
+    let request = await connecter("ADMIN");
     const evenements = await request.get("/api/security/evenements?action=auth.login.succes&limite=50");
     const { evenements: liste } = await evenements.json();
     expect(liste.some((e: { acteurEmail: string; resultat: string }) => e.acteurEmail === "admin-demo@example.com" && e.resultat === "SUCCES")).toBeTruthy();
   });
 
-  test("aucune donnée sensible (mot de passe/hash/secret) dans la réponse des événements", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("aucune donnée sensible (mot de passe/hash/secret) dans la réponse des événements", async () => {
+    let request = await connecter("ADMIN");
     const reponse = await request.get("/api/security/evenements?limite=50");
     const corpsBrut = await reponse.text();
     expect(corpsBrut).not.toContain("passwordHash");
@@ -71,15 +83,15 @@ test.describe("Sécurité — traçabilité de l'audit (EvenementSecurite)", () 
     expect(corpsBrut.toLowerCase()).not.toContain("totpsecret");
   });
 
-  test("une génération de contrat refusée (rôle Client) crée un événement rbac.acces_refuse", async ({ request }) => {
-    await connecter(request, "client-demo@example.com");
+  test("une génération de contrat refusée (rôle Client) crée un événement rbac.acces_refuse", async () => {
+    let request = await connecter("CLIENT");
     const refus = await request.post("/api/generate-contract", {
       data: { missionId: "peu-importe", templateKey: "contrat_prestation" },
     });
     expect(refus.status()).toBe(403);
 
     const avant = Date.now();
-    await connecter(request, "admin-demo@example.com");
+    request = await connecter("ADMIN");
     // Filtre par acteurEmail (pas seulement action) ET par récence : la
     // base de CI est réutilisée d'une exécution à l'autre, donc de
     // nombreux événements rbac.acces_refuse historiques pour ce même
@@ -103,8 +115,8 @@ test.describe("Sécurité — traçabilité de l'audit (EvenementSecurite)", () 
 });
 
 test.describe("Sécurité — isolation inter-client (object-level / horizontale)", () => {
-  test("un Client ne voit jamais les missions d'un autre client", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("un Client ne voit jamais les missions d'un autre client", async () => {
+    let request = await connecter("ADMIN");
 
     const clientOriginal = await request.get("/api/clients");
     const clientsAvant = await clientOriginal.json();
@@ -125,7 +137,7 @@ test.describe("Sécurité — isolation inter-client (object-level / horizontale
 
     // client-demo (compte existant, distinct du client fraîchement créé)
     // ne doit jamais voir cette mission.
-    await connecter(request, "client-demo@example.com");
+    request = await connecter("CLIENT");
     const missionsClient = await request.get("/api/client/missions");
     expect(missionsClient.status()).toBe(200);
     const liste = await missionsClient.json();
@@ -142,17 +154,17 @@ test.describe("Sécurité — isolation inter-client (object-level / horizontale
     void clientsAvant; // conservé pour lisibilité du diff, non utilisé plus loin
   });
 
-  test("un Ingénieur n'a jamais accès au circuit de validation Admin/Client des feuilles de temps (PATCH)", async ({ request }) => {
+  test("un Ingénieur n'a jamais accès au circuit de validation Admin/Client des feuilles de temps (PATCH)", async () => {
     // Utilise une feuille de temps réelle (pas un id inexistant) : la route
     // vérifie d'abord l'existence de l'objet (404 sinon), donc un id fictif
     // ne teste jamais la porte de rôle elle-même — voir
     // app/api/feuilles-de-temps/route.ts (PATCH).
-    await connecter(request, "admin-demo@example.com");
+    let request = await connecter("ADMIN");
     const feuilles = await (await request.get("/api/feuilles-de-temps")).json();
     const uneFeuille = feuilles.feuilles?.[0];
     expect(uneFeuille, "au moins une feuille de temps doit exister dans les données de démo").toBeTruthy();
 
-    await connecter(request, "ingenieur-demo@example.com");
+    request = await connecter("INGENIEUR");
     const reponse = await request.patch("/api/feuilles-de-temps", {
       data: { id: uneFeuille.id, action: "validerAdmin" },
     });
@@ -161,8 +173,8 @@ test.describe("Sécurité — isolation inter-client (object-level / horizontale
 });
 
 test.describe("Sécurité — propositions (validation humaine, jamais d'application automatique)", () => {
-  test("cycle complet : création, décision requiert un motif, double décision refusée", async ({ request }) => {
-    await connecter(request, "admin-demo@example.com");
+  test("cycle complet : création, décision requiert un motif, double décision refusée", async () => {
+    let request = await connecter("ADMIN");
 
     const creation = await request.post("/api/security/propositions", {
       data: {
@@ -194,8 +206,8 @@ test.describe("Sécurité — propositions (validation humaine, jamais d'applica
     expect(doubleDecision.status()).toBe(409);
   });
 
-  test("un Ingénieur ne peut ni créer ni décider d'une proposition (403)", async ({ request }) => {
-    await connecter(request, "ingenieur-demo@example.com");
+  test("un Ingénieur ne peut ni créer ni décider d'une proposition (403)", async () => {
+    let request = await connecter("INGENIEUR");
     const creation = await request.post("/api/security/propositions", {
       data: { origine: "MANUEL:x", titre: "x", description: "x" },
     });

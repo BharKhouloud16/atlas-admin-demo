@@ -1,4 +1,5 @@
-import { test, expect, APIRequestContext } from "@playwright/test";
+import { test, expect, APIRequestContext, request as pwRequest } from "@playwright/test";
+import { ADMIN_STATE, CLIENT_STATE, INGENIEUR_STATE } from "../setup/storage-state";
 import { prisma } from "@/lib/prisma";
 
 // COMPANY ATLAS — LOT 6 : Mission Context Bridge (16/09/2026).
@@ -7,9 +8,20 @@ import { prisma } from "@/lib/prisma";
 // cardinalité 1 demande -> N missions, concurrence, provenance intacte,
 // et le champ dérivé missionEnCours sur GET /api/client/besoins.
 
-async function connecter(request: APIRequestContext, email: string, password = "Demo1234") {
-  const reponse = await request.post("/api/auth/login", { data: { email, password } });
-  expect(reponse.ok(), `connexion ${email} devrait réussir`).toBeTruthy();
+const ETATS_SESSION: Record<"ADMIN" | "CLIENT" | "INGENIEUR", string> = {
+  ADMIN: ADMIN_STATE,
+  CLIENT: CLIENT_STATE,
+  INGENIEUR: INGENIEUR_STATE,
+};
+
+// Reutilise la session deja authentifiee une seule fois pour toute la
+// suite par tests/setup/auth.setup.ts (storageState), au lieu d'un vrai
+// POST /api/auth/login par test.
+async function connecter(role: "ADMIN" | "CLIENT" | "INGENIEUR"): Promise<APIRequestContext> {
+  return pwRequest.newContext({
+    baseURL: process.env.BASE_URL ?? "http://localhost:3000",
+    storageState: ETATS_SESSION[role],
+  });
 }
 
 async function creerProfil() {
@@ -26,8 +38,8 @@ async function creerDemande(clientId: string, extra: Record<string, unknown> = {
 
 test.describe("COMPANY ATLAS LOT 6 — Mission Context Bridge (API)", () => {
   test.describe("POST /api/missions — sourceDemandeId", () => {
-    test("crée la mission avec clientId dérivé de la demande, dateDebut/modeTravail par défaut depuis la demande", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("crée la mission avec clientId dérivé de la demande, dateDebut/modeTravail par défaut depuis la demande", async () => {
+      let request = await connecter("ADMIN");
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const profil = await creerProfil();
       const demande = await creerDemande(client!.id, {
@@ -46,8 +58,8 @@ test.describe("COMPANY ATLAS LOT 6 — Mission Context Bridge (API)", () => {
       expect(mission.modeTravail).toBe("Remote");
     });
 
-    test("clientId fourni dans le body est structurellement ignoré quand sourceDemandeId est donné", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("clientId fourni dans le body est structurellement ignoré quand sourceDemandeId est donné", async () => {
+      let request = await connecter("ADMIN");
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const creationClient = await request.post("/api/clients", { data: { nom: `Client LOT6 Spoof ${Date.now()}` } });
       const autreClient = await creationClient.json();
@@ -63,8 +75,8 @@ test.describe("COMPANY ATLAS LOT 6 — Mission Context Bridge (API)", () => {
       expect(mission.clientId).not.toBe(autreClient.id);
     });
 
-    test("dateDebut/modeTravail explicites l'emportent sur la suggestion de la demande", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("dateDebut/modeTravail explicites l'emportent sur la suggestion de la demande", async () => {
+      let request = await connecter("ADMIN");
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const profil = await creerProfil();
       const demande = await creerDemande(client!.id, { dateDebutSouhaitee: new Date("2026-12-01"), mobilite: "Remote" });
@@ -78,8 +90,8 @@ test.describe("COMPANY ATLAS LOT 6 — Mission Context Bridge (API)", () => {
       expect(mission.modeTravail).toBe("Sur site");
     });
 
-    test("sourceDemandeId inexistant -> 404, aucune mission créée", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("sourceDemandeId inexistant -> 404, aucune mission créée", async () => {
+      let request = await connecter("ADMIN");
       const profil = await creerProfil();
       const reponse = await request.post("/api/missions", {
         data: { sourceDemandeId: "inexistant-xyz", profilId: profil.id, nbJours: 5, tjmVente: 500 },
@@ -88,8 +100,8 @@ test.describe("COMPANY ATLAS LOT 6 — Mission Context Bridge (API)", () => {
       expect(await prisma.mission.count({ where: { profilId: profil.id } })).toBe(0);
     });
 
-    test("modeTravail hors vocabulaire fermé -> 400", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("modeTravail hors vocabulaire fermé -> 400", async () => {
+      let request = await connecter("ADMIN");
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const profil = await creerProfil();
       const reponse = await request.post("/api/missions", {
@@ -98,8 +110,8 @@ test.describe("COMPANY ATLAS LOT 6 — Mission Context Bridge (API)", () => {
       expect(reponse.status()).toBe(400);
     });
 
-    test("dateDebut invalide -> 400, aucune mission créée", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("dateDebut invalide -> 400, aucune mission créée", async () => {
+      let request = await connecter("ADMIN");
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const profil = await creerProfil();
       const reponse = await request.post("/api/missions", {
@@ -109,8 +121,8 @@ test.describe("COMPANY ATLAS LOT 6 — Mission Context Bridge (API)", () => {
       expect(await prisma.mission.count({ where: { profilId: profil.id } })).toBe(0);
     });
 
-    test("cardinalité : une même demande peut produire plusieurs missions (jamais 1 demande = 1 mission imposé)", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("cardinalité : une même demande peut produire plusieurs missions (jamais 1 demande = 1 mission imposé)", async () => {
+      let request = await connecter("ADMIN");
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const profilA = await creerProfil();
       const profilB = await creerProfil();
@@ -125,8 +137,8 @@ test.describe("COMPANY ATLAS LOT 6 — Mission Context Bridge (API)", () => {
       expect(nb).toBe(2);
     });
 
-    test("concurrence : deux créations simultanées depuis la même demande réussissent toutes les deux", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("concurrence : deux créations simultanées depuis la même demande réussissent toutes les deux", async () => {
+      let request = await connecter("ADMIN");
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const profilA = await creerProfil();
       const profilB = await creerProfil();
@@ -141,8 +153,8 @@ test.describe("COMPANY ATLAS LOT 6 — Mission Context Bridge (API)", () => {
       expect(await prisma.mission.count({ where: { sourceDemandeId: demande.id } })).toBe(2);
     });
 
-    test("provenance : la DemandeTalent source n'est jamais modifiée par la création d'une Mission", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("provenance : la DemandeTalent source n'est jamais modifiée par la création d'une Mission", async () => {
+      let request = await connecter("ADMIN");
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const profil = await creerProfil();
       const demande = await creerDemande(client!.id, { mobilite: "Hybride", statut: "SOUMISE" });
@@ -161,19 +173,19 @@ test.describe("COMPANY ATLAS LOT 6 — Mission Context Bridge (API)", () => {
       const sansSession = await request.post("/api/missions", { data: { clientId: client!.id, profilId: profil.id, nbJours: 5, tjmVente: 500 } });
       expect(sansSession.status()).toBe(403);
 
-      await connecter(request, "client-demo@example.com");
+      request = await connecter("CLIENT");
       const commeClient = await request.post("/api/missions", { data: { clientId: client!.id, profilId: profil.id, nbJours: 5, tjmVente: 500 } });
       expect(commeClient.status()).toBe(403);
 
-      await connecter(request, "ingenieur-demo@example.com");
+      request = await connecter("INGENIEUR");
       const commeIngenieur = await request.post("/api/missions", { data: { clientId: client!.id, profilId: profil.id, nbJours: 5, tjmVente: 500 } });
       expect(commeIngenieur.status()).toBe(403);
 
       expect(await prisma.mission.count({ where: { profilId: profil.id } })).toBe(0);
     });
 
-    test("comportement existant préservé : création sans sourceDemandeId (clientId direct) continue de fonctionner", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("comportement existant préservé : création sans sourceDemandeId (clientId direct) continue de fonctionner", async () => {
+      let request = await connecter("ADMIN");
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const profil = await creerProfil();
       const creation = await request.post("/api/missions", { data: { clientId: client!.id, profilId: profil.id, nbJours: 8, tjmVente: 450 } });
@@ -186,8 +198,8 @@ test.describe("COMPANY ATLAS LOT 6 — Mission Context Bridge (API)", () => {
   });
 
   test.describe("GET /api/missions — sourceDemande minimal, isolation par rôle", () => {
-    test("ADMIN voit sourceDemande (id + titre uniquement)", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("ADMIN voit sourceDemande (id + titre uniquement)", async () => {
+      let request = await connecter("ADMIN");
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const profil = await creerProfil();
       const demande = await creerDemande(client!.id, { titre: "Titre demande LOT6" });
@@ -195,13 +207,13 @@ test.describe("COMPANY ATLAS LOT 6 — Mission Context Bridge (API)", () => {
       const { id: missionId } = await creation.json();
 
       const liste = await request.get("/api/missions");
-      const missions = await liste.json();
+      const { items: missions } = await liste.json();
       const trouvee = missions.find((m: { id: string }) => m.id === missionId);
       expect(trouvee.sourceDemande).toEqual({ id: demande.id, titre: "Titre demande LOT6" });
     });
 
-    test("INGENIEUR voit dateDebut/modeTravail de sa mission mais jamais sourceDemande ni les tarifs", async ({ request }) => {
-      await connecter(request, "admin-demo@example.com");
+    test("INGENIEUR voit dateDebut/modeTravail de sa mission mais jamais sourceDemande ni les tarifs", async () => {
+      let request = await connecter("ADMIN");
       const client = await prisma.client.findFirst({ where: { compte: { email: "client-demo@example.com" } } });
       const ingenieur = await prisma.profil.findFirst({ where: { compte: { email: "ingenieur-demo@example.com" } } });
       const demande = await creerDemande(client!.id, { titre: "Confidentiel" });
@@ -210,9 +222,9 @@ test.describe("COMPANY ATLAS LOT 6 — Mission Context Bridge (API)", () => {
       });
       expect(creation.status(), await creation.text()).toBe(201);
 
-      await connecter(request, "ingenieur-demo@example.com");
+      request = await connecter("INGENIEUR");
       const liste = await request.get("/api/missions");
-      const missions = await liste.json();
+      const { items: missions } = await liste.json();
       const mission = missions[0];
       expect(mission.dateDebut).toBeTruthy();
       expect(mission.modeTravail).toBe("Remote");
@@ -222,27 +234,27 @@ test.describe("COMPANY ATLAS LOT 6 — Mission Context Bridge (API)", () => {
   });
 
   test.describe("GET /api/client/besoins — missionEnCours", () => {
-    test("passe à true une fois qu'une Mission a été créée depuis la demande liée au besoin, sans exposer de donnée interne", async ({ request }) => {
-      await connecter(request, "client-demo@example.com");
+    test("passe à true une fois qu'une Mission a été créée depuis la demande liée au besoin, sans exposer de donnée interne", async () => {
+      let request = await connecter("CLIENT");
       const creationBesoin = await request.post("/api/client/besoins", { data: { texteOriginal: `Besoin LOT6 mission ${Date.now()}` } });
       const { besoin } = await creationBesoin.json();
       await prisma.clientNeed.update({ where: { id: besoin.id }, data: { statut: "VALIDE" } });
 
-      await connecter(request, "admin-demo@example.com");
+      request = await connecter("ADMIN");
       const bridge = await request.post(`/api/talent/besoins/${besoin.id}/creer-demande`, { data: { description: "Description suffisamment longue pour LOT6." } });
       expect(bridge.status(), await bridge.text()).toBe(201);
       const demande = await bridge.json();
 
-      await connecter(request, "client-demo@example.com");
+      request = await connecter("CLIENT");
       const avant = await request.get("/api/client/besoins");
       const { besoins: avantListe } = await avant.json();
       expect(avantListe.find((b: { id: string }) => b.id === besoin.id).missionEnCours).toBe(false);
 
-      await connecter(request, "admin-demo@example.com");
+      request = await connecter("ADMIN");
       const profil = await creerProfil();
       await request.post("/api/missions", { data: { sourceDemandeId: demande.id, profilId: profil.id, nbJours: 5, tjmVente: 500 } });
 
-      await connecter(request, "client-demo@example.com");
+      request = await connecter("CLIENT");
       const apres = await request.get("/api/client/besoins");
       const { besoins: apresListe } = await apres.json();
       const trouve = apresListe.find((b: { id: string }) => b.id === besoin.id);
