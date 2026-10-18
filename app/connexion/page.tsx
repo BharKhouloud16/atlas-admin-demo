@@ -54,24 +54,30 @@ export default function ConnexionPage() {
     setError("");
     setLoading(true);
 
-    const res = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(totpRequis ? { email, password, code: code2fa } : { email, password }),
-    });
-    const data = await res.json();
-    setLoading(false);
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(totpRequis ? { email, password, code: code2fa } : { email, password }),
+      });
+      const data = await res.json();
 
-    if (!res.ok) {
-      if (data.requiresTotp) {
-        setTotpRequis(true);
-        setError(totpRequis ? data.error ?? "Code invalide." : "");
-      } else {
-        setError(data.error ?? "Identifiants invalides.");
+      if (!res.ok) {
+        if (data.requiresTotp) {
+          setTotpRequis(true);
+          setError(totpRequis ? data.error ?? "Code invalide." : "");
+        } else {
+          setError(data.error ?? "Identifiants invalides.");
+        }
+        return;
       }
-      return;
+      router.push(data.redirect ?? "/admin");
+    } catch {
+      setError("Impossible de contacter le serveur. Vérifiez votre connexion puis réessayez.");
+    } finally {
+      // Garantit que l'utilisateur peut réessayer après une erreur réseau ou une réponse illisible.
+      setLoading(false);
     }
-    router.push(data.redirect ?? "/admin");
   }
 
   const contexte = role ? CONTEXTES[role] : null;
