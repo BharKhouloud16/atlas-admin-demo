@@ -59,9 +59,62 @@ test.describe("Connexion", () => {
     await expect(page.getByRole("button", { name: /se connecter/i })).toBeEnabled();
   });
 
-  test("un compte en attente de validation ne peut pas se connecter", async ({ page }) => {
+  // Correctif (18/10/2026) — "le bouton reste bloqué sur Connexion…" : les
+  // scénarios ci-dessous ciblent précisément le chemin signalé bloqué
+  // (/connexion?role=ingenieur), au-delà de la seule panne réseau déjà
+  // couverte ci-dessus. Chacun vérifie un résultat observable (URL, texte
+  // du bouton, état disabled) — jamais la seule présence de try/catch dans
+  // le code.
+  test("un Ingénieur en attente de décision (candidat limité) se connecte et atterrit sur l'espace candidature, sans blocage du bouton", async ({ page }) => {
     await seConnecter(page, "en-attente-demo@example.com", MOT_DE_PASSE);
-    await expect(page).toHaveURL(/\/connexion/);
+    await expect(page).toHaveURL(/\/ingenieur\/candidature/);
+  });
+
+  test("une réponse serveur 500 (corps non JSON) réactive le bouton avec un message, sans blocage infini", async ({ page }) => {
+    await page.route("**/api/auth/login", (route) =>
+      route.fulfill({ status: 500, contentType: "text/html", body: "<html>Internal Server Error</html>" })
+    );
+    await page.goto("/connexion?role=ingenieur");
+    await page.getByPlaceholder("Email").fill("ingenieur-demo@example.com");
+    await page.getByPlaceholder("Mot de passe").fill(MOT_DE_PASSE);
+    await page.getByRole("button", { name: /se connecter/i }).click();
+
+    await expect(page.getByText(/impossible de contacter le serveur/i)).toBeVisible();
+    await expect(page.getByRole("button", { name: /se connecter/i })).toBeEnabled();
+  });
+
+  test("une API qui ne répond jamais réactive le bouton après le délai maximal (15s)", async ({ page }) => {
+    await page.route("**/api/auth/login", async () => {
+      await new Promise((resolve) => setTimeout(resolve, 60_000));
+    });
+    await page.goto("/connexion?role=ingenieur");
+    await page.getByPlaceholder("Email").fill("ingenieur-demo@example.com");
+    await page.getByPlaceholder("Mot de passe").fill(MOT_DE_PASSE);
+    await page.getByRole("button", { name: /se connecter/i }).click();
+
+    await expect(page.getByRole("button", { name: /connexion\.\.\./i })).toBeDisabled();
+    await expect(page.getByText(/impossible de contacter le serveur/i)).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole("button", { name: /se connecter/i })).toBeEnabled();
+  });
+
+  test("après un échec réseau, on peut réessayer sur la même page (sans recharger) et réussir", async ({ page }) => {
+    let premierAppel = true;
+    await page.route("**/api/auth/login", async (route) => {
+      if (premierAppel) {
+        premierAppel = false;
+        await route.abort("failed");
+      } else {
+        await route.continue();
+      }
+    });
+    await page.goto("/connexion?role=ingenieur");
+    await page.getByPlaceholder("Email").fill("ingenieur-demo@example.com");
+    await page.getByPlaceholder("Mot de passe").fill(MOT_DE_PASSE);
+    await page.getByRole("button", { name: /se connecter/i }).click();
+    await expect(page.getByText(/impossible de contacter le serveur/i)).toBeVisible();
+
+    await page.getByRole("button", { name: /se connecter/i }).click();
+    await expect(page).toHaveURL(/\/ingenieur\/cv/);
   });
 });
 
