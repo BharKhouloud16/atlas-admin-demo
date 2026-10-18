@@ -54,10 +54,14 @@ export default function ConnexionPage() {
     setError("");
     setLoading(true);
 
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
+
     try {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify(totpRequis ? { email, password, code: code2fa } : { email, password }),
       });
       const data = await res.json();
@@ -75,7 +79,8 @@ export default function ConnexionPage() {
     } catch {
       setError("Impossible de contacter le serveur. Vérifiez votre connexion puis réessayez.");
     } finally {
-      // Garantit que l'utilisateur peut réessayer après une erreur réseau ou une réponse illisible.
+      window.clearTimeout(timeoutId);
+      // Garantit que l'utilisateur peut réessayer après une erreur réseau, une réponse illisible ou un délai dépassé.
       setLoading(false);
     }
   }
