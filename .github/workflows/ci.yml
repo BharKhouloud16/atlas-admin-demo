@@ -64,12 +64,29 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          # Pas de `cache: npm` ici : ce dépôt est géré sans installation
-          # locale (déploiement par upload web GitHub, voir mémoire projet),
-          # donc aucun package-lock.json n'est commité — `actions/setup-node`
-          # exigerait un fichier de verrouillage pour son cache, et `npm ci`
-          # aussi. On utilise `npm install` ci-dessous à la place.
+          node-version: 22
+          # FIX (18/10/2026) — passé de Node 20 à Node 22 après un diagnostic
+          # contrôlé de 5 échecs consécutifs de "Installation des
+          # dépendances" avec l'erreur interne npm "Cannot read properties
+          # of null (reading 'edgesOut')" (bug de résolution récursive des
+          # peerDependencies optionnelles dans @npmcli/arborist, atteint via
+          # la chaîne d'instrumentation OpenTelemetry de @sentry/nextjs qui
+          # référence l'écosystème vitest). Comparaison contrôlée, même
+          # commit/package.json, même commande (`npm install`), cache npm
+          # isolé et vidé à chaque essai, PATH vérifié à chaque fois
+          # (`node -v`/`npm -v`/`which`) :
+          #   Node 20.20.2 + npm 10.8.2  -> échec reproduit (identique)
+          #   Node 20.20.2 + npm 10.9.4  -> échec reproduit (identique)
+          #   Node 22.22.0 + npm 10.8.2  -> réussite
+          #   Node 22.22.0 + npm 10.9.4  -> réussite
+          # La version de npm n'a aucun effet (10.8.2 et 10.9.4 échouent
+          # tous les deux sous Node 20) ; seule la version de Node fait la
+          # différence. Aucun lockfile ajouté : cette absence reste une
+          # décision volontaire et documentée de ce dépôt, non remise en
+          # cause ici faute de preuve qu'elle soit la cause (elle ne l'est
+          # pas — la même absence de lockfile n'empêche pas Node 22 de
+          # réussir). Pas de `cache: npm` ici pour la même raison qu'avant :
+          # aucun package-lock.json n'est commité.
 
       - name: Installation des dépendances
         run: npm install
