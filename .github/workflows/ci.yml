@@ -16,9 +16,10 @@ jobs:
     runs-on: ubuntu-latest
 
     # Base Postgres jetable pour ce run uniquement (jamais la base de
-    # production) — nécessaire car `npm run build` exécute
-    # `prisma migrate deploy` (voir package.json), et les tests E2E ont
-    # besoin de données réelles (voir prisma/seed.ts).
+    # production) — les migrations y sont appliquées explicitement (étape
+    # "Migrations (base CI jetable)" ci-dessous) : `npm run build` ne les
+    # exécute plus. Les tests E2E ont besoin de données réelles (voir
+    # prisma/seed.ts).
     services:
       postgres:
         image: postgres:16
@@ -63,7 +64,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           # Pas de `cache: npm` ici : ce dépôt est géré sans installation
           # locale (déploiement par upload web GitHub, voir mémoire projet),
           # donc aucun package-lock.json n'est commité — `actions/setup-node`
@@ -76,7 +77,13 @@ jobs:
       - name: Vérification des types TypeScript
         run: npx tsc --noEmit
 
-      - name: Build (génère le client Prisma, applique les migrations sur la base CI, build Next.js)
+      # Un build (CI, Vercel Preview ou Production) ne doit jamais appliquer
+      # de migrations implicitement. Elles restent une étape explicite,
+      # appliquée ici uniquement à la base CI jetable de ce run.
+      - name: Migrations (base CI jetable)
+        run: npm run migrate:deploy
+
+      - name: Build (génère le client Prisma, build Next.js)
         run: npm run build
 
       - name: Données de démo (pour les tests E2E)
