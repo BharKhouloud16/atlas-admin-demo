@@ -64,7 +64,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           # Pas de `cache: npm` ici : ce dépôt est géré sans installation
           # locale (déploiement par upload web GitHub, voir mémoire projet),
           # donc aucun package-lock.json n'est commité — `actions/setup-node`
