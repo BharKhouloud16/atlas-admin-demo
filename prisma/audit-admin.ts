@@ -6,7 +6,7 @@
  * ne correspond pas au libellé attendu.
  *
  * Usage :
- *   ATLAS_EXPECTED_DB_LABEL=supabase-historique npx tsx prisma/audit-admin.ts contact@atlas-qa.com
+ *   ATLAS_EXPECTED_DB_LABEL=<libellé-exact-confirmé> npx tsx prisma/audit-admin.ts contact@atlas-qa.com
  *
  * Ne jamais afficher/coller DATABASE_URL, passwordHash, secrets TOTP ou codes de secours.
  */
