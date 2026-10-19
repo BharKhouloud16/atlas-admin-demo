@@ -16,6 +16,20 @@ test.describe("API /api/auth/login", () => {
     expect(corps.error).toBeTruthy();
   });
 
+  // V1 — non-régression : un corps non-JSON faisait lever `req.json()` et
+  // renvoyait une erreur 500 non gérée. Attendu : 400 JSON contrôlé.
+  test("V1 : un corps non-JSON renvoie 400 JSON (jamais 500)", async ({ request }) => {
+    for (const route of ["/api/auth/login", "/api/auth/signup"]) {
+      const reponse = await request.post(route, {
+        headers: { "Content-Type": "application/json" },
+        data: "{pas du json",
+      });
+      expect(reponse.status(), route).toBe(400);
+      const corps = await reponse.json();
+      expect(corps.error, route).toBeTruthy();
+    }
+  });
+
   test("rejette un mot de passe vide", async ({ request }) => {
     const reponse = await request.post("/api/auth/login", {
       data: { email: "admin-demo@example.com", password: "" },
