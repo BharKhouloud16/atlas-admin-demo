@@ -57,7 +57,14 @@ jobs:
       # arbitraire) tout en couvrant la suite actuelle ; aucun test ne dépend
       # de la valeur exacte du seuil de rate-limiting lui-même (mécanisme
       # inchangé, toujours actif).
-      RATE_LIMIT_LOGIN_MAX_IP: "600"
+      # CI FIX (19/10/2026, PR V1) — même cause, la suite est passée à 1387
+      # tests : CI #336 a échoué sur un seul test, le premier à attendre le
+      # message « Identifiants invalides » après ~600 connexions depuis la même
+      # IP (le limiteur renvoie alors 429 « Trop de tentatives… »). Seuil relevé
+      # à 1000 pour la CI uniquement (Production garde sa valeur par défaut,
+      # 20 / 15 min) ; la consommation réelle est désormais mesurée à chaque run
+      # (étape « Consommation du limiteur de connexion » ci-dessous).
+      RATE_LIMIT_LOGIN_MAX_IP: "1000"
 
     steps:
       - uses: actions/checkout@v4
@@ -96,6 +103,13 @@ jobs:
         run: npx playwright test
         env:
           CI: true
+
+      # Lecture seule, base CI jetable : mesure le nombre de tentatives de
+      # connexion comptées par le limiteur pendant la suite, pour suivre la
+      # marge restante sous RATE_LIMIT_LOGIN_MAX_IP.
+      - name: Consommation du limiteur de connexion (diagnostic)
+        if: always()
+        run: psql "$DATABASE_URL" -c 'SELECT cle, compteur FROM "TentativeIp" ORDER BY compteur DESC LIMIT 5;' || true
 
       - name: Rapport Playwright (si des tests ont échoué)
         if: failure()
