@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import type { AttentionCategorie, AttentionDestinataireType } from "@prisma/client";
 import { synchroniserAttentionsClient } from "@/lib/attention/synchronisation";
 import { lirePreferenceNotification } from "@/lib/preference-notification";
-import { envoyerEmailMessageNonLu } from "@/lib/email";
+import { envoyerEmailMessageNonLu, resoudreBaseUrlApplication } from "@/lib/email";
 
 // COMPANY ATLAS — V2.5 : Communication Intelligence (Lot 4 — Email
 // transactionnel, 21/09/2026).
@@ -36,7 +36,6 @@ async function messageNonLuOuvertesDuThread(clientId: string) {
   });
 }
 
-const BASE_URL = process.env.EMAIL_APP_BASE_URL || "https://atlas-admin-demo.vercel.app";
 
 async function notifierDestinataire(
   clientId: string,
@@ -56,7 +55,10 @@ async function notifierDestinataire(
   const client = attention.recipientType === "CLIENT" ? await prisma.client.findUnique({ where: { id: clientId }, select: { nom: true } }) : null;
   const chemin = attention.recipientType === "CLIENT" ? "/client/communication" : `/admin/clients/${clientId}/messages`;
 
-  await envoyerEmailMessageNonLu({ to: compte.email, nom: client?.nom, lien: `${BASE_URL}${chemin}` });
+  // URL propre à l'environnement (jamais de repli vers le domaine de Production).
+  const base = resoudreBaseUrlApplication();
+  if (!base) return;
+  await envoyerEmailMessageNonLu({ to: compte.email, nom: client?.nom, lien: `${base}${chemin}` });
 }
 
 // Point d'entrée unique appelé depuis les routes POST Message (Client et

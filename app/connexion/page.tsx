@@ -54,24 +54,35 @@ export default function ConnexionPage() {
     setError("");
     setLoading(true);
 
-    const res = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(totpRequis ? { email, password, code: code2fa } : { email, password }),
-    });
-    const data = await res.json();
-    setLoading(false);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
 
-    if (!res.ok) {
-      if (data.requiresTotp) {
-        setTotpRequis(true);
-        setError(totpRequis ? data.error ?? "Code invalide." : "");
-      } else {
-        setError(data.error ?? "Identifiants invalides.");
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify(totpRequis ? { email, password, code: code2fa } : { email, password }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        if (data.requiresTotp) {
+          setTotpRequis(true);
+          setError(totpRequis ? data.error ?? "Code invalide." : "");
+        } else {
+          setError(data.error ?? "Identifiants invalides.");
+        }
+        return;
       }
-      return;
+      router.push(data.redirect ?? "/admin");
+    } catch {
+      setError("Impossible de contacter le serveur. Vérifiez votre connexion puis réessayez.");
+    } finally {
+      window.clearTimeout(timeoutId);
+      // Garantit que l'utilisateur peut réessayer après une erreur réseau, une réponse illisible ou un délai dépassé.
+      setLoading(false);
     }
-    router.push(data.redirect ?? "/admin");
   }
 
   const contexte = role ? CONTEXTES[role] : null;

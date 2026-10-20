@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { bleu, rouge } from "@/lib/theme";
 
 type Demande = {
 id: string;
@@ -21,18 +22,29 @@ createdAt: string;
 export default function DemandesPage() {
 const [demandes, setDemandes] = useState<Demande[]>([]);
 const [chargement, setChargement] = useState(true);
+const [erreurChargement, setErreurChargement] = useState("");
 
 useEffect(() => {
 charger();
 }, []);
 
 function charger() {
+setChargement(true);
+setErreurChargement("");
 fetch("/api/demandes-contact")
-.then((r) => r.json())
+.then((r) => {
+if (!r.ok) throw new Error(String(r.status));
+return r.json();
+})
 .then((data) => {
 setDemandes(Array.isArray(data) ? data : []);
-setChargement(false);
-});
+})
+.catch(() => {
+// FIX (19/10/2026) — même défaut que /admin/clients : sans ce
+// catch, un 403/500/réseau laissait `chargement` bloqué à `true`.
+setErreurChargement("Impossible de charger les demandes de contact. Vérifiez votre connexion et réessayez.");
+})
+.finally(() => setChargement(false));
 }
 
 async function basculerTraite(d: Demande) {
@@ -46,6 +58,21 @@ body: JSON.stringify({ id: d.id, traite: !d.traite }),
 
 if (chargement) {
 return <div>Chargement...</div>;
+}
+
+if (erreurChargement) {
+return (
+<div>
+<h1>Demandes de contact</h1>
+<p role="alert" style={{ color: rouge, fontSize: 14, margin: "12px 0" }}>{erreurChargement}</p>
+<button
+onClick={charger}
+style={{ fontSize: 13, padding: "8px 14px", background: bleu, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
+>
+Réessayer
+</button>
+</div>
+);
 }
 
 const enAttente = demandes.filter((d) => !d.traite);
