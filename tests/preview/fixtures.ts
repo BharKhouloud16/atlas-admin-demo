@@ -19,11 +19,19 @@ export const test = base.extend<{ distant: Distant }>({
     await context.route("**/*", async (route) => {
       const requete = route.request();
       if (estHoteAutorise(requete.url())) {
-        const reponse = await route.fetch({
-          headers: { ...requete.headers(), ...enTetesBypass(requete.url(), { cookie: true }) },
-          maxRedirects: 0,
-        });
-        await route.fulfill({ response: reponse });
+        // Une erreur de route.fetch (ex. préchargement Next.js encore en vol à
+        // la fin d'un test) inclut son « call log », donc les en-têtes et le
+        // secret : constaté au run #4 dans error-context.md. Elle n'est donc
+        // jamais propagée ni journalisée ; la requête est simplement annulée.
+        try {
+          const reponse = await route.fetch({
+            headers: { ...requete.headers(), ...enTetesBypass(requete.url(), { cookie: true }) },
+            maxRedirects: 0,
+          });
+          await route.fulfill({ response: reponse });
+        } catch {
+          await route.abort().catch(() => undefined);
+        }
       } else {
         await route.continue();
       }
