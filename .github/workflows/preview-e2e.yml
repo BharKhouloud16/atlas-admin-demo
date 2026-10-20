@@ -76,3 +76,9 @@ jobs:
             echo "::error::Secret retrouvé dans un fichier du runner."; exit 1
           fi
           echo "Aucune occurrence du secret dans l'espace de travail."
+
+      # Les sorties Playwright (error-context.md, etc.) ne sont jamais
+      # téléversées ; elles sont supprimées du runner après le contrôle.
+      - name: Nettoyage des sorties Playwright
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/pw-preview"
