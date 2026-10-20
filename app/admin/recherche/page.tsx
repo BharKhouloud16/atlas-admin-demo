@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { bleuFonce, grisTexte, bordure, rouge } from "@/lib/theme";
+import { bleu, bleuFonce, grisTexte, bordure, rouge } from "@/lib/theme";
 
 type Resultats = {
   clients: { id: string; nom: string; email: string | null; secteur: string | null }[];
@@ -26,6 +26,8 @@ export default function RecherchePage() {
   const [resultats, setResultats] = useState<Resultats>(VIDE);
   const [chargement, setChargement] = useState(false);
   const [erreur, setErreur] = useState("");
+  // Incrémenté par « Réessayer » : relance la même recherche sans retaper.
+  const [tentative, setTentative] = useState(0);
 
   useEffect(() => {
     const terme = q.trim();
@@ -42,7 +44,14 @@ export default function RecherchePage() {
           if (!r.ok) throw new Error(String(r.status));
           return r.json();
         })
-        .then((data) => setResultats({ ...VIDE, ...data }))
+        .then((data) => {
+          // Une réponse sans les trois listes attendues est un échec, pas
+          // un « Aucun résultat ».
+          if (!Array.isArray(data?.clients) || !Array.isArray(data?.profils) || !Array.isArray(data?.missions)) {
+            throw new Error("réponse invalide");
+          }
+          setResultats({ clients: data.clients, profils: data.profils, missions: data.missions });
+        })
         .catch(() => {
           // FIX (19/10/2026) — `chargement` était déjà libéré par le
           // `.finally()` existant, mais un échec restait silencieux :
@@ -54,7 +63,7 @@ export default function RecherchePage() {
         .finally(() => setChargement(false));
     }, 300); // anti-rebond : évite un appel réseau à chaque frappe
     return () => clearTimeout(identifiant);
-  }, [q]);
+  }, [q, tentative]);
 
   const total = resultats.clients.length + resultats.profils.length + resultats.missions.length;
 
@@ -74,7 +83,17 @@ export default function RecherchePage() {
         <p style={{ fontSize: 13, color: "#888", marginTop: 12 }}>Continuez à taper (2 caractères minimum).</p>
       )}
       {chargement && <p style={{ fontSize: 13, color: "#888", marginTop: 12 }}>Recherche...</p>}
-      {!chargement && erreur && <p role="alert" style={{ fontSize: 13, color: rouge, marginTop: 12 }}>{erreur}</p>}
+      {!chargement && erreur && (
+        <div style={{ marginTop: 12 }}>
+          <p role="alert" style={{ fontSize: 13, color: rouge, margin: "0 0 8px" }}>{erreur}</p>
+          <button
+            onClick={() => setTentative((t) => t + 1)}
+            style={{ fontSize: 13, padding: "6px 12px", background: bleu, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
+          >
+            Réessayer
+          </button>
+        </div>
+      )}
       {!chargement && !erreur && q.trim().length >= 2 && total === 0 && (
         <p style={{ fontSize: 13, color: "#888", marginTop: 12 }}>Aucun résultat pour « {q.trim()} ».</p>
       )}

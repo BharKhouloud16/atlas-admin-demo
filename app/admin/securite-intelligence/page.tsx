@@ -68,23 +68,36 @@ export default function SecuriteIntelligencePage() {
   function recharger() {
     setChargement(true);
     setErreurChargement("");
+    // FIX (21/10/2026) — une réponse HTTP en échec (403/500) était remplacée
+    // par une liste vide (`r.ok ? r.json() : { evenements: [] }`) : la page
+    // affichait « Aucun événement pour l'instant », indistinguable d'une
+    // vraie absence d'événements. Tout échec — HTTP, réseau, JSON invalide
+    // ou réponse sans les listes attendues — affiche désormais l'erreur.
+    const lire = (url: string) =>
+      fetch(url).then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      });
     Promise.all([
-      fetch("/api/security/evenements?limite=50").then((r) => (r.ok ? r.json() : { evenements: [] })),
-      fetch("/api/security/runtime").then((r) => (r.ok ? r.json() : { signaux: [], risques: [] })),
-      fetch("/api/security/propositions").then((r) => (r.ok ? r.json() : { propositions: [] })),
+      lire("/api/security/evenements?limite=50"),
+      lire("/api/security/runtime"),
+      lire("/api/security/propositions"),
     ])
       .then(([e, s, p]) => {
-        setEvenements(e.evenements ?? []);
-        setSignaux(s.signaux ?? []);
-        setRisques(s.risques ?? []);
-        setPropositions(p.propositions ?? []);
+        if (
+          !Array.isArray(e?.evenements) ||
+          !Array.isArray(s?.signaux) ||
+          !Array.isArray(s?.risques) ||
+          !Array.isArray(p?.propositions)
+        ) {
+          throw new Error("réponse invalide");
+        }
+        setEvenements(e.evenements);
+        setSignaux(s.signaux);
+        setRisques(s.risques);
+        setPropositions(p.propositions);
       })
       .catch(() => {
-        // FIX (19/10/2026) — les 403/500 individuels retombent déjà sur
-        // des valeurs par défaut (voir `r.ok ? r.json() : {...}` ci-dessus),
-        // mais un échec réseau pur (fetch() lui-même rejeté) ou un corps
-        // non-JSON sur une réponse 200 n'était pas couvert : `chargement`
-        // restait bloqué à `true` pour toujours.
         setErreurChargement("Impossible de charger les données de sécurité. Vérifiez votre connexion et réessayez.");
       })
       .finally(() => setChargement(false));
@@ -118,6 +131,7 @@ export default function SecuriteIntelligencePage() {
   if (erreurChargement) {
     return (
       <div>
+        <h1 style={{ marginBottom: 12, color: bleuFonce }}>Sécurité — Intelligence runtime</h1>
         <p role="alert" style={{ fontSize: 13, color: rouge, margin: "0 0 8px" }}>{erreurChargement}</p>
         <button
           onClick={recharger}

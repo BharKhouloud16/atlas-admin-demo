@@ -181,9 +181,9 @@ test.describe("Admin — pages à coquille fixe — gestion d'erreur de chargeme
   }
 });
 
-// --- Recherche : recherche-au-fil-de-la-frappe avec anti-rebond, pas de
-// bouton Réessayer (retaper redéclenche la recherche automatiquement — UX
-// jugée plus appropriée pour ce pattern précis). ---------------------------
+// --- Recherche : recherche-au-fil-de-la-frappe avec anti-rebond. Retaper
+// redéclenche la recherche ; un bouton Réessayer relance aussi la même
+// recherche sans retaper (voir admin-securite-intelligence-et-recherche.spec.ts).
 test.describe("Admin — /admin/recherche — gestion d'erreur de recherche", () => {
   test("un échec de l'API de recherche affiche un message d'erreur, jamais un faux « Aucun résultat »", async ({ page }) => {
     await loginAdmin(page);
