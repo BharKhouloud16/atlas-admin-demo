@@ -1,0 +1,76 @@
+name: Preview — E2E distants (anonymes)
+
+# Job DISTINCT de la CI (.github/workflows/ci.yml, base jetable, inchangée).
+# Teste la Preview Vercel de la branche poussée, en anonyme et en lecture
+# seule, via le mécanisme officiel « Protection Bypass for Automation ».
+#
+# Sécurité :
+# - déclenché uniquement par un push sur les branches listées (jamais par
+#   pull_request / pull_request_target : le code d'une PR non fiable ne
+#   s'exécute jamais avec le secret) ; jamais sur main ;
+# - le secret n'est exposé qu'à l'étape de test, et n'est envoyé qu'à
+#   l'alias Preview de la branche (validé dans tests/preview/cible.ts) ;
+# - aucune trace/capture/vidéo, aucun artefact téléversé ;
+# - tests authentifiés interdits (contrôle statique ci-dessous).
+on:
+  push:
+    branches: [v1/delivery, ci/preview-e2e]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preview-e2e-anonymes:
+    if: github.repository == 'BharKhouloud16/atlas-admin-demo'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Garde-fou — aucun test authentifié ni écriture dans tests/preview
+        run: |
+          if grep -rnE "Demo1234|@example\.com|storageState|/api/auth/|\.fill\(|\.type\(|\.(post|put|patch|delete|fetch)\(|method:" tests/preview; then
+            echo "::error::tests/preview doit rester anonyme et en lecture seule (autorisation supplémentaire requise)."
+            exit 1
+          fi
+
+      - name: Cible Preview (alias de branche Vercel)
+        id: cible
+        run: |
+          slug=$(printf '%s' "$GITHUB_REF_NAME" | tr 'A-Z' 'a-z' | sed 's/[^a-z0-9]/-/g')
+          label="atlas-admin-demo-git-${slug}-bharkhouloud16"
+          if [ "$slug" = "main" ] || [ ${#label} -gt 63 ]; then
+            echo "::error::Branche non prise en charge pour les tests distants : $GITHUB_REF_NAME"; exit 1
+          fi
+          echo "url=https://${label}.vercel.app" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Pas de build ni de base : seules les dépendances et Chromium.
+      - name: Installation des dépendances et de Chromium
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+
+      - name: Tests E2E distants (anonymes, lecture seule)
+        env:
+          PREVIEW_URL: ${{ steps.cible.outputs.url }}
+          EXPECTED_SHA: ${{ github.sha }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: npx playwright test -c playwright.preview.config.ts
+
+      - name: Contrôle — le secret n'a été écrit dans aucun fichier
+        if: always()
+        env:
+          S: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          if [ -n "$S" ] && grep -rlF --exclude-dir=node_modules --exclude-dir=.git -- "$S" . "$RUNNER_TEMP" 2>/dev/null; then
+            echo "::error::Secret retrouvé dans un fichier du runner."; exit 1
+          fi
+          echo "Aucune occurrence du secret dans l'espace de travail."
