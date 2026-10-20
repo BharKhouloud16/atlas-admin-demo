@@ -2,10 +2,14 @@ import { test as base, expect, type APIResponse } from "@playwright/test";
 import { ORIGINE_PREVIEW, enTetesBypass, estHoteAutorise } from "./cible";
 
 // Fixtures des tests distants, ANONYMES et en LECTURE SEULE :
-// - navigateur : le secret n'est ajouté qu'aux requêtes vers l'hôte Preview
-//   validé (route par route). Playwright n'applique pas ces surcharges aux
-//   requêtes suivant une redirection : un 3xx vers un autre domaine ne
-//   reçoit donc jamais le secret. Toute autre destination part sans en-tête.
+// - navigateur : seules les requêtes vers l'hôte Preview validé sont
+//   interceptées ; elles sont émises par route.fetch() SANS suivre les
+//   redirections (maxRedirects: 0), puis la réponse est rendue au navigateur.
+//   Vérifié localement (Playwright 1.64) : avec route.continue(), un en-tête
+//   ajouté EST rejoué sur une redirection, y compris vers un autre domaine.
+//   Ici, le navigateur suit lui-même chaque 3xx sans l'en-tête secret, avec
+//   seulement le cookie de contournement limité à l'hôte Preview.
+//   Toute autre destination part sans aucun en-tête ajouté.
 // - API : uniquement GET, chemin relatif obligatoire, aucune redirection
 //   suivie (maxRedirects: 0).
 type Distant = { get: (chemin: string) => Promise<APIResponse> };
@@ -15,7 +19,11 @@ export const test = base.extend<{ distant: Distant }>({
     await context.route("**/*", async (route) => {
       const requete = route.request();
       if (estHoteAutorise(requete.url())) {
-        await route.continue({ headers: { ...requete.headers(), ...enTetesBypass(requete.url()) } });
+        const reponse = await route.fetch({
+          headers: { ...requete.headers(), ...enTetesBypass(requete.url(), { cookie: true }) },
+          maxRedirects: 0,
+        });
+        await route.fulfill({ response: reponse });
       } else {
         await route.continue();
       }
