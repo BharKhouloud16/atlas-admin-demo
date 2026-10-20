@@ -45,14 +45,16 @@ export function estHoteAutorise(url: string): boolean {
   }
 }
 
-// En-têtes officiels Vercel. À n'utiliser que pour une URL validée par
+// En-tête officiel Vercel. À n'utiliser que pour une URL validée par
 // estHoteAutorise() : la fonction refuse toute autre destination.
+// « x-vercel-set-bypass-cookie » n'est volontairement PAS envoyé : avec lui,
+// Vercel répond par une redirection 307 posant un cookie (constaté au run #1
+// de preview-e2e.yml). Inutile ici, puisque l'en-tête est ajouté à CHAQUE
+// requête vers l'hôte Preview (fixtures.ts), et cela évite tout cookie de
+// contournement persistant dans le navigateur de test.
 export function enTetesBypass(url: string): Record<string, string> {
   if (!estHoteAutorise(url)) throw new Error("Destination non autorisée pour le secret de contournement.");
-  return {
-    "x-vercel-protection-bypass": SECRET,
-    "x-vercel-set-bypass-cookie": "true",
-  };
+  return { "x-vercel-protection-bypass": SECRET };
 }
 
 export const COMMIT_ATTENDU = (process.env.EXPECTED_SHA ?? "").toLowerCase();
