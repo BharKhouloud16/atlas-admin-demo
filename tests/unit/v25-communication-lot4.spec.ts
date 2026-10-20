@@ -165,7 +165,7 @@ test.describe("V2.5 Lot 4 — côté Client, et cas limites sans destinataire", 
     await synchroniserEtNotifierMessage(client.id);
     espion.restaurer();
 
-    expect(espion.appels.some((a) => a.includes(email) && a.includes("/client/communication"))).toBe(true);
+    expect(espion.appels.some((a) => a.includes("[email:placeholder]") && a.includes(empreinteEmail(email)) && a.includes("Nouveaux messages non lus"))).toBe(true);
   });
 
   test("Client sans compte de connexion -> aucun crash, aucun email tenté", async () => {
