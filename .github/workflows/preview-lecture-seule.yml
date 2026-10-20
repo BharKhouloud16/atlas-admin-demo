@@ -28,6 +28,7 @@ jobs:
           PREVIEWS: >-
             atlas-admin-demo-git-v1-delivery-bharkhouloud16.vercel.app@798df1b8a25980f4725893b013140db74c92f382,
             atlas-admin-demo-git-claude-verify-github-c1cf49-bharkhouloud16.vercel.app@${{ github.sha }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: node .github/preview-check/verifier-preview.mjs
       - if: always()
         uses: actions/upload-artifact@v4

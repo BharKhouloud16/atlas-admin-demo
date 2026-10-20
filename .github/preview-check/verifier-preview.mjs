@@ -10,6 +10,11 @@ const PREVIEWS = (process.env.PREVIEWS || "").split(",").map((x) => x.trim()).fi
 const PRODUCTION = "https://atlas-admin-demo.vercel.app";
 const HOTE_PREVIEW = /^atlas-admin-demo-git-[a-z0-9-]+-bharkhouloud16\.vercel\.app$/;
 const ATTENTE_MAX_MS = 12 * 60 * 1000;
+// Mécanisme officiel Vercel « Protection Bypass for Automation » : secret
+// généré par le propriétaire du projet, stocké en secret GitHub, envoyé
+// uniquement aux Previews (jamais à la Production). Absent : la protection
+// reste active et la vérification est signalée BLOCKED.
+const BYPASS = process.env.VERCEL_AUTOMATION_BYPASS_SECRET || "";
 
 const lignes = [];
 const r = (cible, controle, verdict, detail) => {
@@ -21,11 +26,14 @@ async function get(url, options = {}) {
   const u = new URL(url);
   if (u.origin !== PRODUCTION && !HOTE_PREVIEW.test(u.hostname)) throw new Error(`hôte non autorisé : ${u.hostname}`);
   if (u.origin === PRODUCTION && u.pathname !== "/api/sante") throw new Error("Production : seul GET /api/sante est autorisé");
-  return fetch(url, { method: "GET", redirect: "manual", cache: "no-store", ...options });
+  const headers = { ...(options.headers || {}) };
+  if (BYPASS && HOTE_PREVIEW.test(u.hostname)) headers["x-vercel-protection-bypass"] = BYPASS;
+  return fetch(url, { method: "GET", redirect: "manual", cache: "no-store", ...options, headers });
 }
 
 function protectionVercel(rep, texte) {
-  return rep.status === 401 || (rep.status === 403 && /vercel/i.test(texte)) || /vercel authentication|_vercel_sso/i.test(texte);
+  const loc = rep.headers.get("location") || "";
+  return rep.status === 401 || (rep.status === 403 && /vercel/i.test(texte)) || /vercel\.com\/(sso|login)|_vercel_sso/i.test(loc) || /vercel authentication|_vercel_sso/i.test(texte);
 }
 
 async function sante(origine) {
@@ -47,7 +55,10 @@ async function verifierPreview(spec) {
   for (;;) {
     s = await sante(origine).catch((e) => ({ erreur: e.message }));
     if (s.erreur) { r(hote, "accès", "BLOCKED", s.erreur); return null; }
-    if (protectionVercel(s.rep, s.texte)) { r(hote, "accès", "BLOCKED", `protection Vercel active (HTTP ${s.rep.status}) : non contournée`); return null; }
+    if (protectionVercel(s.rep, s.texte)) {
+      r(hote, "accès", "BLOCKED", `protection Vercel active (HTTP ${s.rep.status}) : non contournée${BYPASS ? " — secret de contournement officiel refusé" : " — aucun secret VERCEL_AUTOMATION_BYPASS_SECRET configuré"}`);
+      return null;
+    }
     if (s.corps?.commit && shaAttendu.startsWith(s.corps.commit)) break;
     if (Date.now() - debut > ATTENTE_MAX_MS) break;
     await new Promise((ok) => setTimeout(ok, 20000));
@@ -100,7 +111,8 @@ async function verifierPreview(spec) {
     r("Production", "empreinte de base", differentes ? "PASS" : "FAIL", `Production : ${p.libelle ?? p.empreinte} ; Preview : ${cibles.filter(Boolean).map((c) => c.libelle ?? c.empreinte).join(", ")}`);
   }
 
-  const echecs = lignes.filter((l) => l.verdict === "FAIL").length;
+  // Un contrôle bloqué n'est pas un succès : le job échoue aussi dans ce cas.
+  const echecs = lignes.filter((l) => l.verdict === "FAIL" || (l.verdict === "BLOCKED" && l.cible !== "Production")).length;
   const fs = await import("fs");
   const tableau = ["| Cible | Contrôle | Verdict | Détail |", "|---|---|---|---|", ...lignes.map((l) => `| ${l.cible} | ${l.controle} | ${l.verdict} | ${String(l.detail).replace(/\|/g, "/")} |`)].join("\n");
   if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `## Preview — vérification en lecture seule\n\n${tableau}\n`);
