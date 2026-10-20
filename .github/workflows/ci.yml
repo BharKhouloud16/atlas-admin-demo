@@ -65,6 +65,15 @@ jobs:
       # 20 / 15 min) ; la consommation réelle est désormais mesurée à chaque run
       # (étape « Consommation du limiteur de connexion » ci-dessous).
       RATE_LIMIT_LOGIN_MAX_IP: "1000"
+      # SÉCURITÉ : liens démo (vérification d'email, réinitialisation de mot de
+      # passe) renvoyés dans les réponses API UNIQUEMENT dans ce run CI, sur sa
+      # base jetable, pour tester ces parcours sans boîte mail. Jamais sur
+      # Vercel (ignoré dès que VERCEL_ENV est défini, voir lib/liens-demo.ts).
+      ATLAS_LIENS_DEMO: "oui"
+      # Base des liens envoyés par email (lib/email.ts) : sans elle, aucun
+      # email contenant un lien n'est tenté (fail-closed, jamais de repli vers
+      # le domaine de Production).
+      EMAIL_APP_BASE_URL: http://localhost:3000
 
     steps:
       - uses: actions/checkout@v4

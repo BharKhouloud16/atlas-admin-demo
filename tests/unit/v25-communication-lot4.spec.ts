@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { synchroniserEtNotifierMessage } from "@/lib/message-attention-email";
 import { marquerFilLu } from "@/lib/message-lecture";
+import { empreinteEmail } from "@/lib/email";
 
 // COMPANY ATLAS — V2.5 : Communication Intelligence (Lot 4 — Email
 // transactionnel, 21/09/2026).
@@ -12,6 +13,9 @@ import { marquerFilLu } from "@/lib/message-lecture";
 // test (voir lib/email.ts), donc chaque tentative d'envoi passe par le
 // chemin `console.log("[email:placeholder] ...")`, seul point observable
 // depuis un test sans introduire de mock/infrastructure supplémentaire.
+// SÉCURITÉ : ce log ne contient plus l'adresse complète (masquée + empreinte
+// SHA-256 courte, voir lib/email.ts) ; les liens exigent une URL de base
+// (EMAIL_APP_BASE_URL, définie dans la CI).
 // Un test HTTP (via les routes POST /api/*/messages) ne pourrait pas
 // observer ce log, écrit dans le process du serveur Next.js séparé —
 // même limitation déjà rencontrée pour BLOB_READ_WRITE_TOKEN en V2.4.
@@ -59,7 +63,7 @@ test.describe("V2.5 Lot 4 — email envoyé uniquement sur transition réelle ve
     await synchroniserEtNotifierMessage(client.id);
     espion.restaurer();
 
-    expect(espion.appels.some((a) => a.includes("[email:placeholder]") && a.includes(admin.email) && a.includes("Nouveaux messages non lus"))).toBe(true);
+    expect(espion.appels.some((a) => a.includes("[email:placeholder]") && a.includes(empreinteEmail(admin.email)) && a.includes("Nouveaux messages non lus"))).toBe(true);
   });
 
   test("un second message Client sur un fil déjà non lu -> aucun nouvel email (mandat : jamais un email par message)", async () => {
@@ -92,7 +96,7 @@ test.describe("V2.5 Lot 4 — email envoyé uniquement sur transition réelle ve
     await synchroniserEtNotifierMessage(client.id);
     espion.restaurer();
 
-    expect(espion.appels.some((a) => a.includes("[email:placeholder]") && a.includes(admin.email))).toBe(true);
+    expect(espion.appels.some((a) => a.includes("[email:placeholder]") && a.includes(empreinteEmail(admin.email)))).toBe(true);
   });
 });
 
@@ -107,7 +111,7 @@ test.describe("V2.5 Lot 4 — respect strict de PreferenceNotification", () => {
     await synchroniserEtNotifierMessage(client.id);
     espion.restaurer();
 
-    expect(espion.appels.some((a) => a.includes(admin.email))).toBe(false);
+    expect(espion.appels.some((a) => a.includes(empreinteEmail(admin.email)))).toBe(false);
   });
 
   test("categoriesEmail sans ACTION_REQUISE -> aucun email tenté (MESSAGE_NON_LU est toujours ACTION_REQUISE)", async () => {
@@ -120,7 +124,7 @@ test.describe("V2.5 Lot 4 — respect strict de PreferenceNotification", () => {
     await synchroniserEtNotifierMessage(client.id);
     espion.restaurer();
 
-    expect(espion.appels.some((a) => a.includes(admin.email))).toBe(false);
+    expect(espion.appels.some((a) => a.includes(empreinteEmail(admin.email)))).toBe(false);
   });
 
   test("aucune PreferenceNotification en base -> défauts (ACTION_REQUISE actif) -> email tenté", async () => {
@@ -133,7 +137,7 @@ test.describe("V2.5 Lot 4 — respect strict de PreferenceNotification", () => {
     await synchroniserEtNotifierMessage(client.id);
     espion.restaurer();
 
-    expect(espion.appels.some((a) => a.includes(admin.email))).toBe(true);
+    expect(espion.appels.some((a) => a.includes(empreinteEmail(admin.email)))).toBe(true);
   });
 
   test("individualité : deux Admins avec des préférences opposées -> un seul reçoit l'email", async () => {
@@ -147,8 +151,8 @@ test.describe("V2.5 Lot 4 — respect strict de PreferenceNotification", () => {
     await synchroniserEtNotifierMessage(client.id);
     espion.restaurer();
 
-    expect(espion.appels.some((a) => a.includes(adminActif.email))).toBe(true);
-    expect(espion.appels.some((a) => a.includes(adminInactif.email))).toBe(false);
+    expect(espion.appels.some((a) => a.includes(empreinteEmail(adminActif.email)))).toBe(true);
+    expect(espion.appels.some((a) => a.includes(empreinteEmail(adminInactif.email)))).toBe(false);
   });
 });
 
