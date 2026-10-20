@@ -77,6 +77,7 @@ export default function AttentionsAdminPage() {
   const [total, setTotal] = useState(0);
   const [nonLues, setNonLues] = useState(0);
   const [chargement, setChargement] = useState(true);
+  const [erreurChargement, setErreurChargement] = useState("");
 
   const [historique, setHistorique] = useState(false);
   const [clientId, setClientId] = useState("");
@@ -86,6 +87,7 @@ export default function AttentionsAdminPage() {
 
   function recharger() {
     setChargement(true);
+    setErreurChargement("");
     const params = new URLSearchParams();
     if (historique) params.set("historique", "1");
     if (clientId) params.set("clientId", clientId);
@@ -95,19 +97,28 @@ export default function AttentionsAdminPage() {
     params.set("limit", "100");
 
     fetch(`/api/admin/attentions?${params.toString()}`)
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      })
       .then((d) => {
         setAttentions(d.attentions ?? []);
         setTotal(d.total ?? 0);
         setNonLues(d.nonLues ?? 0);
-        setChargement(false);
-      });
+      })
+      .catch(() => {
+        // FIX (19/10/2026) — même défaut que /admin/clients : sans ce
+        // catch, un 403/500/réseau laissait `chargement` bloqué à `true`.
+        setErreurChargement("Impossible de charger les attentions. Vérifiez votre connexion et réessayez.");
+      })
+      .finally(() => setChargement(false));
   }
 
   useEffect(() => {
     fetch("/api/clients")
       .then((r) => r.json())
-      .then((d) => setClients(Array.isArray(d) ? d : []));
+      .then((d) => setClients(Array.isArray(d) ? d : []))
+      .catch(() => {}); // best-effort : n'alimente que le filtre, jamais bloquant
   }, []);
 
   useEffect(() => {
@@ -173,8 +184,19 @@ export default function AttentionsAdminPage() {
       </div>
 
       {chargement && <p style={{ fontSize: 13, color: grisTexte }}>Chargement…</p>}
-      {!chargement && attentions.length === 0 && <p style={{ fontSize: 13, color: "#94a0b3" }}>Aucune attention pour ces filtres.</p>}
-      {!chargement && attentions.length > 0 && (
+      {!chargement && erreurChargement && (
+        <div>
+          <p role="alert" style={{ color: rouge, fontSize: 13, margin: "0 0 8px" }}>{erreurChargement}</p>
+          <button
+            onClick={recharger}
+            style={{ fontSize: 13, padding: "6px 12px", background: bleu, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
+          >
+            Réessayer
+          </button>
+        </div>
+      )}
+      {!chargement && !erreurChargement && attentions.length === 0 && <p style={{ fontSize: 13, color: "#94a0b3" }}>Aucune attention pour ces filtres.</p>}
+      {!chargement && !erreurChargement && attentions.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {attentions.map((a) => (
             <div key={a.id} style={{ border: "1px solid #e4e7ee", borderRadius: 10, padding: 12, opacity: a.statut === "RESOLUE" || a.statut === "EXPIREE" ? 0.6 : 1 }}>

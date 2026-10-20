@@ -29,15 +29,28 @@ export default function ClientsPage() {
   const [champs, setChamps] = useState(CHAMPS_VIDES);
   const [envoi, setEnvoi] = useState(false);
   const [erreur, setErreur] = useState("");
+  const [erreurChargement, setErreurChargement] = useState("");
   const [messagesNonLus, setMessagesNonLus] = useState<Set<string>>(new Set());
 
   function charger() {
+    setChargement(true);
+    setErreurChargement("");
     fetch("/api/clients")
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      })
       .then((data) => {
         setClients(Array.isArray(data) ? data : []);
-        setChargement(false);
-      });
+      })
+      .catch(() => {
+        // FIX (19/10/2026) — sans ce catch, un 403/500/réseau laissait
+        // `chargement` bloqué à `true` pour toujours : la page restait
+        // figée sur "Chargement..." sans jamais afficher d'erreur ni
+        // permettre de réessayer (bug reproduit en conditions réelles).
+        setErreurChargement("Impossible de charger les clients. Vérifiez votre connexion et réessayez.");
+      })
+      .finally(() => setChargement(false));
   }
   useEffect(charger, []);
 
@@ -76,6 +89,21 @@ export default function ClientsPage() {
   }
 
   if (chargement) return <div>Chargement...</div>;
+
+  if (erreurChargement) {
+    return (
+      <div>
+        <h1 style={{ marginBottom: 4, color: bleuFonce }}>Clients</h1>
+        <p role="alert" style={{ color: rouge, fontSize: 14, margin: "12px 0" }}>{erreurChargement}</p>
+        <button
+          onClick={charger}
+          style={{ fontSize: 13, padding: "8px 14px", background: bleu, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
+        >
+          Réessayer
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div>

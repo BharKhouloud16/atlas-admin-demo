@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { bleu, rouge } from "@/lib/theme";
 
 type CompteEnAttente = {
   id: string;
@@ -30,9 +31,24 @@ const PAR_PAGE = 10;
 export default function ComptesEnAttentePage() {
   const [comptes, setComptes] = useState<CompteEnAttente[]>([]);
   const [page, setPage] = useState(1);
+  const [chargement, setChargement] = useState(true);
+  const [erreurChargement, setErreurChargement] = useState("");
 
   function charger() {
-    fetch("/api/comptes").then((r) => r.json()).then(setComptes);
+    setChargement(true);
+    setErreurChargement("");
+    fetch("/api/comptes")
+      .then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      })
+      .then(setComptes)
+      .catch(() => {
+        // Sans ce catch, un 403/500/réseau affichait silencieusement
+        // "Aucun compte en attente.", indistinguable d'une vraie liste vide.
+        setErreurChargement("Impossible de charger les comptes en attente. Vérifiez votre connexion et réessayez.");
+      })
+      .finally(() => setChargement(false));
   }
   useEffect(charger, []);
 
@@ -47,6 +63,23 @@ export default function ComptesEnAttentePage() {
       body: JSON.stringify({ userId }),
     });
     charger();
+  }
+
+  if (chargement) return <div>Chargement...</div>;
+
+  if (erreurChargement) {
+    return (
+      <div>
+        <h1>Comptes en attente de validation</h1>
+        <p role="alert" style={{ color: rouge, fontSize: 14, margin: "12px 0" }}>{erreurChargement}</p>
+        <button
+          onClick={charger}
+          style={{ fontSize: 13, padding: "8px 14px", background: bleu, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
+        >
+          Réessayer
+        </button>
+      </div>
+    );
   }
 
   return (
