@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { bleuFonce, grisTexte, bordure } from "@/lib/theme";
+import { bleuFonce, grisTexte, bordure, rouge } from "@/lib/theme";
 
 type Resultats = {
   clients: { id: string; nom: string; email: string | null; secteur: string | null }[];
@@ -25,18 +25,32 @@ export default function RecherchePage() {
   const [q, setQ] = useState("");
   const [resultats, setResultats] = useState<Resultats>(VIDE);
   const [chargement, setChargement] = useState(false);
+  const [erreur, setErreur] = useState("");
 
   useEffect(() => {
     const terme = q.trim();
     if (terme.length < 2) {
       setResultats(VIDE);
+      setErreur("");
       return;
     }
     setChargement(true);
+    setErreur("");
     const identifiant = setTimeout(() => {
       fetch(`/api/recherche?q=${encodeURIComponent(terme)}`)
-        .then((r) => r.json())
+        .then((r) => {
+          if (!r.ok) throw new Error(String(r.status));
+          return r.json();
+        })
         .then((data) => setResultats({ ...VIDE, ...data }))
+        .catch(() => {
+          // FIX (19/10/2026) — `chargement` était déjà libéré par le
+          // `.finally()` existant, mais un échec restait silencieux :
+          // "Aucun résultat" s'affichait à tort, indistinguable d'une
+          // vraie recherche sans résultat.
+          setResultats(VIDE);
+          setErreur("La recherche a échoué. Réessayez.");
+        })
         .finally(() => setChargement(false));
     }, 300); // anti-rebond : évite un appel réseau à chaque frappe
     return () => clearTimeout(identifiant);
@@ -60,7 +74,8 @@ export default function RecherchePage() {
         <p style={{ fontSize: 13, color: "#888", marginTop: 12 }}>Continuez à taper (2 caractères minimum).</p>
       )}
       {chargement && <p style={{ fontSize: 13, color: "#888", marginTop: 12 }}>Recherche...</p>}
-      {!chargement && q.trim().length >= 2 && total === 0 && (
+      {!chargement && erreur && <p role="alert" style={{ fontSize: 13, color: rouge, marginTop: 12 }}>{erreur}</p>}
+      {!chargement && !erreur && q.trim().length >= 2 && total === 0 && (
         <p style={{ fontSize: 13, color: "#888", marginTop: 12 }}>Aucun résultat pour « {q.trim()} ».</p>
       )}
 

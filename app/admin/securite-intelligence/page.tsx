@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { bleuFonce, grisTexte, bordure } from "@/lib/theme";
+import { bleu, bleuFonce, grisTexte, bordure, rouge } from "@/lib/theme";
 
 // ATLAS OS — TRUST & SECURITY INTELLIGENCE FOUNDATION (Batch 16, 08/09/2026).
 // Page Admin en lecture seule pour les événements/signaux/risques, avec un
@@ -62,20 +62,32 @@ export default function SecuriteIntelligencePage() {
   const [risques, setRisques] = useState<Risque[]>([]);
   const [propositions, setPropositions] = useState<Proposition[]>([]);
   const [chargement, setChargement] = useState(true);
+  const [erreurChargement, setErreurChargement] = useState("");
   const [motifParId, setMotifParId] = useState<Record<string, string>>({});
 
   function recharger() {
+    setChargement(true);
+    setErreurChargement("");
     Promise.all([
       fetch("/api/security/evenements?limite=50").then((r) => (r.ok ? r.json() : { evenements: [] })),
       fetch("/api/security/runtime").then((r) => (r.ok ? r.json() : { signaux: [], risques: [] })),
       fetch("/api/security/propositions").then((r) => (r.ok ? r.json() : { propositions: [] })),
-    ]).then(([e, s, p]) => {
-      setEvenements(e.evenements ?? []);
-      setSignaux(s.signaux ?? []);
-      setRisques(s.risques ?? []);
-      setPropositions(p.propositions ?? []);
-      setChargement(false);
-    });
+    ])
+      .then(([e, s, p]) => {
+        setEvenements(e.evenements ?? []);
+        setSignaux(s.signaux ?? []);
+        setRisques(s.risques ?? []);
+        setPropositions(p.propositions ?? []);
+      })
+      .catch(() => {
+        // FIX (19/10/2026) — les 403/500 individuels retombent déjà sur
+        // des valeurs par défaut (voir `r.ok ? r.json() : {...}` ci-dessus),
+        // mais un échec réseau pur (fetch() lui-même rejeté) ou un corps
+        // non-JSON sur une réponse 200 n'était pas couvert : `chargement`
+        // restait bloqué à `true` pour toujours.
+        setErreurChargement("Impossible de charger les données de sécurité. Vérifiez votre connexion et réessayez.");
+      })
+      .finally(() => setChargement(false));
   }
 
   useEffect(() => {
@@ -102,6 +114,20 @@ export default function SecuriteIntelligencePage() {
   }
 
   if (chargement) return <p style={{ fontSize: 13, color: grisTexte }}>Chargement...</p>;
+
+  if (erreurChargement) {
+    return (
+      <div>
+        <p role="alert" style={{ fontSize: 13, color: rouge, margin: "0 0 8px" }}>{erreurChargement}</p>
+        <button
+          onClick={recharger}
+          style={{ fontSize: 13, padding: "6px 12px", background: bleu, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
+        >
+          Réessayer
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div>

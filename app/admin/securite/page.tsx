@@ -23,54 +23,71 @@ export default function SecuritePage() {
   async function demarrerConfiguration() {
     setErreur("");
     setChargement(true);
-    const reponse = await fetch("/api/auth/2fa/setup", { method: "POST" });
-    const data = await reponse.json();
-    setChargement(false);
-    if (!reponse.ok) {
-      setErreur(data.error ?? "Erreur lors de la génération du secret.");
-      return;
+    try {
+      const reponse = await fetch("/api/auth/2fa/setup", { method: "POST" });
+      const data = await reponse.json();
+      if (!reponse.ok) {
+        setErreur(data.error ?? "Erreur lors de la génération du secret.");
+        return;
+      }
+      setQrCode(data.qrCode);
+      setSecret(data.secret);
+      setEtape("configuration");
+    } catch {
+      // FIX (19/10/2026) — un échec réseau pur ou un corps non-JSON
+      // laissait le bouton bloqué sur "..." pour toujours (le setChargement(false)
+      // suivant n'était jamais atteint).
+      setErreur("Impossible de contacter le serveur. Vérifiez votre connexion et réessayez.");
+    } finally {
+      setChargement(false);
     }
-    setQrCode(data.qrCode);
-    setSecret(data.secret);
-    setEtape("configuration");
   }
 
   async function confirmerCode(e: React.FormEvent) {
     e.preventDefault();
     setErreur("");
     setChargement(true);
-    const reponse = await fetch("/api/auth/2fa/verifier", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code }),
-    });
-    const data = await reponse.json();
-    setChargement(false);
-    if (!reponse.ok) {
-      setErreur(data.error ?? "Code invalide.");
-      return;
+    try {
+      const reponse = await fetch("/api/auth/2fa/verifier", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const data = await reponse.json();
+      if (!reponse.ok) {
+        setErreur(data.error ?? "Code invalide.");
+        return;
+      }
+      setCodesSecours(data.codesSecours);
+      setEtape("codesSecours");
+    } catch {
+      setErreur("Impossible de contacter le serveur. Vérifiez votre connexion et réessayez.");
+    } finally {
+      setChargement(false);
     }
-    setCodesSecours(data.codesSecours);
-    setEtape("codesSecours");
   }
 
   async function desactiver(e: React.FormEvent) {
     e.preventDefault();
     setErreurDesactivation("");
-    const reponse = await fetch("/api/auth/2fa/desactiver", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ motDePasse: motDePasseDesactivation }),
-    });
-    const data = await reponse.json();
-    if (!reponse.ok) {
-      setErreurDesactivation(data.error ?? "Erreur.");
-      return;
+    try {
+      const reponse = await fetch("/api/auth/2fa/desactiver", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ motDePasse: motDePasseDesactivation }),
+      });
+      const data = await reponse.json();
+      if (!reponse.ok) {
+        setErreurDesactivation(data.error ?? "Erreur.");
+        return;
+      }
+      setEtape("repos");
+      setMotDePasseDesactivation("");
+      setConfirmationDesactivation(false);
+      window.location.reload(); // pour refléter le nouvel état côté serveur
+    } catch {
+      setErreurDesactivation("Impossible de contacter le serveur. Vérifiez votre connexion et réessayez.");
     }
-    setEtape("repos");
-    setMotDePasseDesactivation("");
-    setConfirmationDesactivation(false);
-    window.location.reload(); // pour refléter le nouvel état côté serveur
   }
 
   return (

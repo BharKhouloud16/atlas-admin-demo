@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { bleuFonce, grisTexte, bordure } from "@/lib/theme";
+import { bleu, bleuFonce, grisTexte, bordure, rouge } from "@/lib/theme";
 
 type Ingenieur = {
   id: string;
@@ -28,17 +28,46 @@ function formatDate(iso: string | null): string {
 export default function IngenieursPage() {
   const [ingenieurs, setIngenieurs] = useState<Ingenieur[]>([]);
   const [chargement, setChargement] = useState(true);
+  const [erreurChargement, setErreurChargement] = useState("");
 
-  useEffect(() => {
+  function charger() {
+    setChargement(true);
+    setErreurChargement("");
     fetch("/api/ingenieurs")
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      })
       .then((data) => {
         setIngenieurs(Array.isArray(data) ? data : []);
-        setChargement(false);
-      });
-  }, []);
+      })
+      .catch(() => {
+        // FIX (19/10/2026) — même défaut que /admin/clients : sans ce
+        // catch, un 403/500/réseau laissait `chargement` bloqué à `true`
+        // pour toujours, page figée sur "Chargement..." sans erreur ni
+        // possibilité de réessayer (bug reproduit en conditions réelles).
+        setErreurChargement("Impossible de charger les ingénieurs. Vérifiez votre connexion et réessayez.");
+      })
+      .finally(() => setChargement(false));
+  }
+  useEffect(charger, []);
 
   if (chargement) return <div>Chargement...</div>;
+
+  if (erreurChargement) {
+    return (
+      <div>
+        <h1 style={{ marginBottom: 4, color: bleuFonce }}>Ingénieurs</h1>
+        <p role="alert" style={{ color: rouge, fontSize: 14, margin: "12px 0" }}>{erreurChargement}</p>
+        <button
+          onClick={charger}
+          style={{ fontSize: 13, padding: "8px 14px", background: bleu, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
+        >
+          Réessayer
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div>

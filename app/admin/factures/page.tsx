@@ -108,6 +108,7 @@ export default function FacturesAdminPage() {
   const [rapportFinancier, setRapportFinancier] = useState<RapportFinancierParDevise[]>([]);
   const [feuilles, setFeuilles] = useState<Feuille[]>([]);
   const [chargement, setChargement] = useState(true);
+  const [erreurChargement, setErreurChargement] = useState("");
   const [enCours, setEnCours] = useState<string | null>(null);
   const [paiementForm, setPaiementForm] = useState<Record<string, { montant: string; reference: string; methode: string }>>({});
   const [recherche, setRecherche] = useState("");
@@ -115,14 +116,30 @@ export default function FacturesAdminPage() {
   const [anomaliesUniquement, setAnomaliesUniquement] = useState(false);
 
   function recharger() {
-    Promise.all([fetch("/api/factures").then((r) => r.json()), fetch("/api/feuilles-de-temps").then((r) => r.json())]).then(
-      ([f, c]) => {
+    setChargement(true);
+    setErreurChargement("");
+    Promise.all([
+      fetch("/api/factures").then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      }),
+      fetch("/api/feuilles-de-temps").then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      }),
+    ])
+      .then(([f, c]) => {
         setFactures(f.factures ?? []);
         setRapportFinancier(f.rapportFinancier ?? []);
         setFeuilles(c.feuilles ?? []);
-        setChargement(false);
-      }
-    );
+      })
+      .catch(() => {
+        // FIX (19/10/2026) — même défaut que /admin/clients : sans ce
+        // catch, un échec de l'un des deux appels laissait `chargement`
+        // bloqué à `true` pour toujours.
+        setErreurChargement("Impossible de charger la facturation. Vérifiez votre connexion et réessayez.");
+      })
+      .finally(() => setChargement(false));
   }
   useEffect(recharger, []);
 
@@ -183,6 +200,21 @@ export default function FacturesAdminPage() {
   }
 
   if (chargement) return <div>Chargement...</div>;
+
+  if (erreurChargement) {
+    return (
+      <div>
+        <h1 style={{ marginBottom: 4, color: bleuFonce }}>Facturation</h1>
+        <p role="alert" style={{ color: rouge, fontSize: 14, margin: "12px 0" }}>{erreurChargement}</p>
+        <button
+          onClick={recharger}
+          style={{ fontSize: 13, padding: "8px 14px", background: bleu, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
+        >
+          Réessayer
+        </button>
+      </div>
+    );
+  }
 
   const facturables = feuilles.filter(
     (f) => f.statut === "ValideeClient" && !factures.some((fa) => fa.feuilleDeTempsId === f.id)
