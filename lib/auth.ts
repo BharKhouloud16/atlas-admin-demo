@@ -1,6 +1,7 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies, headers } from "next/headers";
 import { secretCourant, secretsVerification } from "@/lib/session-secret";
+import { prisma } from "@/lib/prisma";
 
 const COOKIE_NAME = "atlas_session";
 const SESSION_DURATION = "8h";
@@ -13,8 +14,23 @@ type SessionUser = {
   desactive?: boolean; // true pour un ingénieur ayant temporairement désactivé son compte
 };
 
+// Version des sessions du compte (User.sessionVersion), portée par le jeton
+// dans la revendication "sv". Un jeton émis avant son introduction n'en a
+// pas : il vaut 0, donc reste valide tant que le compte n'a jamais révoqué
+// ses sessions.
+type JetonSession = SessionUser & { sv?: number };
+
+async function versionSessionsCompte(email: string): Promise<number | null> {
+  const compte = await prisma.user.findUnique({ where: { email }, select: { sessionVersion: true } });
+  return compte ? compte.sessionVersion : null;
+}
+
+// Pour révoquer les autres sessions, incrémenter User.sessionVersion puis
+// rappeler createSession() pour la session courante (elle relit la version).
 export async function createSession(user: SessionUser) {
-  const token = await new SignJWT({ ...user })
+  const sv = (await versionSessionsCompte(user.email)) ?? 0;
+  const { email, role, profilId, clientId, desactive } = user;
+  const token = await new SignJWT({ email, role, profilId, clientId, desactive, sv })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(SESSION_DURATION)
@@ -51,15 +67,22 @@ export async function getSession(): Promise<SessionUser | null> {
   if (!token) return null;
   // Essaie le secret courant, puis l'ancien si une rotation est en cours
   // (voir lib/session-secret.ts) — un seul des deux doit vérifier le token.
+  let jeton: JetonSession | null = null;
   for (const s of secretsVerification) {
     try {
       const { payload } = await jwtVerify(token, s);
-      return payload as unknown as SessionUser;
+      jeton = payload as unknown as JetonSession;
+      break;
     } catch {
       // essaie le secret suivant (ou échoue définitivement ci-dessous)
     }
   }
-  return null;
+  if (!jeton) return null;
+  // Jeton signé mais révoqué : compte supprimé, ou version dépassée par un
+  // changement / une réinitialisation du mot de passe.
+  const version = await versionSessionsCompte(jeton.email);
+  if (version === null || (jeton.sv ?? 0) !== version) return null;
+  return jeton;
 }
 
 export const SESSION_COOKIE_NAME = COOKIE_NAME;

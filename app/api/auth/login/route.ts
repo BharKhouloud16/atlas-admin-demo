@@ -175,9 +175,14 @@ async function traiterConnexion(req: NextRequest) {
       const hashes: string[] = JSON.parse(user.totpCodesSecours);
       for (let i = 0; i < hashes.length; i++) {
         if (await bcrypt.compare(code.trim(), hashes[i])) {
-          codeValide = true;
           hashes.splice(i, 1); // usage unique : retiré une fois consommé
-          await prisma.user.update({ where: { id: user.id }, data: { totpCodesSecours: JSON.stringify(hashes) } });
+          // Consommation conditionnée à la liste lue : deux connexions
+          // simultanées avec le même code ne peuvent pas aboutir toutes deux.
+          const { count } = await prisma.user.updateMany({
+            where: { id: user.id, totpCodesSecours: user.totpCodesSecours },
+            data: { totpCodesSecours: JSON.stringify(hashes) },
+          });
+          codeValide = count === 1;
           break;
         }
       }
