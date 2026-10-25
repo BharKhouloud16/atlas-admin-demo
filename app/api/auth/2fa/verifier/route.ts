@@ -21,6 +21,9 @@ export async function POST(req: NextRequest) {
   }
 
   const user = await prisma.user.findUnique({ where: { email: session.email } });
+  if (user?.totpActif) {
+    return NextResponse.json({ error: "La double authentification est déjà active." }, { status: 409 });
+  }
   if (!user?.totpSecret) {
     return NextResponse.json({ error: "Aucune configuration 2FA en cours — relancez depuis le début." }, { status: 400 });
   }
@@ -32,10 +35,15 @@ export async function POST(req: NextRequest) {
   const codesSecours = genererCodesSecours();
   const codesHashes = await Promise.all(codesSecours.map((c) => bcrypt.hash(c, 10)));
 
-  await prisma.user.update({
-    where: { id: user.id },
+  // Active seulement le secret qui vient d'être vérifié : si un nouveau
+  // secret a été généré entre-temps (autre onglet), rien n'est activé.
+  const { count } = await prisma.user.updateMany({
+    where: { id: user.id, totpActif: false, totpSecret: user.totpSecret },
     data: { totpActif: true, totpCodesSecours: JSON.stringify(codesHashes) },
   });
+  if (count === 0) {
+    return NextResponse.json({ error: "Configuration 2FA modifiée entre-temps — relancez depuis le début." }, { status: 409 });
+  }
 
   return NextResponse.json({ ok: true, codesSecours });
 }
