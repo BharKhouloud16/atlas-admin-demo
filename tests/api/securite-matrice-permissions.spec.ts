@@ -72,6 +72,13 @@ const ESPACES_ADMIN = [
   "/api/missions/id-fictif-matrice/marge-intelligence",
 ];
 
+// Routes d'un espace Admin partagées par conception avec un autre rôle,
+// avec filtrage par propriétaire testé ailleurs : le Client crée et liste
+// SES demandes talent (filtre clientId, testé ci-dessous).
+const PARTAGEES: Record<string, Partial<Record<"CLIENT" | "INGENIEUR", Methode[]>>> = {
+  "/api/talent/demandes": { CLIENT: ["GET", "POST"] },
+};
+
 function estPublique(chemin: string, methode: Methode) {
   const p = PUBLIQUES[chemin];
   return p === "toutes" || (Array.isArray(p) && p.includes(methode));
@@ -115,11 +122,25 @@ test.describe("Matrice de permissions — toutes les routes API", () => {
       if (!ESPACES_ADMIN.some((e) => chemin === e || chemin.startsWith(e.endsWith("/") ? e : e + "/") || chemin === e.replace(/\/$/, ""))) continue;
       for (const m of methodes) {
         for (const [role, contexte] of Object.entries(sessions)) {
+          if (PARTAGEES[chemin]?.[role as "CLIENT" | "INGENIEUR"]?.includes(m)) continue;
           const statut = await appeler(contexte, m, chemin);
           if (statut !== 401 && statut !== 403) ecarts.push(`${role} ${m} ${chemin} → ${statut}`);
         }
       }
     }
     expect(ecarts).toEqual([]);
+  });
+
+  test("demandes talent partagées avec le Client : un Client ne voit jamais celles d'un autre", async () => {
+    const s = `${Date.now()}`;
+    const autre = await prisma.client.create({ data: { nom: `Autre client matrice ${s}` } });
+    const demande = await prisma.demandeTalent.create({ data: { clientId: autre.id, description: `Demande isolée ${s}` } });
+    const clientDemo = await prisma.client.findFirstOrThrow({ where: { compte: { email: "client-demo@example.com" } } });
+    const client = await contexteConnecte({ email: "client-demo@example.com", role: "CLIENT", clientId: clientDemo.id });
+    const r = await client.get("/api/talent/demandes");
+    expect(r.status()).toBe(200);
+    const texte = await r.text();
+    expect(texte).not.toContain(demande.id);
+    expect(texte).not.toContain(`Demande isolée ${s}`);
   });
 });
