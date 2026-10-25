@@ -53,11 +53,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
 
-      # Pas de build ni de base : seules les dépendances et Chromium.
+      # Pas de build ni de base : seules les dépendances (figées par
+      # package-lock.json) et Chromium.
       - name: Installation des dépendances et de Chromium
         run: |
-          npm install
+          npm ci
           npx playwright install --with-deps chromium
 
       - name: Tests E2E distants (anonymes, lecture seule)
