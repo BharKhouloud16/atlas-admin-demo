@@ -11,9 +11,11 @@ Ce document sert à préparer la décision ; il n'en prend aucune. Aucune action
 | Les 45 migrations s'appliquent sans erreur sur une base vierge, à chaque run de CI (1 533 tests). | CI `build-and-test` |
 | La Preview utilise `supabase-atlas-preview`, distincte de l'empreinte historique (`2f97519aeaf98180`). | `/api/sante` (Preview E2E 16/16, 25/10) |
 | Vercel a deux variables `DATABASE_URL` distinctes, l'une pour Production, l'autre pour Preview. Leurs valeurs ne sont pas relisibles. | `docs/V1_DELIVERY_STATUS.md` |
+| Le projet Supabase historique est **en pause** et **réactivable jusqu'au 8 novembre 2027**. D'après Supabase, données, sauvegardes et fichiers sont conservés, et un bouton « Download backup » est disponible. Une tentative d'accès a renvoyé `Failed to fetch permissions` (api.supabase.com). | Rapport de la session navigateur du 20/10 (non revérifié ici : Supabase est inaccessible depuis cet environnement) |
+| La variable `DATABASE_URL` de Production a été modifiée le 24/09 ; sa cible actuelle n'est pas confirmée. | Rapport navigateur du 20/10, `docs/V1_DELIVERY_STATUS.md` |
 
 ## Ce qui n'est pas connu (à vérifier avant de décider)
-1. Le projet historique est-il encore **restaurable** dans Supabase (délai de restauration d'un projet suspendu) ? À vérifier dans le tableau de bord Supabase, en lecture seule.
+1. Le projet historique est restaurable jusqu'au 8/11/2027 (rapport navigateur). Reste à savoir si la sauvegarde téléchargeable peut être obtenue **sans réactiver le projet**, et à comprendre l'erreur `Failed to fetch permissions` (droits du compte sur l'organisation Supabase ?).
 2. Contient-il des **données réelles à conserver** : vrais clients, ingénieurs, CV, factures ? Ou seulement des données de démonstration ?
 3. Les fichiers (CV, documents) référencés par cette base sont-ils encore dans le Blob store Vercel de Production ?
 
@@ -30,7 +32,7 @@ Ce document sert à préparer la décision ; il n'en prend aucune. Aucune action
 | Délai | Dépend de la restauration Supabase et du diagnostic | Création du projet, application des migrations, configuration de Vercel |
 
 ## Recommandation (à valider)
-**B comme base cible, avec A en lecture seule pour une sauvegarde si elle est restaurable.**
+**B comme base cible. A reste en pause, sans réactivation ; sa sauvegarde (« Download backup ») sert uniquement à inventorier les données, si vous l'autorisez.**
 - Si l'étape 2 montre qu'A ne contient que des données de démonstration, B suffit.
 - Si A contient des données réelles, on importe seulement ce qui est nécessaire dans B, après une sauvegarde complète d'A et une décision sur chaque catégorie de données.
 
