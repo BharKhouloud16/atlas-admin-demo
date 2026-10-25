@@ -245,8 +245,12 @@ test.describe("V2.2-B — regle-fiscale.ts : résolution versionnée/datée, jam
 });
 
 test.describe("V2.2-B — numero.ts : numérotation de Facture", () => {
-  test("format FA-{mois sans tiret}-{6 premiers caractères de missionId en majuscules}", () => {
-    expect(genererNumeroFacture("2026-01", "abcdef1234567890")).toBe("FA-202601-ABCDEF");
+  test("format FA-{mois sans tiret}-{8 derniers caractères de missionId en majuscules}", () => {
+    expect(genererNumeroFacture("2026-01", "abcdef1234567890")).toBe("FA-202601-34567890");
+  });
+
+  test("deux missions créées dans la même fenêtre (même préfixe horodaté de cuid) n'ont jamais le même numéro", () => {
+    expect(genererNumeroFacture("2026-02", "cmvnwaa0x0007kdzdgjlkt4t2")).not.toBe(genererNumeroFacture("2026-02", "cmvnwasp5000710s6cs2xpga8"));
   });
 });
 

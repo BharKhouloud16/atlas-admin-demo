@@ -1329,6 +1329,7 @@ type FeuilleCra = {
   detailJours: JourCra[] | null;
   statut: StatutCra;
   motifRejet: string | null;
+  updatedAt: string;
   mission: { id: string; repere: string | null; client: { nom: string } };
 };
 
@@ -1446,6 +1447,9 @@ function FormulaireCra({
         detailJours: detail,
         commentaire,
         soumettre,
+        // Version chargée : le serveur refuse (409) un enregistrement fondé
+        // sur une feuille modifiée entre-temps (autre onglet ou appareil).
+        versionLue: existante?.updatedAt ?? null,
       }),
     });
     setEnvoi(false);

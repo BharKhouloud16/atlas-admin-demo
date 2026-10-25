@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { genererFacturePdf } from "@/lib/pdf-facture";
 import { persisterDocumentClient } from "@/lib/client-documents";
+import { genererNumeroFacture } from "@/lib/billing/numero";
 
 // Génère la facture PDF (voir lib/pdf-facture.ts) d'un CRA définitivement
 // validé (statut ValideeClient — voir PATCH /api/feuilles-de-temps,
@@ -21,7 +22,7 @@ export async function GET(req: NextRequest) {
 
   const feuille = await prisma.feuilleDeTemps.findUnique({
     where: { id: feuilleId },
-    include: { mission: { include: { client: true, profil: true } } },
+    include: { mission: { include: { client: true, profil: true } }, facture: { select: { numeroFacture: true } } },
   });
 
   if (!feuille) {
@@ -34,7 +35,9 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const numero = `FA-${feuille.mois.replace("-", "")}-${feuille.mission.id.slice(0, 6).toUpperCase()}`;
+  // Même numéro que la Facture enregistrée (lib/billing/creation.ts) quand
+  // elle existe : jamais deux numéros pour la même période facturée.
+  const numero = feuille.facture?.numeroFacture ?? genererNumeroFacture(feuille.mois, feuille.mission.id);
   const nomIngenieur = `${feuille.mission.profil.prenom ?? ""} ${feuille.mission.profil.nom}`.trim();
 
   const pdfBytes = await genererFacturePdf({
