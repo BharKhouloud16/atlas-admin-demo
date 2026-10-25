@@ -138,7 +138,7 @@ export function SolutionsBesoin({ besoinId, statutBesoin }: { besoinId: string; 
       )}
 
       {donnees.options.length === 0 && (
-        <EmptyState message="Aucune solution identifiée pour l'instant — nous continuons d'affiner votre besoin." />
+        <EmptyState message="Aucun profil ne correspond aujourd'hui aux compétences demandées. Nous ne vous proposons que des profils qui en couvrent au moins une, sans contrainte bloquante — nous continuons la recherche." />
       )}
 
       {donnees.recommandation && (

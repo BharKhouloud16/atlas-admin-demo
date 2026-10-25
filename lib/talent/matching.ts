@@ -403,12 +403,17 @@ export function scorerProfil(profil: ProfilPourMatching, criteres: CriteresDeman
 
   const motifs: MotifScore[] = entriesFacteurs.map(([, f]) => ({ critere: f.label, poids: f.poidsPct / 100, detail: f.detail }));
 
+  // Jamais « match probable » quand les données manquent : une information
+  // inconnue n'est pas une compatibilité (voir lib/talent/admissibilite.ts).
+  const aucuneCompetenceRetrouvee = criteres.competencesRecherchees.length > 0 && competences.points === 0;
   const explication =
     criteresBloquants.length > 0
       ? `Incompatibilité bloquante : ${criteresBloquants.join(" ; ")}`
-      : informationsManquantes.length >= entriesFacteurs.length / 2
-        ? `Match probable mais information insuffisante sur ${informationsManquantes.length} critère(s) sur ${entriesFacteurs.length}`
-        : `Score ${score}/100 — points forts : ${pointsForts.map((p) => p.split(" (")[0]).join(", ") || "aucun"}`;
+      : aucuneCompetenceRetrouvee
+        ? "Aucune des compétences demandées n'est retrouvée sur ce profil"
+        : informationsManquantes.length >= entriesFacteurs.length / 2
+          ? `Compatibilité non confirmée : information insuffisante sur ${informationsManquantes.length} critère(s) sur ${entriesFacteurs.length}`
+          : `Score ${score}/100 — points forts : ${pointsForts.map((p) => p.split(" (")[0]).join(", ") || "aucun"}`;
 
   return { profilId: profil.id, score, statut, confiance, facteurs, motifs, pointsForts, pointsFaibles, criteresBloquants, informationsManquantes, explication };
 }

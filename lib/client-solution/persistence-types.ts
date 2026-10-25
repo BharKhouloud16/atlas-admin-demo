@@ -10,6 +10,8 @@ import type { NiveauConfianceOption, StatutDisponibiliteOption } from "./types";
 // être modifié sans nécessité réelle (aucune ici : Json suffit).
 export type DonneesSolutionOption = {
   signatureSource: string;
+  niveauCorrespondance?: "FORTE" | "PARTIELLE";
+  competencesManquantes?: string[];
   competencesCorrespondantes: string[];
   niveauConfiance: NiveauConfianceOption;
   rationale: string[];
@@ -33,6 +35,8 @@ export type SolutionOptionVue = {
   titre: string;
   justification: string;
   competencesCorrespondantes: string[];
+  niveauCorrespondance: "FORTE" | "PARTIELLE" | null; // null : option générée avant les règles d'admissibilité
+  competencesManquantes: string[];
   niveauConfiance: NiveauConfianceOption;
   criteresAPreciser: string[];
   disponibilite: { statut: StatutDisponibiliteOption; detail: string | null };

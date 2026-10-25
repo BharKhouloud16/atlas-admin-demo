@@ -14,6 +14,9 @@ import type { SuggestionCriteresDemande } from "@/lib/client-need/talent-bridge"
 // lignes précédentes).
 export function calculerSignatureSource(criteres: SuggestionCriteresDemande): string {
   const elements = [
+    // Version des règles de présentation : une évolution des règles régénère
+    // les solutions (append-only) au lieu de resservir d'anciennes options.
+    "admissibilite-v1",
     [...criteres.competencesExtraites.map((c) => c.valeur)].sort().join("|"),
     criteres.senioriteSouhaitee?.valeur ?? "",
     criteres.anneesExperienceMin?.valeur ?? "",

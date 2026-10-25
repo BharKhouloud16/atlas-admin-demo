@@ -7,6 +7,7 @@ import { construireCandidateIntelligence, type ProfilPourIntelligence } from "@/
 import { construireTalentIntelligence } from "@/lib/talent/talent-intelligence";
 import { construireRecommandation } from "@/lib/talent/recommendation-engine";
 import { adapterEnOptionClient } from "./adapter";
+import { evaluerAdmissibilite, comparerAdmissibles, type Admissibilite } from "@/lib/talent/admissibilite";
 import { comparerOptions } from "./comparaison";
 import { calculerSignatureSource } from "./signature";
 import type { DonneesSolutionOption, SolutionOptionVue } from "./persistence-types";
@@ -27,6 +28,13 @@ import type { DonneesSolutionOption, SolutionOptionVue } from "./persistence-typ
 // route.ts) — un Client compare 2 à 5 solutions, pas une liste de
 // candidats à trier (voir revue UX V2.1-D : "ne pas surcharger l'écran").
 const NOMBRE_OPTIONS_CLIENT_MAX = 5;
+
+function titreOption(option: { niveauCorrespondance?: "FORTE" | "PARTIELLE"; competencesCorrespondantes: string[] }): string {
+  const competences = option.competencesCorrespondantes.join(", ");
+  if (option.niveauCorrespondance === "FORTE") return `Correspondance forte — ${competences}`;
+  if (option.niveauCorrespondance === "PARTIELLE") return `Correspondance partielle — ${competences}`;
+  return competences || "Option de solution";
+}
 
 export type ResultatGeneration =
   | { eligible: false; raison: string; options: []; recommandation: null; decisions: [] }
@@ -56,6 +64,8 @@ export function ligneVersVue(ligne: {
     titre: ligne.titre,
     justification: ligne.justification,
     competencesCorrespondantes: donnees.competencesCorrespondantes,
+    niveauCorrespondance: donnees.niveauCorrespondance ?? null,
+    competencesManquantes: donnees.competencesManquantes ?? [],
     niveauConfiance: donnees.niveauConfiance,
     criteresAPreciser: donnees.criteresAPreciser,
     disponibilite: donnees.disponibilite,
@@ -66,21 +76,9 @@ export function ligneVersVue(ligne: {
   };
 }
 
-// Reproduit la même requête que app/api/talent/demandes/[id]/recommandations/
-// route.ts (profils au dossier exploitable, Skill Graph, missions/
-// évaluations groupés — aucun N+1) : logique non exportée par cette route
-// (handler de route, pas un module réutilisable), donc réécrite ici à
-// l'identique plutôt que dupliquée en important un fichier app/api/*. La
-// LOGIQUE elle-même (classerProfils, Candidate/Talent Intelligence,
-// construireRecommandation) reste importée, jamais réimplémentée.
-async function chargerCandidatsEtRecommander(criteres: {
-  competencesRecherchees: string[];
-  senioriteSouhaitee: string | null;
-  budgetTjmMax: number | null;
-  anneesExperienceMin: number | null;
-  localisation: string | null;
-  disponibiliteSouhaitee: string | null;
-}) {
+// Profils au dossier exploitable (cvValide) et leur Skill Graph, en deux
+// requêtes groupées. Partagé par la génération Client et l'analyse Admin.
+async function chargerProfilsEtSkillGraph() {
   const profils = await prisma.profil.findMany({
     where: { cvValide: true },
     select: {
@@ -129,6 +127,26 @@ async function chargerCandidatsEtRecommander(criteres: {
     graphIntelligenceParProfil.set(ligne.profilId, pourIntelligence);
   }
 
+  return { profils, profilIds, graphParProfil, graphIntelligenceParProfil };
+}
+
+// Reproduit la même requête que app/api/talent/demandes/[id]/recommandations/
+// route.ts (profils au dossier exploitable, Skill Graph, missions/
+// évaluations groupés — aucun N+1) : logique non exportée par cette route
+// (handler de route, pas un module réutilisable), donc réécrite ici à
+// l'identique plutôt que dupliquée en important un fichier app/api/*. La
+// LOGIQUE elle-même (classerProfils, Candidate/Talent Intelligence,
+// construireRecommandation) reste importée, jamais réimplémentée.
+async function chargerCandidatsEtRecommander(criteres: {
+  competencesRecherchees: string[];
+  senioriteSouhaitee: string | null;
+  budgetTjmMax: number | null;
+  anneesExperienceMin: number | null;
+  localisation: string | null;
+  disponibiliteSouhaitee: string | null;
+}) {
+  const { profils, profilIds, graphParProfil, graphIntelligenceParProfil } = await chargerProfilsEtSkillGraph();
+
   const missionsParProfil = await prisma.mission.findMany({
     where: { profilId: { in: profilIds } },
     include: { evaluation: true },
@@ -145,19 +163,29 @@ async function chargerCandidatsEtRecommander(criteres: {
     competencesGraph: graphParProfil.get(p.id) ?? [],
   }));
 
-  const classement = classerProfils(profilsAvecSkillGraph, {
+  const criteresMatching = {
     competencesRecherchees: criteres.competencesRecherchees,
     senioriteSouhaitee: criteres.senioriteSouhaitee,
     budgetTjmMax: criteres.budgetTjmMax,
     anneesExperienceMin: criteres.anneesExperienceMin ?? undefined,
     disponibiliteSouhaitee: criteres.disponibiliteSouhaitee ?? undefined,
     localisation: criteres.localisation ?? undefined,
-  });
+  };
+  const classement = classerProfils(profilsAvecSkillGraph, criteresMatching);
 
-  const top = classement.slice(0, NOMBRE_OPTIONS_CLIENT_MAX);
+  // Seuls les profils ADMISSIBLES sont proposés au Client (aucune compétence
+  // demandée couverte ou contrainte bloquante : jamais présentés) ; les
+  // correspondances fortes d'abord. L'Admin garde la vue complète (voir
+  // analyserCandidatsPourAdmin).
+  const profilPourMatchingParId = new Map(profilsAvecSkillGraph.map((p) => [p.id, p]));
+  const top = classement
+    .map((resultat) => ({ resultat, admissibilite: evaluerAdmissibilite(profilPourMatchingParId.get(resultat.profilId)!, criteresMatching, resultat) }))
+    .filter((x) => x.admissibilite.presentableClient)
+    .sort(comparerAdmissibles)
+    .slice(0, NOMBRE_OPTIONS_CLIENT_MAX);
   const profilsParId = new Map(profils.map((p) => [p.id, p]));
 
-  return top.map((resultatMatching) => {
+  return top.map(({ resultat: resultatMatching, admissibilite }) => {
     const profil = profilsParId.get(resultatMatching.profilId)!;
     const missions = missionsMap.get(profil.id) ?? [];
     const entree: ProfilPourIntelligence = {
@@ -177,7 +205,7 @@ async function chargerCandidatsEtRecommander(criteres: {
     const candidateIntelligence = construireCandidateIntelligence(entree);
     const talentIntelligence = construireTalentIntelligence(candidateIntelligence);
     const recommandation = construireRecommandation(resultatMatching, candidateIntelligence, talentIntelligence, criteres.competencesRecherchees);
-    return { recommandation, disponibiliteBrute: profil.disponibilite };
+    return { recommandation, disponibiliteBrute: profil.disponibilite, admissibilite };
   });
 }
 
@@ -245,7 +273,7 @@ export async function genererOuRecupererSolutions(needId: string, clientId: stri
             disponibiliteSouhaitee: criteres.disponibiliteSouhaitee?.valeur ?? null,
           });
 
-          const optionsClientSafe = candidats.map((c) => adapterEnOptionClient(c.recommandation, c.disponibiliteBrute));
+          const optionsClientSafe = candidats.map((c) => adapterEnOptionClient(c.recommandation, c.disponibiliteBrute, c.admissibilite));
           const resultatComparaison = comparerOptions(optionsClientSafe);
 
           if (resultatComparaison.optionsOrdonnees.length === 0) {
@@ -257,6 +285,8 @@ export async function genererOuRecupererSolutions(needId: string, clientId: stri
           for (const option of resultatComparaison.optionsOrdonnees) {
             const donnees: DonneesSolutionOption = {
               signatureSource: signature,
+              niveauCorrespondance: option.niveauCorrespondance,
+              competencesManquantes: option.competencesManquantes,
               competencesCorrespondantes: option.competencesCorrespondantes,
               niveauConfiance: option.niveauConfiance,
               rationale: option.rationale,
@@ -269,7 +299,7 @@ export async function genererOuRecupererSolutions(needId: string, clientId: stri
                 clientId,
                 niveau: "OPTION",
                 typeSolution: "TALENT",
-                titre: option.competencesCorrespondantes.length > 0 ? option.competencesCorrespondantes.join(", ") : "Option de solution",
+                titre: titreOption(option),
                 justification: option.rationale.join(" "),
                 donnees: donneesVersJson(donnees),
               },
@@ -338,4 +368,46 @@ export async function genererOuRecupererSolutions(needId: string, clientId: stri
 export async function listerSolutionsExistantes(needId: string): Promise<SolutionOptionVue[]> {
   const lignes = await prisma.solutionOption.findMany({ where: { needId }, orderBy: { createdAt: "asc" } });
   return lignes.map(ligneVersVue);
+}
+
+// VUE ADMIN (lecture seule, aucune écriture) : tous les profils au dossier
+// exploitable, avec leur admissibilité pour ce besoin — présentables,
+// opportunités (action requise avant présentation) et non pertinents —, les
+// écarts et les actions possibles. Réservée à l'Admin (route
+// GET /api/talent/besoins/[id]/solutions) : contient identité, score et
+// valeurs internes, jamais transmis au Client.
+export type AnalyseCandidatAdmin = {
+  profilId: string;
+  nom: string;
+  prenom: string | null;
+  scoreClassement: number;
+  admissibilite: Admissibilite;
+};
+
+export async function analyserCandidatsPourAdmin(needId: string): Promise<AnalyseCandidatAdmin[] | null> {
+  const need = await prisma.clientNeed.findUnique({ where: { id: needId }, include: { faits: true } });
+  if (!need) return null;
+  const criteres = suggererCriteresDemande(need.faits);
+  const criteresMatching = {
+    competencesRecherchees: criteres.competencesExtraites.map((c) => c.valeur),
+    senioriteSouhaitee: criteres.senioriteSouhaitee?.valeur ?? null,
+    budgetTjmMax: criteres.budgetTjmMax?.valeur ?? null,
+    anneesExperienceMin: criteres.anneesExperienceMin?.valeur ?? undefined,
+    disponibiliteSouhaitee: criteres.disponibiliteSouhaitee?.valeur ?? undefined,
+    localisation: criteres.localisation?.valeur ?? undefined,
+  };
+  const { profils, graphParProfil } = await chargerProfilsEtSkillGraph();
+  const pourMatching: ProfilPourMatching[] = profils.map((p) => ({ ...p, competencesGraph: graphParProfil.get(p.id) ?? [] }));
+  const parId = new Map(pourMatching.map((p) => [p.id, p]));
+  const identites = new Map(profils.map((p) => [p.id, p]));
+  return classerProfils(pourMatching, criteresMatching)
+    .map((resultat) => ({ resultat, admissibilite: evaluerAdmissibilite(parId.get(resultat.profilId)!, criteresMatching, resultat) }))
+    .sort(comparerAdmissibles)
+    .map(({ resultat, admissibilite }) => ({
+      profilId: resultat.profilId,
+      nom: identites.get(resultat.profilId)!.nom,
+      prenom: identites.get(resultat.profilId)!.prenom,
+      scoreClassement: resultat.score,
+      admissibilite,
+    }));
 }
