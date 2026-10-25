@@ -70,6 +70,7 @@ const ESPACES_ADMIN = [
   "/api/clients",
   "/api/profils/id-fictif-matrice/",
   "/api/missions/id-fictif-matrice/marge-intelligence",
+  "/api/missions/id-fictif-matrice/statut",
 ];
 
 // Routes d'un espace Admin partagées par conception avec un autre rôle,
