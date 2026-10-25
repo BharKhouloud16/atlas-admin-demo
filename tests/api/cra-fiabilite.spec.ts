@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { prisma } from "@/lib/prisma";
 import { contexteConnecte } from "../setup/session-token";
+import { extraireTexteBrutPdf } from "../fixtures/pdf-texte";
 
 // Lot CRA V1 — fiabilité du circuit des feuilles de temps
 // (app/api/feuilles-de-temps) : validation des saisies, transitions sous
@@ -128,5 +129,113 @@ test.describe("CRA — droits d'accès et cohérence avec la facture", () => {
     expect(Number(facture.montantHT)).toBe(1250);
     const feuille = await prisma.feuilleDeTemps.findUniqueOrThrow({ where: { id: f.id } });
     expect([feuille.joursTravailles, feuille.heuresSupplementaires, feuille.statut]).toEqual([2, 4, "ValideeClient"]);
+  });
+});
+
+// Feuille validée par l'Admin puis le Client, prête à facturer.
+async function feuilleValideeClient(ctx: Awaited<ReturnType<typeof contexteMission>>, mois = MOIS, detail = [jour(`${MOIS}-02`)]) {
+  const f = await (await ctx.ingenieur.post("/api/feuilles-de-temps", { data: { missionId: ctx.mission.id, mois, detailJours: detail, soumettre: true } })).json();
+  expect((await ctx.admin.patch("/api/feuilles-de-temps", { data: { id: f.id, action: "validerAdmin" } })).status()).toBe(200);
+  expect((await ctx.client.patch("/api/feuilles-de-temps", { data: { id: f.id, action: "validerClient" } })).status()).toBe(200);
+  return f as { id: string };
+}
+
+test.describe("Facturation — numérotation réglementaire et document unique", () => {
+  test("brouillon au numéro provisoire ; numéro FA-{année}-{séquence} attribué à la validation, sans trou ni doublon sous concurrence", async () => {
+    const annee = Number(new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", year: "numeric" }).format(new Date()));
+    const factures: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const ctx = await contexteMission(`${Date.now()}-num-${i}`);
+      const f = await feuilleValideeClient(ctx);
+      const { facture } = await (await ctx.admin.post("/api/factures", { data: { feuilleDeTempsId: f.id } })).json();
+      expect(facture.numeroFacture).toBe(`BROUILLON-${f.id}`);
+      factures.push(facture.id);
+    }
+    const admin = await contexteConnecte({ email: "admin-demo@example.com", role: "ADMIN" });
+    const avant = (await prisma.compteurFacture.findUnique({ where: { annee } }))?.dernier ?? 0;
+    // Trois validations simultanées, plus une seconde validation concurrente de la première facture.
+    const statuts = (await Promise.all([...factures, factures[0]].map((id) => admin.patch(`/api/factures/${id}/transition`, { data: { action: "valider" } })))).map((r) => r.status());
+    expect(statuts.filter((s) => s === 200)).toHaveLength(3);
+    expect(statuts.filter((s) => s === 409)).toHaveLength(1);
+
+    const numeros = (await prisma.facture.findMany({ where: { id: { in: factures } } })).map((f) => f.numeroFacture).sort();
+    const attendus = [1, 2, 3].map((k) => `FA-${annee}-${String(avant + k).padStart(5, "0")}`);
+    // Séquence continue : exactement les 3 numéros suivants du compteur, chacun une fois.
+    expect(numeros.filter((n) => attendus.includes(n)).length).toBe(3);
+    expect((await prisma.compteurFacture.findUniqueOrThrow({ where: { annee } })).dernier).toBe(avant + 3);
+  });
+
+  test("facture numérotée avant la numérotation réglementaire : son numéro est conservé à la validation", async () => {
+    const ctx = await contexteMission(`${Date.now()}-ancienne`);
+    const f = await feuilleValideeClient(ctx);
+    const { facture } = await (await ctx.admin.post("/api/factures", { data: { feuilleDeTempsId: f.id } })).json();
+    const ancien = `FA-202602-ANC${Date.now().toString(36).toUpperCase()}`;
+    await prisma.facture.update({ where: { id: facture.id }, data: { numeroFacture: ancien } });
+    expect((await ctx.admin.patch(`/api/factures/${facture.id}/transition`, { data: { action: "valider" } })).status()).toBe(200);
+    expect((await prisma.facture.findUniqueOrThrow({ where: { id: facture.id } })).numeroFacture).toBe(ancien);
+  });
+
+  test("PDF du CRA = PDF de la facture enregistrée, avec sa TVA (HT, TVA, TTC)", async () => {
+    const ctx = await contexteMission(`${Date.now()}-pdf`);
+    const f = await feuilleValideeClient(ctx);
+    // Brouillon : aucun PDF émis tant que la facture n'est pas validée.
+    const brouillon = await ctx.admin.get(`/api/feuilles-de-temps/facture?feuilleId=${f.id}`);
+    expect(brouillon.status()).toBe(409);
+    const { factureId } = await brouillon.json();
+    // TVA enregistrée sur la facture (1 jour à 500 : 500 HT, 100 TVA, 600 TTC).
+    await prisma.facture.update({ where: { id: factureId }, data: { montantHT: 500, montantTVA: 100, montantTTC: 600 } });
+    expect((await ctx.admin.patch(`/api/factures/${factureId}/transition`, { data: { action: "valider" } })).status()).toBe(200);
+    const { numeroFacture } = await prisma.facture.findUniqueOrThrow({ where: { id: factureId } });
+
+    const redirection = await ctx.admin.get(`/api/feuilles-de-temps/facture?feuilleId=${f.id}`, { maxRedirects: 0 });
+    expect(redirection.status()).toBe(307);
+    expect(redirection.headers()["location"]).toContain(`/api/factures/${factureId}/document`);
+
+    const pdf = await ctx.admin.get(`/api/feuilles-de-temps/facture?feuilleId=${f.id}`);
+    expect(pdf.status()).toBe(200);
+    expect(pdf.headers()["content-type"]).toContain("application/pdf");
+    const texte = extraireTexteBrutPdf(Buffer.from(await pdf.body()));
+    expect(texte).toContain(numeroFacture);
+    expect(texte).toContain("Total TTC");
+    expect(texte).toContain("600,00");
+    expect(texte).not.toContain("TVA non applicable");
+  });
+});
+
+test.describe("CRA — mission close : saisie bloquée, correction Admin contrôlée et tracée", () => {
+  test("l'Ingénieur ne peut plus saisir ni soumettre sur une mission terminée", async () => {
+    const ctx = await contexteMission(`${Date.now()}-close`);
+    await prisma.mission.update({ where: { id: ctx.mission.id }, data: { statut: "Terminée" } });
+    const r = await ctx.ingenieur.post("/api/feuilles-de-temps", { data: { missionId: ctx.mission.id, mois: MOIS, detailJours: [jour("2026-02-02")], soumettre: true } });
+    expect(r.status()).toBe(409);
+    expect(await prisma.feuilleDeTemps.count({ where: { missionId: ctx.mission.id } })).toBe(0);
+  });
+
+  test("correction Admin : motif obligatoire, réservée à l'Admin et aux missions closes, tracée, revalidation Client requise", async () => {
+    const ctx = await contexteMission(`${Date.now()}-correction`);
+    const corps = { missionId: ctx.mission.id, mois: MOIS, detailJours: [jour("2026-02-02"), jour("2026-02-03")], motif: "Jour oublié signalé par le client" };
+
+    expect((await ctx.admin.post("/api/feuilles-de-temps/correction", { data: corps })).status()).toBe(409); // mission en cours
+    await prisma.mission.update({ where: { id: ctx.mission.id }, data: { statut: "Terminée" } });
+    expect((await ctx.ingenieur.post("/api/feuilles-de-temps/correction", { data: corps })).status()).toBe(403);
+    expect((await ctx.client.post("/api/feuilles-de-temps/correction", { data: corps })).status()).toBe(403);
+    expect((await ctx.admin.post("/api/feuilles-de-temps/correction", { data: { ...corps, motif: "court" } })).status()).toBe(400);
+    expect((await ctx.admin.post("/api/feuilles-de-temps/correction", { data: { ...corps, detailJours: [jour("2026-03-02")] } })).status()).toBe(400);
+
+    const r = await ctx.admin.post("/api/feuilles-de-temps/correction", { data: corps });
+    expect(r.status()).toBe(201);
+    const corrigee = await r.json();
+    expect([corrigee.statut, corrigee.joursTravailles]).toEqual(["ValideeAdmin", 2]);
+    const trace = await prisma.journalActivite.findFirstOrThrow({ where: { action: "correction_cra_mission_close", cible: corrigee.id } });
+    expect(trace.acteurEmail).toBe("admin-demo@example.com");
+    expect(trace.detail).toContain("aucune feuille → 2 j / 0 h sup (ValideeAdmin)");
+    expect(trace.detail).toContain("Motif : Jour oublié signalé par le client");
+
+    // Formulaire périmé : refusé.
+    expect((await ctx.admin.post("/api/feuilles-de-temps/correction", { data: { ...corps, versionLue: null } })).status()).toBe(409);
+    // Le Client revalide, puis la facture existe : plus aucune correction par le CRA.
+    expect((await ctx.client.patch("/api/feuilles-de-temps", { data: { id: corrigee.id, action: "validerClient" } })).status()).toBe(200);
+    expect([200, 201]).toContain((await ctx.admin.post("/api/factures", { data: { feuilleDeTempsId: corrigee.id } })).status());
+    expect((await ctx.admin.post("/api/feuilles-de-temps/correction", { data: { ...corps, motif: "Seconde correction après facture" } })).status()).toBe(409);
   });
 });

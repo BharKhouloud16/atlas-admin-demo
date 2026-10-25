@@ -1827,6 +1827,18 @@ model RegleFiscale {
 // rester visible côté Client (il doit savoir qu'elle a été annulée),
 // tandis qu'une Facture BROUILLON/VALIDEE (jamais envoyée) ou ANNULEE
 // avant tout envoi ne doit jamais lui apparaître.
+// Compteur de numérotation réglementaire des factures (lot CRA V1,
+// 25/10/2026) : une ligne par année d'émission, incrémentée dans la même
+// transaction que la validation de la facture (lib/billing/transitions.ts).
+// Une validation qui échoue n'avance jamais le compteur : la séquence
+// FA-{année}-{numéro} reste chronologique et continue. Les factures
+// antérieures gardent leur numéro d'origine.
+model CompteurFacture {
+  annee     Int      @id
+  dernier   Int
+  updatedAt DateTime @updatedAt
+}
+
 model Facture {
   id                 String         @id @default(cuid())
   client             Client         @relation(fields: [clientId], references: [id])

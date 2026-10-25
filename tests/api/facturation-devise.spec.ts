@@ -1,40 +1,5 @@
-import zlib from "zlib";
 import { test, expect, APIRequestContext } from "@playwright/test";
-
-// pdf-lib compresse les flux de contenu (FlateDecode) : chercher le code
-// devise directement dans les octets bruts du PDF ne fonctionne pas — il
-// faut décompresser chaque flux "stream...endstream" pour retrouver le
-// contenu réellement dessiné. Pas de nouvelle dépendance : zlib est un
-// module Node natif.
-//
-// Une fois décompressé, le texte n'apparaît toujours pas en clair : pdf-lib
-// dessine chaque ligne avec l'opérateur Tj sous forme de chaîne
-// HEXADÉCIMALE "<...>" (un octet par caractère, encodage WinAnsi de la
-// police Helvetica de base), jamais une chaîne littérale "(...)". Il faut
-// donc aussi décoder chaque chaîne hexadécimale pour retrouver le texte —
-// confirmé par l'échec du run CI #37, qui montrait la chaîne hex brute
-// (ex. "<41544C4153...>") au lieu du texte attendu.
-function extraireTexteBrutPdf(pdfBytes: Buffer): string {
-  const contenu = pdfBytes.toString("latin1");
-  const morceaux: string[] = [];
-  const regexStream = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
-  let m: RegExpExecArray | null;
-  while ((m = regexStream.exec(contenu))) {
-    let texte: string;
-    try {
-      texte = zlib.inflateSync(Buffer.from(m[1], "latin1")).toString("latin1");
-    } catch {
-      // pas un flux FlateDecode (ex. police déjà binaire) — ignoré
-      continue;
-    }
-    const regexHex = /<([0-9A-Fa-f]+)>/g;
-    let h: RegExpExecArray | null;
-    while ((h = regexHex.exec(texte))) {
-      morceaux.push(Buffer.from(h[1], "hex").toString("latin1"));
-    }
-  }
-  return morceaux.join(" ");
-}
+import { extraireTexteBrutPdf } from "../fixtures/pdf-texte";
 
 // Couvre P1-01 (audit du 06/09) : la facture doit refléter la devise réelle
 // de la mission (Mission.deviseVente) plutôt que d'être toujours libellée
@@ -121,6 +86,12 @@ async function factureDeMissionTest(request: APIRequestContext, mois: string, tj
   expect(validationClient.ok(), "validation Client du CRA").toBeTruthy();
 
   await connecter(request, "admin-demo@example.com");
+  // Lot CRA V1 : la facture d'un CRA est d'abord validée (numéro
+  // réglementaire) ; la route du CRA renvoie alors vers son PDF.
+  const brouillon = await request.get(`/api/feuilles-de-temps/facture?feuilleId=${feuille.id}`);
+  expect(brouillon.status()).toBe(409);
+  const { factureId } = await brouillon.json();
+  expect((await request.patch(`/api/factures/${factureId}/transition`, { data: { action: "valider" } })).status()).toBe(200);
   const facture = await request.get(`/api/feuilles-de-temps/facture?feuilleId=${feuille.id}`);
   expect(facture.status(), "génération de la facture PDF").toBe(200);
   expect(facture.headers()["content-type"]).toContain("application/pdf");

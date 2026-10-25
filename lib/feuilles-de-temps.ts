@@ -117,3 +117,13 @@ export function erreurSaisieCra(
   }
   return null;
 }
+
+// Mission close (Mission.statut, texte libre : "En cours" / "Terminée" /
+// "Annulée") : plus aucune saisie ordinaire de CRA par l'Ingénieur. Une
+// correction reste possible par l'Admin, motivée et tracée (voir
+// app/api/feuilles-de-temps/correction/route.ts).
+export const STATUTS_MISSION_CLOSE = ["Terminée", "Annulée"];
+
+export function missionEstClose(statut: string): boolean {
+  return STATUTS_MISSION_CLOSE.includes(statut);
+}

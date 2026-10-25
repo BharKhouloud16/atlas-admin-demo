@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
-import { craEstEditableParIngenieur, totauxDepuisDetail, libelleMois, erreurSaisieCra, type JourCra } from "@/lib/feuilles-de-temps";
+import { craEstEditableParIngenieur, totauxDepuisDetail, libelleMois, erreurSaisieCra, missionEstClose, type JourCra } from "@/lib/feuilles-de-temps";
 import { lireCorpsJson } from "@/lib/api-errors";
 import { journaliser } from "@/lib/audit";
 import { envoyerEmailCraRejete } from "@/lib/email";
@@ -152,6 +152,12 @@ export async function POST(req: NextRequest) {
   const mission = await prisma.mission.findUnique({ where: { id: missionId } });
   if (!mission || mission.profilId !== session.profilId) {
     return NextResponse.json({ error: "Mission introuvable." }, { status: 404 });
+  }
+  if (missionEstClose(mission.statut)) {
+    return NextResponse.json(
+      { error: "Cette mission est close : la feuille de temps ne peut plus être saisie. Contactez l'administrateur pour une correction." },
+      { status: 409 }
+    );
   }
 
   const existante = await prisma.feuilleDeTemps.findUnique({

@@ -1,14 +1,37 @@
-// COMPANY ATLAS — V2.2-B : Billing Foundation — numérotation de facture.
+// COMPANY ATLAS — numérotation des factures (lot CRA V1, 25/10/2026).
 //
-// Format FA-{mois}-{8 derniers caractères de missionId}. Jusqu'au lot CRA V1
-// (25/10/2026) le suffixe reprenait les 6 PREMIERS caractères de l'id : la
-// partie horodatée d'un cuid, identique pour toutes les missions créées
-// dans la même fenêtre d'environ 47 s. Deux missions proches facturées le
-// même mois obtenaient le même numéro, et la seconde facture échouait sur
-// la contrainte @unique (Facture.numeroFacture). Les 8 derniers caractères
-// sont la partie aléatoire du cuid. Les factures existantes gardent leur
-// numéro (aucune donnée modifiée) ; la contrainte @unique reste le garde-fou
-// final.
-export function genererNumeroFacture(mois: string, missionId: string): string {
-  return `FA-${mois.replace("-", "")}-${missionId.slice(-8).toUpperCase()}`;
+// Numérotation réglementaire : chronologique et continue, attribuée à
+// l'ÉMISSION (validation BROUILLON -> VALIDEE, voir lib/billing/transitions.ts)
+// à partir d'un compteur annuel en base (CompteurFacture), incrémenté dans la
+// même transaction que la validation : une validation refusée ou concurrente
+// perdante n'avance jamais le compteur, donc aucun trou ni doublon.
+//
+// Un brouillon n'est pas une facture émise : il porte un numéro provisoire
+// unique (une facture par feuille de temps), remplacé à la validation.
+//
+// Avant ce lot, le numéro était FA-{AAAAMM}-{6 premiers caractères de
+// missionId}, attribué dès la création : non séquentiel, et en collision
+// pour deux missions créées dans la même fenêtre d'environ 47 s (partie
+// horodatée du cuid). Les factures déjà numérotées ainsi — y compris les
+// brouillons — gardent leur numéro : seule une facture au numéro provisoire
+// reçoit un numéro de la séquence.
+const PREFIXE_PROVISOIRE = "BROUILLON-";
+
+export function numeroProvisoire(feuilleDeTempsId: string): string {
+  return `${PREFIXE_PROVISOIRE}${feuilleDeTempsId}`;
+}
+
+export function estNumeroProvisoire(numero: string): boolean {
+  return numero.startsWith(PREFIXE_PROVISOIRE);
+}
+
+export function numeroReglementaire(annee: number, sequence: number): string {
+  return `FA-${annee}-${String(sequence).padStart(5, "0")}`;
+}
+
+// Année d'émission selon le calendrier français (une facture validée le
+// 31/12 à 23h30 heure de Paris appartient à cette année-là, pas à l'année
+// UTC suivante).
+export function anneeEmission(date: Date): number {
+  return Number(new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", year: "numeric" }).format(date));
 }
