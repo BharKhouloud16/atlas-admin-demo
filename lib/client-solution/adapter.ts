@@ -45,7 +45,7 @@ export function adapterEnOptionClient(
     return {
       typeSolution: "TALENT",
       niveauCorrespondance: admissibilite.niveau,
-      competencesCorrespondantes: [...admissibilite.competencesVerifiees, ...admissibilite.competencesDeclarees],
+      competencesCorrespondantes: [...admissibilite.competencesVerifiees],
       competencesManquantes: [...admissibilite.competencesManquantes],
       niveauConfiance: recommandation.niveauConfiance,
       rationale: libelleClient(admissibilite).lignes,

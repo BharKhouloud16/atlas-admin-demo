@@ -16,7 +16,7 @@ export function calculerSignatureSource(criteres: SuggestionCriteresDemande): st
   const elements = [
     // Version des règles de présentation : une évolution des règles régénère
     // les solutions (append-only) au lieu de resservir d'anciennes options.
-    "admissibilite-v1",
+    "admissibilite-v2-verifiees",
     [...criteres.competencesExtraites.map((c) => c.valeur)].sort().join("|"),
     criteres.senioriteSouhaitee?.valeur ?? "",
     criteres.anneesExperienceMin?.valeur ?? "",

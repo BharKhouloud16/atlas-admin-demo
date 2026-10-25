@@ -52,7 +52,7 @@ test.describe("Matching — admissibilité Client et vue Admin", () => {
   });
 
   test("critère obligatoire manquant : jamais une correspondance forte", () => {
-    const a = evaluer(profil("manque", { competences: ["SoapUI"] }), { ...BESOIN, competencesRecherchees: ["SoapUI", "SonarQube", "Jira"] });
+    const a = evaluer(profil("manque", { competencesGraph: graphe(["SoapUI", "VERIFIE"]) }), { ...BESOIN, competencesRecherchees: ["SoapUI", "SonarQube", "Jira"] });
     expect(a.niveau).toBe("PARTIELLE");
     expect(a.competencesManquantes).toEqual(["SonarQube", "Jira"]);
   });
@@ -140,12 +140,22 @@ test.describe("Matching — admissibilité Client et vue Admin", () => {
     });
   });
 
-  test("compétences déclarées par l'ingénieur (sans Skill Graph) : couvrent le besoin, signalées comme déclarées", () => {
+  test("compétences seulement déclarées par l'ingénieur : jamais présentées au Client, opportunité Admin à vérifier", () => {
     const a = evaluer(profil("declare", { competences: ["SoapUI", "SonarQube"] }));
-    expect(a.niveau).toBe("FORTE");
+    expect(a.niveau).toBe("NON_ADMISSIBLE");
+    expect(a.presentableClient).toBe(false);
+    expect(a.categorieAdmin).toBe("OPPORTUNITE");
     expect(a.competencesDeclarees).toEqual(["SoapUI", "SonarQube"]);
-    expect(libelleClient(a).lignes).toContain("Déclarées par l'ingénieur : SoapUI, SonarQube.");
     expect(a.actionsAdmin).toContain("Vérifier les compétences déclarées par l'ingénieur : SoapUI, SonarQube");
+  });
+
+  test("compétence vérifiée + compétence seulement déclarée : partielle, la déclarée reste « non couverte » pour le Client", () => {
+    const a = evaluer(profil("mixte", { competencesGraph: graphe(["SoapUI", "VERIFIE"], ["SonarQube", "DECLARE"]) }));
+    expect(a.niveau).toBe("PARTIELLE");
+    expect(a.competencesManquantes).toEqual(["SonarQube"]);
+    expect(libelleClient(a).lignes).toContain("Non couvertes à ce jour : SonarQube.");
+    expect(JSON.stringify(libelleClient(a))).not.toContain("Déclarées");
+    expect(a.actionsAdmin).toContain("Vérifier les compétences déclarées par l'ingénieur : SonarQube");
   });
 
   test("critère souhaité non satisfait (séniorité) : écart négociable, jamais bloquant", () => {
@@ -156,8 +166,8 @@ test.describe("Matching — admissibilité Client et vue Admin", () => {
 
   test("ordre de présentation : fortes d'abord, puis couverture, puis score", () => {
     const profils = [
-      profil("partiel", { competences: ["SoapUI"] }),
-      profil("fort", { competences: ["SoapUI", "SonarQube"], tjmEstime: null }),
+      profil("partiel", { competencesGraph: graphe(["SoapUI", "VERIFIE"]) }),
+      profil("fort", { competencesGraph: graphe(["SoapUI", "VERIFIE"], ["SonarQube", "VERIFIE"]), tjmEstime: 500 }),
       profil("fort-verifie", { competencesGraph: graphe(["SoapUI", "VERIFIE"], ["SonarQube", "VERIFIE"]) }),
     ];
     const ordre = classerProfils(profils, BESOIN)

@@ -51,6 +51,7 @@ test.describe("Matching fiabilisé — Client et Admin", () => {
     const cher = await creerProfil(s, "Cher", { competences: [[A, "VERIFIE"], [B, "VERIFIE"]], tjmEstime: 800 });
     const indispo = await creerProfil(s, "Indispo", { competences: [[A, "VERIFIE"], [B, "VERIFIE"]], disponibilite: "Non disponible immédiatement" });
     const extrait = await creerProfil(s, "Extrait", { competences: [[A, "INFERE"], [B, "INFERE"]] });
+    const declare = await creerProfil(s, "Declare", { competences: [[A, "DECLARE"], [B, "DECLARE"]] });
     const tjmInconnu = await creerProfil(s, "TjmInconnu", { competences: [[A, "VERIFIE"], [B, "VERIFIE"]], tjmEstime: null });
 
     const clientDemo = await prisma.client.findFirstOrThrow({ where: { compte: { email: "client-demo@example.com" } } });
@@ -74,7 +75,7 @@ test.describe("Matching fiabilisé — Client et Admin", () => {
     expect(corps.recommandation).not.toBeNull();
     expect(corps.recommandation.competencesCorrespondantes).toEqual([A, B]);
 
-    // Aucun profil exclu (budget, disponibilité, compétences extraites seulement, aucune compétence) ;
+    // Aucun profil exclu (budget, disponibilité, compétences extraites ou seulement déclarées, aucune compétence) ;
     // aucune identité, aucun TJM, aucun score, aucune formulation trompeuse.
     // (champs affichés seulement : les identifiants aléatoires des options pourraient contenir ces chiffres par hasard)
     const affiche = (o: Record<string, unknown>) => JSON.stringify([o.titre, o.justification, o.competencesCorrespondantes, o.competencesManquantes, o.criteresAPreciser, o.disponibilite]);
@@ -92,7 +93,7 @@ test.describe("Matching fiabilisé — Client et Admin", () => {
 
     const ids = (liste: AnalyseVue[]) => liste.map((x) => x.profilId);
     expect(ids(vue.analyse.presentables)).toEqual(expect.arrayContaining([parfait.id, partiel.id, tjmInconnu.id]));
-    expect(ids(vue.analyse.opportunites)).toEqual(expect.arrayContaining([cher.id, indispo.id, extrait.id]));
+    expect(ids(vue.analyse.opportunites)).toEqual(expect.arrayContaining([cher.id, indispo.id, extrait.id, declare.id]));
     expect([...ids(vue.analyse.presentables), ...ids(vue.analyse.opportunites)]).not.toContain(aucune.id);
 
     const parId = new Map<string, AnalyseVue>([...vue.analyse.presentables, ...vue.analyse.opportunites].map((x: AnalyseVue) => [x.profilId, x]));
@@ -100,6 +101,7 @@ test.describe("Matching fiabilisé — Client et Admin", () => {
     expect(actions(cher.id).some((x) => /budget dépassé/i.test(x))).toBe(true);
     expect(actions(indispo.id)).toContain("Disponibilité incompatible — proposer au client une date de démarrage différée");
     expect(actions(extrait.id)).toContain(`Faire vérifier les compétences extraites du CV : ${A}, ${B}`);
+    expect(actions(declare.id)).toContain(`Vérifier les compétences déclarées par l'ingénieur : ${A}, ${B}`);
     expect(actions(tjmInconnu.id).some((x) => /TJM du profil non renseigné/.test(x))).toBe(true);
     // Jamais une compétence inventée : l'Admin voit exactement ce qui est vérifié, déclaré ou manquant.
     expect(parId.get(partiel.id)!.admissibilite.competencesManquantes).toEqual([B]);

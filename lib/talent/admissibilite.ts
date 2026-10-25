@@ -10,7 +10,10 @@
 //   - critères souhaités et négociables : séniorité, expérience, secteur,
 //     mobilité — signalés comme écarts, jamais bloquants ;
 //   - compétences vérifiées (Admin), déclarées (Ingénieur) et extraites du CV
-//     non vérifiées (INFERE) : seules les deux premières couvrent un besoin ;
+//     non vérifiées (INFERE) : seules les compétences VÉRIFIÉES couvrent un
+//     besoin côté Client (décision produit du 25/10/2026) ; déclarées et
+//     extraites restent visibles côté Admin, avec l'action de les faire
+//     vérifier ;
 //   - compatibilité confirmée et donnée inconnue : une contrainte exprimée par
 //     le Client dont la valeur côté profil est inconnue n'est JAMAIS comptée
 //     comme compatible ; elle est « à confirmer ».
@@ -44,9 +47,9 @@ export type Admissibilite = {
   categorieAdmin: CategorieAdmin;
   competencesDemandees: string[];
   competencesVerifiees: string[]; // demandées et VERIFIE (Admin)
-  competencesDeclarees: string[]; // demandées et DECLARE (Ingénieur), non encore vérifiées
+  competencesDeclarees: string[]; // demandées et DECLARE (Ingénieur), non encore vérifiées : ne couvrent pas le besoin
   competencesNonVerifiees: string[]; // demandées, présentes seulement comme extraites (INFERE/INCONNU)
-  competencesManquantes: string[]; // demandées et non couvertes (inclut les non vérifiées)
+  competencesManquantes: string[]; // demandées et non vérifiées (inclut déclarées et extraites)
   contraintesBloquantes: string[]; // incompatibilités réelles (budget, disponibilité, localisation)
   contraintesAConfirmer: ContrainteAConfirmer[]; // contraintes exprimées par le Client, inconnues côté profil
   ecartsNegociables: string[]; // critères souhaités non satisfaits ou non renseignés
@@ -69,7 +72,7 @@ export function evaluerAdmissibilite(profil: ProfilPourMatching, criteres: Crite
   const statuts = statutsCompetences(profil);
   const verifiees = demandees.filter((c) => statuts.get(c) === "VERIFIE");
   const declarees = demandees.filter((c) => statuts.get(c) === "DECLARE");
-  const couvertes = new Set([...verifiees, ...declarees]);
+  const couvertes = new Set(verifiees);
   const nonVerifiees = demandees.filter((c) => statuts.get(c) === "INFERE" || statuts.get(c) === "INCONNU");
   const manquantes = demandees.filter((c) => !couvertes.has(c));
   const bloquantes = [...resultat.criteresBloquants];
@@ -91,7 +94,7 @@ export function evaluerAdmissibilite(profil: ProfilPourMatching, criteres: Crite
 
   const motifs: string[] = [];
   if (demandees.length === 0) motifs.push("Aucune compétence précisée dans le besoin : correspondance impossible à établir");
-  else if (couvertes.size === 0) motifs.push("Aucune des compétences demandées n'est vérifiée ou déclarée sur ce profil");
+  else if (couvertes.size === 0) motifs.push("Aucune des compétences demandées n'est vérifiée par ATLAS sur ce profil");
   for (const b of bloquantes) motifs.push(`Contrainte bloquante : ${b}`);
 
   let niveau: NiveauCorrespondance;
@@ -102,15 +105,15 @@ export function evaluerAdmissibilite(profil: ProfilPourMatching, criteres: Crite
   const actions: string[] = [];
   if (nonVerifiees.length > 0) actions.push(`Faire vérifier les compétences extraites du CV : ${nonVerifiees.join(", ")}`);
   if (declarees.length > 0) actions.push(`Vérifier les compétences déclarées par l'ingénieur : ${declarees.join(", ")}`);
-  const absentes = manquantes.filter((c) => !nonVerifiees.includes(c));
-  if (absentes.length > 0 && couvertes.size > 0) actions.push(`Compétences absentes du profil : ${absentes.join(", ")} — échanger avec le client sur leur caractère indispensable`);
+  const absentes = manquantes.filter((c) => !nonVerifiees.includes(c) && !declarees.includes(c));
+  if (absentes.length > 0 && couvertes.size + declarees.length + nonVerifiees.length > 0) actions.push(`Compétences absentes du profil : ${absentes.join(", ")} — échanger avec le client sur leur caractère indispensable`);
   if (f.budget.statut === "INCOMPATIBLE") actions.push(`Budget dépassé (${f.budget.detail}) — rediscuter le budget avec le client`);
   if (f.disponibilite.statut === "INCOMPATIBLE") actions.push("Disponibilité incompatible — proposer au client une date de démarrage différée");
   if (f.localisation.statut === "INCOMPATIBLE") actions.push("Localisation incompatible — étudier le travail à distance avec le client");
   for (const c of aConfirmer) actions.push(ACTION_A_CONFIRMER[c]);
 
   const categorieAdmin: CategorieAdmin =
-    niveau !== "NON_ADMISSIBLE" ? "PRESENTABLE" : couvertes.size > 0 || nonVerifiees.length > 0 ? "OPPORTUNITE" : "NON_PERTINENT";
+    niveau !== "NON_ADMISSIBLE" ? "PRESENTABLE" : couvertes.size + declarees.length + nonVerifiees.length > 0 ? "OPPORTUNITE" : "NON_PERTINENT";
 
   return {
     niveau,
@@ -136,7 +139,7 @@ export function comparerAdmissibles(
   b: { admissibilite: Admissibilite; resultat: ResultatMatching }
 ): number {
   const rang = (x: Admissibilite) => (x.niveau === "FORTE" ? 0 : x.niveau === "PARTIELLE" ? 1 : 2);
-  const couverture = (x: Admissibilite) => x.competencesVerifiees.length + x.competencesDeclarees.length;
+  const couverture = (x: Admissibilite) => x.competencesVerifiees.length;
   return (
     rang(a.admissibilite) - rang(b.admissibilite) ||
     couverture(b.admissibilite) - couverture(a.admissibilite) ||
@@ -147,7 +150,7 @@ export function comparerAdmissibles(
 
 // Texte présenté au Client : aucune identité, aucun TJM, aucun score interne.
 export function libelleClient(a: Admissibilite): { titre: string; lignes: string[] } {
-  const couvertes = [...a.competencesVerifiees, ...a.competencesDeclarees];
+  const couvertes = a.competencesVerifiees;
   const lignes: string[] = [];
   if (a.niveau === "FORTE") {
     lignes.push(`Correspondance forte : les ${a.competencesDemandees.length} compétence(s) demandée(s) sont couvertes.`);
@@ -155,7 +158,6 @@ export function libelleClient(a: Admissibilite): { titre: string; lignes: string
     lignes.push(`Correspondance partielle : ${couvertes.length}/${a.competencesDemandees.length} compétence(s) demandée(s) couverte(s).`);
   }
   if (a.competencesVerifiees.length > 0) lignes.push(`Vérifiées par ATLAS : ${a.competencesVerifiees.join(", ")}.`);
-  if (a.competencesDeclarees.length > 0) lignes.push(`Déclarées par l'ingénieur : ${a.competencesDeclarees.join(", ")}.`);
   if (a.competencesManquantes.length > 0) lignes.push(`Non couvertes à ce jour : ${a.competencesManquantes.join(", ")}.`);
   for (const c of a.contraintesAConfirmer) lignes.push(LIBELLE_CLIENT_A_CONFIRMER[c]);
   const titre = a.niveau === "FORTE" ? `Correspondance forte — ${couvertes.join(", ")}` : `Correspondance partielle — ${couvertes.join(", ")}`;
