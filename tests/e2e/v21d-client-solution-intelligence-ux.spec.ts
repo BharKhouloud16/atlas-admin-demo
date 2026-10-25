@@ -38,6 +38,8 @@ test.describe("Client — Solutions possibles (C3)", () => {
         prenom: "Test",
         cvValide: true,
         competences: ["Terraform"],
+        // Compétence vérifiée : seule une compétence vérifiée couvre un besoin côté Client.
+        competencesGraph: { create: [{ competence: "Terraform", statut: "VERIFIE", confiance: "HAUTE" }] },
         seniorite: "Senior",
         anneesExperience: 5,
         tjmEstime: 600,
