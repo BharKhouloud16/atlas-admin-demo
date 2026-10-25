@@ -10,6 +10,7 @@ import { contexteConnecte } from "../setup/session-token";
 // ne dépendre d'aucun autre profil présent en base.
 
 type Statut = "VERIFIE" | "DECLARE" | "INFERE";
+type AnalyseVue = { profilId: string; admissibilite: { actionsAdmin: string[]; competencesManquantes: string[] } };
 
 async function creerProfil(suffixe: string, nom: string, options: { competences?: [string, Statut][]; tjmEstime?: number | null; disponibilite?: string | null }) {
   return prisma.profil.create({
@@ -89,19 +90,19 @@ test.describe("Matching fiabilisé — Client et Admin", () => {
     const vue = await (await admin.get(`/api/talent/besoins/${need.id}/solutions`)).json();
     expect(await prisma.solutionOption.count({ where: { needId: need.id } })).toBe(avant);
 
-    const ids = (liste: { profilId: string }[]) => liste.map((x) => x.profilId);
+    const ids = (liste: AnalyseVue[]) => liste.map((x) => x.profilId);
     expect(ids(vue.analyse.presentables)).toEqual(expect.arrayContaining([parfait.id, partiel.id, tjmInconnu.id]));
     expect(ids(vue.analyse.opportunites)).toEqual(expect.arrayContaining([cher.id, indispo.id, extrait.id]));
     expect([...ids(vue.analyse.presentables), ...ids(vue.analyse.opportunites)]).not.toContain(aucune.id);
 
-    const parId = new Map([...vue.analyse.presentables, ...vue.analyse.opportunites].map((x: { profilId: string }) => [x.profilId, x]));
-    const actions = (id: string) => (parId.get(id) as { admissibilite: { actionsAdmin: string[] } }).admissibilite.actionsAdmin;
+    const parId = new Map<string, AnalyseVue>([...vue.analyse.presentables, ...vue.analyse.opportunites].map((x: AnalyseVue) => [x.profilId, x]));
+    const actions = (id: string) => parId.get(id)!.admissibilite.actionsAdmin;
     expect(actions(cher.id).some((x) => /budget dépassé/i.test(x))).toBe(true);
     expect(actions(indispo.id)).toContain("Disponibilité incompatible — proposer au client une date de démarrage différée");
     expect(actions(extrait.id)).toContain(`Faire vérifier les compétences extraites du CV : ${A}, ${B}`);
     expect(actions(tjmInconnu.id).some((x) => /TJM du profil non renseigné/.test(x))).toBe(true);
     // Jamais une compétence inventée : l'Admin voit exactement ce qui est vérifié, déclaré ou manquant.
-    expect((parId.get(partiel.id) as { admissibilite: { competencesManquantes: string[] } }).admissibilite.competencesManquantes).toEqual([B]);
+    expect(parId.get(partiel.id)!.admissibilite.competencesManquantes).toEqual([B]);
   });
 
   test("aucun profil admissible : aucune option ni recommandation pour le Client", async () => {
