@@ -1,5 +1,9 @@
 /** @type {import('next').NextConfig} */
 
+// Un build Production qui viserait la base Preview échoue ici, avant toute
+// mise en ligne (voir lib/garde-base-build.js et lib/garde-base.ts).
+require("./lib/garde-base-build").verifierCibleBuildProduction(process.env);
+
 // En-têtes de sécurité — absents jusqu'ici (aucun next.config.js n'existait).
 // CSP volontairement stricte sur script-src (l'app n'a aucun script tiers)
 // mais tolérante sur style-src ('unsafe-inline') car toute la UI utilise des
