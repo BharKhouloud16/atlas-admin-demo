@@ -74,6 +74,11 @@ jobs:
       # email contenant un lien n'est tenté (fail-closed, jamais de repli vers
       # le domaine de Production).
       EMAIL_APP_BASE_URL: http://localhost:3000
+      # Simulations réservées à la CI (lib/simulation-ci.ts) : stockage du CV
+      # et extraction déterministe des PDF de test fictifs, pour tester le
+      # parcours Ingénieur complet sans Vercel Blob ni API Claude. Ignorées
+      # sur Vercel (VERCEL/VERCEL_ENV toujours définis) et hors CI=true.
+      ATLAS_SIMULATIONS_CI: "oui"
 
     steps:
       - uses: actions/checkout@v4

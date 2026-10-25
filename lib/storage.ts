@@ -13,12 +13,39 @@
 // erreur explicite plutôt que d'échouer silencieusement.
 
 import { put, del, get } from "@vercel/blob";
+import { promises as fs } from "fs";
+import os from "os";
+import path from "path";
+import { randomUUID } from "crypto";
+import { simulationsCiActives, PREFIXE_URL_SIMULATION } from "@/lib/simulation-ci";
+
+// Stockage SIMULÉ, réservé à la CI (voir lib/simulation-ci.ts) et limité au
+// dossier « cv » : les autres dossiers (pièces jointes, factures) gardent en
+// CI le comportement réel « stockage indisponible -> 503 », que leurs tests
+// vérifient. Fichiers écrits dans un répertoire temporaire du runner.
+const DOSSIERS_SIMULES = new Set(["cv"]);
+const RACINE_SIMULATION = path.join(os.tmpdir(), "atlas-simulation-ci");
+
+function cheminSimule(url: string): string | null {
+  const relatif = url.slice(PREFIXE_URL_SIMULATION.length);
+  if (!/^[a-z-]+\/[0-9a-f-]{36}$/.test(relatif)) return null;
+  return path.join(RACINE_SIMULATION, relatif);
+}
 
 export async function uploaderFichier(
   nomFichier: string,
   fichier: File | Blob,
   dossier: string = "cv"
 ): Promise<{ url: string }> {
+  if (simulationsCiActives() && DOSSIERS_SIMULES.has(dossier)) {
+    const url = `${PREFIXE_URL_SIMULATION}${dossier}/${randomUUID()}`;
+    const chemin = cheminSimule(url)!;
+    await fs.mkdir(path.dirname(chemin), { recursive: true });
+    await fs.writeFile(chemin, Buffer.from(await fichier.arrayBuffer()));
+    await fs.writeFile(`${chemin}.type`, fichier.type || "application/octet-stream");
+    return { url };
+  }
+
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
     throw new Error(
       "Le stockage de fichiers n'est pas configuré (BLOB_READ_WRITE_TOKEN manquant). " +
@@ -41,6 +68,15 @@ export async function uploaderFichier(
 export async function obtenirFichier(
   url: string
 ): Promise<{ stream: ReadableStream; contentType: string } | null> {
+  if (url.startsWith(PREFIXE_URL_SIMULATION)) {
+    // Un fichier simulé n'est jamais servi hors simulation active.
+    const chemin = simulationsCiActives() ? cheminSimule(url) : null;
+    if (!chemin) return null;
+    const octets = await fs.readFile(chemin).catch(() => null);
+    if (!octets) return null;
+    const contentType = await fs.readFile(`${chemin}.type`, "utf8").catch(() => "application/octet-stream");
+    return { stream: new Blob([new Uint8Array(octets)]).stream(), contentType };
+  }
   const resultat = await get(url, { access: "private" });
   if (!resultat || resultat.statusCode !== 200 || !resultat.stream) {
     return null;
@@ -49,6 +85,11 @@ export async function obtenirFichier(
 }
 
 export async function supprimerFichier(url: string): Promise<void> {
+  if (url.startsWith(PREFIXE_URL_SIMULATION)) {
+    const chemin = simulationsCiActives() ? cheminSimule(url) : null;
+    if (chemin) await fs.rm(chemin, { force: true }).catch(() => undefined);
+    return;
+  }
   if (!process.env.BLOB_READ_WRITE_TOKEN) return;
   try {
     await del(url);
