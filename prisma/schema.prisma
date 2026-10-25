@@ -91,6 +91,13 @@ model User {
   echecsConnexion  Int       @default(0)
   verrouilleJusqua DateTime?
 
+  // Version des sessions (voir lib/auth.ts) : chaque JWT porte la version du
+  // compte au moment de son émission ; getSession() refuse tout jeton dont la
+  // version diffère. Incrémentée à chaque changement ou réinitialisation du
+  // mot de passe : toutes les autres sessions ouvertes sont révoquées.
+  // 0 par défaut : les comptes et jetons existants restent valides.
+  sessionVersion Int @default(0)
+
   // Authentification à deux facteurs (TOTP) — pour l'instant réservée au
   // rôle ADMIN (le compte le plus sensible, accès aux coûts/marges
   // internes). totpSecret reste vide tant que la configuration n'est pas

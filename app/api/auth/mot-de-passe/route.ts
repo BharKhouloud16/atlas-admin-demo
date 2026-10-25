@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
-import { getSession } from "@/lib/auth";
+import { getSession, createSession } from "@/lib/auth";
 import { motDePasseSchema, premierMessageZod } from "@/lib/validation";
 import { validerMotDePasse } from "@/lib/password-policy";
 
@@ -38,7 +38,24 @@ export async function POST(req: NextRequest) {
   }
 
   const passwordHash = await bcrypt.hash(nouveauMotDePasse, 12);
-  await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+  // Écriture conditionnée au hash lu ci-dessus : deux changements simultanés
+  // avec le même ancien mot de passe ne peuvent pas aboutir tous les deux.
+  // Incrémenter sessionVersion révoque toutes les sessions ouvertes du compte
+  // (voir lib/auth.ts) ; seule la session courante est réémise.
+  const { count } = await prisma.user.updateMany({
+    where: { id: user.id, passwordHash: user.passwordHash },
+    data: { passwordHash, sessionVersion: { increment: 1 } },
+  });
+  if (count === 0) {
+    return NextResponse.json({ error: "Le mot de passe a été modifié entre-temps. Reconnectez-vous." }, { status: 409 });
+  }
+  await createSession({
+    email: session.email,
+    role: session.role,
+    profilId: session.profilId,
+    clientId: session.clientId,
+    desactive: session.desactive,
+  });
 
   return NextResponse.json({ ok: true });
 }

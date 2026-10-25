@@ -82,6 +82,9 @@ export async function POST(req: NextRequest) {
       // après qu'il ait repris le contrôle de son compte.
       echecsConnexion: 0,
       verrouilleJusqua: null,
+      // Révoque toutes les sessions ouvertes (voir lib/auth.ts) : un compte
+      // repris par mot de passe oublié ne garde aucune session antérieure.
+      sessionVersion: { increment: 1 },
     },
   });
   if (count !== 1) {
