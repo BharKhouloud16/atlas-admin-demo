@@ -21,6 +21,7 @@ import {
 import CalendrierCra from "@/components/CalendrierCra";
 import { calculerBadgeConfiance } from "@/lib/scoring";
 import type { Realisation } from "@/app/api/ingenieur/realisations/route";
+import { VIDEO_PRESENTATION_ACTIVE } from "@/lib/fonctionnalites-v1";
 
 type InfoCV = {
   id: string;
@@ -324,12 +325,15 @@ function OngletProfil({ data, recharger }: { data: ProfilData; recharger: () => 
         <RealisationsSection data={data} recharger={recharger} />
       </div>
 
-      <div>
-        <p style={{ fontSize: 12, textTransform: "uppercase", color: "#888", marginBottom: 8 }}>
-          Vidéo de présentation
-        </p>
-        <VideoPresentationSection data={data} recharger={recharger} />
-      </div>
+      {/* Vidéo de présentation : hors périmètre V1 (lib/fonctionnalites-v1.ts). */}
+      {VIDEO_PRESENTATION_ACTIVE && (
+        <div>
+          <p style={{ fontSize: 12, textTransform: "uppercase", color: "#888", marginBottom: 8 }}>
+            Vidéo de présentation
+          </p>
+          <VideoPresentationSection data={data} recharger={recharger} />
+        </div>
+      )}
 
       {categories.map((cat) => (
         <div key={cat}>

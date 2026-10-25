@@ -10,6 +10,7 @@ import {
   type ComparaisonTjm,
 } from "@/lib/scoring";
 import { TOUTES_COMPETENCES } from "@/lib/competences";
+import { VIDEO_PRESENTATION_ACTIVE } from "@/lib/fonctionnalites-v1";
 import { bleu, bleuFonce, rouge } from "@/lib/theme";
 import type { Realisation } from "@/app/api/ingenieur/realisations/route";
 
@@ -722,7 +723,7 @@ function DetailProfil({ l, badge }: { l: Ligne; badge: ReturnType<typeof calcule
             ))}
           </div>
         )}
-        {l.p.videoUrl && (
+        {VIDEO_PRESENTATION_ACTIVE && l.p.videoUrl && (
           <div style={{ marginTop: 14 }}>
             <p style={{ fontSize: 12, textTransform: "uppercase", color: "#888", marginBottom: 8 }}>
               Vidéo de présentation
