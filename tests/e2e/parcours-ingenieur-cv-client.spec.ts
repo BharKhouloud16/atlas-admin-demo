@@ -98,8 +98,26 @@ test.describe("Parcours métier — Ingénieur, CV, profil structuré, Client", 
     await page.getByRole("button", { name: /continuer/i }).click();
     await expect(page).toHaveURL(/\/ingenieur\/disponibilite$/);
 
+    // 5 bis. Questionnaire de disponibilité, rempli comme le ferait l'Ingénieur.
+    await expect(page.getByRole("heading", { name: /votre disponibilité/i })).toBeVisible();
+    const valider = page.getByRole("button", { name: /valider et continuer/i });
+    await expect(valider).toBeDisabled();
+    await page.getByRole("radio", { name: "Disponible immédiatement", exact: true }).check();
+    const listes = page.locator("main select");
+    await listes.nth(0).selectOption("1 mois"); // préavis
+    await listes.nth(1).selectOption("Française"); // nationalité
+    await listes.nth(2).selectOption("France"); // pays de résidence
+    await page.getByPlaceholder("Montant").fill("550");
+    await expect(valider).toBeEnabled();
+    await valider.click();
+    await expect(page).toHaveURL(/\/ingenieur$/, { timeout: 15000 });
+
     const profil = await prisma.profil.findFirstOrThrow({ where: { compte: { email } }, include: { infosCv: true } });
     expect(profil.cvValide).toBe(true);
+    expect(profil.questionnaireValide).toBe(true);
+    expect(profil.disponibilite).toBe("Disponible immédiatement");
+    expect(profil.preavis).toBe("1 mois");
+    expect(profil.paysResidence).toBe("France");
     expect(profil.cvUrl?.startsWith("ci-simulation://cv/")).toBe(true);
     expect(profil.infosCv).toHaveLength(16);
     expect(profil.infosCv.every((info) => info.valide)).toBe(true);

@@ -139,12 +139,19 @@ test.describe("Parcours CV — scénarios Admin", () => {
     const lu = await anonyme.get(`/api/ingenieur/cv/fichier?profilId=${a.profilId}&partage=${encodeURIComponent(partage)}`);
     expect(lu.status()).toBe(200);
     expect(Buffer.from(await lu.body()).equals(pdf)).toBe(true);
-    // Le jeton du CV de A ne donne accès ni au CV de B, ni à la vidéo de A.
+    // Le jeton du CV de A ne donne accès ni au CV de B, ni à la vidéo de A (hors périmètre V1, toujours refusée sans compte).
     expect((await anonyme.get(`/api/ingenieur/cv/fichier?profilId=${b.profilId}&partage=${encodeURIComponent(partage)}`)).status()).toBe(403);
     expect((await anonyme.get(`/api/ingenieur/video/fichier?profilId=${a.profilId}&partage=${encodeURIComponent(partage)}`)).status()).toBe(403);
     // Sans jeton, ou avec un jeton forgé : toujours refusé.
     expect((await anonyme.get(`/api/ingenieur/cv/fichier?profilId=${a.profilId}`)).status()).toBe(403);
     expect((await anonyme.get(`/api/ingenieur/cv/fichier?profilId=${a.profilId}&partage=jeton-forge`)).status()).toBe(403);
+    // Un lien de partage ne donne jamais accès aux versions archivées du CV (l'Admin, lui, y a accès).
+    expect((await importerCv(a.contexte, cvIngenieurFictif("partage-v2").pdf)).status()).toBe(200);
+    const version = await prisma.versionCv.findFirstOrThrow({ where: { profilId: a.profilId } });
+    expect((await anonyme.get(`/api/ingenieur/cv/fichier?profilId=${a.profilId}&partage=${encodeURIComponent(partage)}&versionId=${version.id}`)).status()).toBe(403);
+    const archive = await admin.get(`/api/ingenieur/cv/fichier?profilId=${a.profilId}&versionId=${version.id}`);
+    expect(archive.status()).toBe(200);
+    expect(Buffer.from(await archive.body()).equals(pdf)).toBe(true);
     // Le passage sans session n'ouvre aucune autre route /api/ingenieur.
     expect((await anonyme.get(`/api/ingenieur/cv/infos?partage=${encodeURIComponent(partage)}`)).status()).toBe(403);
   });
