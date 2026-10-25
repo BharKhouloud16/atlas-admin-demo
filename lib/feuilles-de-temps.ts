@@ -64,3 +64,66 @@ export function totauxDepuisDetail(detail: JourCra[]): { joursTravailles: number
     heuresSupplementaires: Math.round(heuresSup * 2) / 2,
   };
 }
+
+// Nombre de jours du mois "AAAA-MM" (28 à 31), ou null si le mois est invalide.
+export function joursDansMois(mois: string): number | null {
+  const m = /^(\d{4})-(\d{2})$/.exec(mois);
+  if (!m) return null;
+  const annee = Number(m[1]);
+  const numero = Number(m[2]);
+  if (numero < 1 || numero > 12) return null;
+  return new Date(Date.UTC(annee, numero, 0)).getUTCDate();
+}
+
+// Contrôle serveur d'une saisie de CRA, avant tout calcul de totaux : un
+// détail jour par jour doit porter sur des dates réelles du mois déclaré,
+// chacune une seule fois, avec 0 à 24 heures ; des totaux saisis sans
+// détail doivent rester dans les bornes du mois. Renvoie le message
+// d'erreur à afficher, ou null si la saisie est cohérente.
+export function erreurSaisieCra(
+  mois: string,
+  saisie: { detailJours?: unknown; joursTravailles?: unknown; heuresSupplementaires?: unknown }
+): string | null {
+  const nbJours = joursDansMois(mois);
+  if (nbJours === null) return "Mois (AAAA-MM) invalide.";
+
+  if (saisie.detailJours !== undefined && saisie.detailJours !== null) {
+    if (!Array.isArray(saisie.detailJours)) return "Détail des jours invalide.";
+    const vus = new Set<string>();
+    for (const j of saisie.detailJours as Partial<JourCra>[]) {
+      const date = typeof j?.date === "string" ? j.date : "";
+      const numeroJour = date.startsWith(`${mois}-`) ? Number(date.slice(8)) : NaN;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !(numeroJour >= 1 && numeroJour <= nbJours)) {
+        return `Le jour « ${date || "?"} » n'appartient pas au mois déclaré.`;
+      }
+      if (vus.has(date)) return `Le jour ${date} est saisi plusieurs fois.`;
+      vus.add(date);
+      if (typeof j.travaille !== "boolean") return `Jour ${date} : statut travaillé invalide.`;
+      const heures = j.heures ?? 0;
+      if (typeof heures !== "number" || !Number.isFinite(heures) || heures < 0 || heures > 24) {
+        return `Jour ${date} : le nombre d'heures doit être compris entre 0 et 24.`;
+      }
+    }
+    return null;
+  }
+
+  const jours = Number(saisie.joursTravailles);
+  if (!Number.isFinite(jours) || jours < 0 || jours > nbJours) {
+    return `Nombre de jours travaillés invalide (0 à ${nbJours} pour ce mois).`;
+  }
+  const heuresSup = saisie.heuresSupplementaires === undefined || saisie.heuresSupplementaires === null || saisie.heuresSupplementaires === "" ? 0 : Number(saisie.heuresSupplementaires);
+  if (!Number.isFinite(heuresSup) || heuresSup < 0 || heuresSup > nbJours * 16) {
+    return "Nombre d'heures supplémentaires invalide.";
+  }
+  return null;
+}
+
+// Mission close (Mission.statut, texte libre : "En cours" / "Terminée" /
+// "Annulée") : plus aucune saisie ordinaire de CRA par l'Ingénieur. Une
+// correction reste possible par l'Admin, motivée et tracée (voir
+// app/api/feuilles-de-temps/correction/route.ts).
+export const STATUTS_MISSION_CLOSE = ["Terminée", "Annulée"];
+
+export function missionEstClose(statut: string): boolean {
+  return STATUTS_MISSION_CLOSE.includes(statut);
+}

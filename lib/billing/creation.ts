@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { calculerMontantsFacture } from "./montants";
-import { genererNumeroFacture } from "./numero";
+import { numeroProvisoire } from "./numero";
 
 // COMPANY ATLAS — V2.2-B : Billing Foundation — création de Facture.
 //
@@ -60,7 +60,8 @@ export async function creerFactureDepuisFeuille(feuilleDeTempsId: string): Promi
         clientId: feuille.mission.clientId,
         missionId: feuille.missionId,
         feuilleDeTempsId: feuille.id,
-        numeroFacture: genererNumeroFacture(feuille.mois, feuille.missionId),
+        // Numéro définitif attribué à la validation (lib/billing/numero.ts).
+        numeroFacture: numeroProvisoire(feuille.id),
         statut: "BROUILLON",
         montantHT,
         montantTVA,

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { bleu, bleuFonce, grisTexte, vert, orange, rouge } from "@/lib/theme";
 import { LABEL_STATUT_CRA, libelleMois, type StatutCra } from "@/lib/feuilles-de-temps";
 import { LABEL_STATUT_FACTURE, statutAffiche } from "@/lib/billing/etat-facture";
+import { estNumeroProvisoire } from "@/lib/billing/numero";
 import type { StatutFacture } from "@prisma/client";
 
 // COMPANY ATLAS — V2.2-B : Billing Foundation — capacité Admin minimale.
@@ -350,7 +351,7 @@ export default function FacturesAdminPage() {
               <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
                 <div>
                   <p style={{ margin: 0, fontWeight: 600, fontSize: 14 }}>
-                    {f.numeroFacture} — {f.client.nom}
+                    {estNumeroProvisoire(f.numeroFacture) ? "Brouillon (numéro attribué à la validation)" : f.numeroFacture} — {f.client.nom}
                     {f.mission.repere ? ` (${f.mission.repere})` : ""}
                   </p>
                   <p style={{ margin: "4px 0 0", fontSize: 13, color: "#4b5567" }}>

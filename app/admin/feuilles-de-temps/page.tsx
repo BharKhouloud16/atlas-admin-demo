@@ -148,13 +148,11 @@ export default function FeuillesDeTempsAdminPage() {
             </span>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
               {f.statut === "ValideeClient" && (
-                <a
-                  href={`/api/feuilles-de-temps/facture?feuilleId=${f.id}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ fontSize: 11, fontWeight: 600 }}
-                >
-                  Facture PDF
+                // La facture se valide (numéro réglementaire) et se télécharge
+                // depuis Factures : un seul document de facture, celui de la
+                // Facture enregistrée.
+                <a href="/admin/factures" style={{ fontSize: 11, fontWeight: 600 }}>
+                  Facture
                 </a>
               )}
               <span style={{ fontSize: 11, fontWeight: 600, color: COULEUR_STATUT_CRA[f.statut] }}>
