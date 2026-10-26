@@ -20,7 +20,11 @@ const ORDRE_CONFIANCE: Record<OptionClientSafe["niveauConfiance"], number> = {
 // Compare deux options sur le seul contenu métier (jamais leur position
 // d'origine) — utilisée à la fois pour trier et pour détecter une
 // équivalence réelle entre deux options.
+const RANG_NIVEAU = (o: OptionClientSafe) => (o.niveauCorrespondance === "PARTIELLE" ? 1 : 0);
+
 function comparerSubstance(a: OptionClientSafe, b: OptionClientSafe): number {
+  const diffNiveau = RANG_NIVEAU(a) - RANG_NIVEAU(b);
+  if (diffNiveau !== 0) return diffNiveau;
   const diffCompetences = b.competencesCorrespondantes.length - a.competencesCorrespondantes.length;
   if (diffCompetences !== 0) return diffCompetences;
   const diffConfiance = ORDRE_CONFIANCE[b.niveauConfiance] - ORDRE_CONFIANCE[a.niveauConfiance];
@@ -68,6 +72,10 @@ export function comparerOptions(options: OptionClientSafe[]): ResultatComparaiso
   const optionsOrdonnees: OptionOrdonnee[] = triees.map(({ option }, position) => ({ ...option, rang: position + 1 }));
 
   const meilleure = optionsOrdonnees[0];
+  // Une correspondance partielle n'est jamais présentée comme « recommandée ».
+  if (meilleure.niveauCorrespondance === "PARTIELLE") {
+    return { optionsOrdonnees, recommandation: null, raisonAbsenceRecommandation: "AUCUNE_CORRESPONDANCE_FORTE" };
+  }
   // "Critères critiques suffisamment établis" (voir revue architecturale
   // V2.1-B, cas 1 option) : au moins un signal réel (confiance connue ou au
   // moins une compétence retrouvée) — sinon pas de recommandation forcée,

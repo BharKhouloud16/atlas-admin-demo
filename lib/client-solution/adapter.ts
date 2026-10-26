@@ -1,6 +1,7 @@
 import type { Recommandation } from "@/lib/talent/recommendation-engine";
 import type { OptionClientSafe } from "./types";
 import { interpreterDisponibilite } from "./normalisation";
+import { libelleClient, type Admissibilite } from "@/lib/talent/admissibilite";
 
 // COMPANY ATLAS — V2.1-B : C3 Solution Intelligence — FRONTIÈRE DE SÉCURITÉ.
 //
@@ -29,8 +30,29 @@ import { interpreterDisponibilite } from "./normalisation";
 //   fonction n'accède à aucune autre structure que les champs listés
 //   explicitement ci-dessous)
 //
+// Admissibilité (lib/talent/admissibilite.ts) : seuls le niveau de
+// correspondance, les listes de compétences demandées (vérifiées, déclarées,
+// manquantes) et le libellé Client sont lus. Jamais ecartsNegociables ni
+// actionsAdmin (valeurs du profil et raisonnement interne de staffing).
+//
 // Pure : aucune DB, aucun HTTP, ne mute jamais son entrée.
-export function adapterEnOptionClient(recommandation: Recommandation, disponibiliteBrute: string | null = null): OptionClientSafe {
+export function adapterEnOptionClient(
+  recommandation: Recommandation,
+  disponibiliteBrute: string | null = null,
+  admissibilite: Admissibilite | null = null
+): OptionClientSafe {
+  if (admissibilite && admissibilite.niveau !== "NON_ADMISSIBLE") {
+    return {
+      typeSolution: "TALENT",
+      niveauCorrespondance: admissibilite.niveau,
+      competencesCorrespondantes: [...admissibilite.competencesVerifiees],
+      competencesManquantes: [...admissibilite.competencesManquantes],
+      niveauConfiance: recommandation.niveauConfiance,
+      rationale: libelleClient(admissibilite).lignes,
+      criteresAPreciser: [...recommandation.criteresManquants],
+      disponibilite: interpreterDisponibilite(disponibiliteBrute),
+    };
+  }
   return {
     typeSolution: "TALENT",
     competencesCorrespondantes: [...recommandation.competencesCorrespondantes],

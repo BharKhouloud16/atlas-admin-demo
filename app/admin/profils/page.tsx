@@ -10,7 +10,9 @@ import {
   type ComparaisonTjm,
 } from "@/lib/scoring";
 import { TOUTES_COMPETENCES } from "@/lib/competences";
-import { bleu, bleuFonce } from "@/lib/theme";
+import { VIDEO_PRESENTATION_ACTIVE } from "@/lib/fonctionnalites-v1";
+import { CompetencesProfil } from "@/components/admin/CompetencesProfil";
+import { bleu, bleuFonce, rouge } from "@/lib/theme";
 import type { Realisation } from "@/app/api/ingenieur/realisations/route";
 
 type Profil = {
@@ -84,6 +86,7 @@ export default function ProfilsPage() {
   // taux fixes internes, donc l'affichage reste correct pendant le chargement.
   const [taux, setTaux] = useState<Record<string, number> | undefined>(undefined);
   const [page, setPage] = useState(1);
+  const [erreurChargement, setErreurChargement] = useState("");
   const PAR_PAGE = 25;
 
   function basculerDetail(id: string) {
@@ -95,14 +98,29 @@ export default function ProfilsPage() {
     });
   }
 
-  useEffect(() => {
+  function charger() {
+    setChargement(true);
+    setErreurChargement("");
     fetch("/api/profils")
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      })
       .then((data) => {
         setProfils(Array.isArray(data.profils) ? data.profils : []);
         setNombreDesactives(typeof data.nombreDesactives === "number" ? data.nombreDesactives : 0);
-        setChargement(false);
-      });
+      })
+      .catch(() => {
+        // FIX (19/10/2026) — même défaut que /admin/clients et
+        // /admin/ingenieurs : sans ce catch, un 403/500/réseau laissait
+        // `chargement` bloqué à `true` pour toujours.
+        setErreurChargement("Impossible de charger les profils. Vérifiez votre connexion et réessayez.");
+      })
+      .finally(() => setChargement(false));
+  }
+
+  useEffect(() => {
+    charger();
     fetch("/api/taux-change")
       .then((r) => r.json())
       .then((data) => setTaux(data.taux))
@@ -205,6 +223,21 @@ export default function ProfilsPage() {
 
   if (chargement) {
     return <div>Chargement...</div>;
+  }
+
+  if (erreurChargement) {
+    return (
+      <div>
+        <h1>Profils</h1>
+        <p role="alert" style={{ color: rouge, fontSize: 14, margin: "12px 0" }}>{erreurChargement}</p>
+        <button
+          onClick={charger}
+          style={{ fontSize: 13, padding: "8px 14px", background: bleu, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
+        >
+          Réessayer
+        </button>
+      </div>
+    );
   }
 
   const total = profils.length;
@@ -669,6 +702,7 @@ function DetailProfil({ l, badge }: { l: Ligne; badge: ReturnType<typeof calcule
           </p>
         )}
         {l.p.cvUrl && <HistoriqueCv profilId={l.p.id} />}
+        <CompetencesProfil profilId={l.p.id} />
       </div>
       <div>
         <p style={{ fontSize: 12, textTransform: "uppercase", color: "#888", marginBottom: 8 }}>
@@ -691,7 +725,7 @@ function DetailProfil({ l, badge }: { l: Ligne; badge: ReturnType<typeof calcule
             ))}
           </div>
         )}
-        {l.p.videoUrl && (
+        {VIDEO_PRESENTATION_ACTIVE && l.p.videoUrl && (
           <div style={{ marginTop: 14 }}>
             <p style={{ fontSize: 12, textTransform: "uppercase", color: "#888", marginBottom: 8 }}>
               Vidéo de présentation

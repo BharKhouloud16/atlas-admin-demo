@@ -68,6 +68,12 @@ const nextConfig = {
       "/api/generate-contract": ["./templates/**"],
     },
   },
+  // L'application n'utilise pas next/image : l'optimiseur d'images
+  // (/_next/image) est désactivé. Next.js 14 n'y reçoit plus de correctifs
+  // (GHSA-2xp9-vwfh-vxw4, GHSA-2464-fhr4-w9xw, GHSA-h64f-5h5j-jqjh,
+  // GHSA-3x4c-7xq6-9pq8) : avec ce réglage, la route répond 404 au lieu
+  // d'exécuter l'optimiseur.
+  images: { unoptimized: true },
   async headers() {
     return [
       {

@@ -1,13 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
-import { genererFacturePdf } from "@/lib/pdf-facture";
-import { persisterDocumentClient } from "@/lib/client-documents";
+import { creerFactureDepuisFeuille } from "@/lib/billing/creation";
 
-// Génère la facture PDF (voir lib/pdf-facture.ts) d'un CRA définitivement
-// validé (statut ValideeClient — voir PATCH /api/feuilles-de-temps,
-// action=validerClient). Réservé à l'Admin : c'est lui qui transmet la
-// facture au client une fois le circuit de double validation terminé.
+// Facture d'un CRA définitivement validé (statut ValideeClient — voir PATCH
+// /api/feuilles-de-temps, action=validerClient). Réservé à l'Admin.
+//
+// Lot CRA V1 (25/10/2026) : cette route ne génère plus son propre PDF.
+// Elle générait un document calculé depuis le CRA, hors du circuit de
+// facturation : sans numéro réglementaire ni TVA enregistrée, et
+// potentiellement différent du PDF de la Facture. Désormais :
+//   - la Facture est créée si elle n'existe pas encore (idempotent, voir
+//     lib/billing/creation.ts) ;
+//   - si elle est émise (validée), redirection vers son PDF
+//     (/api/factures/[id]/document), seul document de facture ;
+//   - si elle est encore en brouillon, 409 : elle doit d'abord être validée
+//     depuis /admin/factures, ce qui lui attribue son numéro réglementaire.
 export async function GET(req: NextRequest) {
   const session = await getSession();
   if (!session || session.role !== "ADMIN") {
@@ -19,11 +27,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "feuilleId requis" }, { status: 400 });
   }
 
-  const feuille = await prisma.feuilleDeTemps.findUnique({
-    where: { id: feuilleId },
-    include: { mission: { include: { client: true, profil: true } } },
-  });
-
+  const feuille = await prisma.feuilleDeTemps.findUnique({ where: { id: feuilleId }, select: { id: true, statut: true } });
   if (!feuille) {
     return NextResponse.json({ error: "Feuille de temps introuvable" }, { status: 404 });
   }
@@ -34,49 +38,19 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const numero = `FA-${feuille.mois.replace("-", "")}-${feuille.mission.id.slice(0, 6).toUpperCase()}`;
-  const nomIngenieur = `${feuille.mission.profil.prenom ?? ""} ${feuille.mission.profil.nom}`.trim();
-
-  const pdfBytes = await genererFacturePdf({
-    numero,
-    dateEmission: feuille.valideeClientLe ?? new Date(),
-    mois: feuille.mois,
-    clientNom: feuille.mission.client.nom,
-    clientAdresse: feuille.mission.client.pays,
-    missionRepere: feuille.mission.repere,
-    ingenieurNom: nomIngenieur,
-    joursTravailles: feuille.joursTravailles,
-    heuresSupplementaires: feuille.heuresSupplementaires,
-    tjmVente: feuille.mission.tjmVente,
-    // Devise réelle de la mission (Mission.deviseVente, ajouté suite à
-    // l'audit du 06/09, P1-01) — jusqu'ici genererFacturePdf recevait
-    // toujours son défaut "EUR" quelle que soit la mission. Aucune
-    // conversion : on transmet tel quel le montant et son code devise.
-    deviseTjm: feuille.mission.deviseVente,
-  });
-
-  // CLIENT COMPLETION PROGRAM — C7 (16/09/2026) : persiste la facture en
-  // Document (visible via GET /api/client/documents) — jusqu'ici cette
-  // route se contentait de streamer le PDF à l'Admin sans jamais
-  // l'enregistrer. Best-effort (voir lib/client-documents.ts) : un échec de
-  // stockage ne bloque jamais la génération/transmission de la facture.
-  await persisterDocumentClient({
-    titre: `Facture ${numero}`,
-    type: "FACTURE",
-    nomFichier: `${numero}.pdf`,
-    buffer: Buffer.from(pdfBytes),
-    missionId: feuille.mission.id,
-    clientId: feuille.mission.clientId,
-  });
-
-  // new Uint8Array(...) : voir le commentaire équivalent dans
-  // app/api/ingenieur/cv/export-pdf/route.ts.
-  return new NextResponse(new Uint8Array(pdfBytes), {
-    headers: {
-      "Content-Type": "application/pdf",
-      "X-Content-Type-Options": "nosniff",
-      "Cache-Control": "private, no-cache",
-      "Content-Disposition": `inline; filename="${numero}.pdf"`,
-    },
-  });
+  const resultat = await creerFactureDepuisFeuille(feuille.id);
+  if (!resultat.ok) {
+    return NextResponse.json({ error: "Facture indisponible pour cette feuille de temps." }, { status: 409 });
+  }
+  const facture = resultat.facture;
+  if (!facture.dateEmission) {
+    return NextResponse.json(
+      {
+        error: "La facture de cette feuille de temps est en brouillon : validez-la depuis Factures pour lui attribuer son numéro et émettre son PDF.",
+        factureId: facture.id,
+      },
+      { status: 409 }
+    );
+  }
+  return NextResponse.redirect(new URL(`/api/factures/${facture.id}/document`, req.nextUrl.origin), 307);
 }

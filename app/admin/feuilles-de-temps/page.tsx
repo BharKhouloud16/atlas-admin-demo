@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { bleu, bleuFonce } from "@/lib/theme";
+import { bleu, bleuFonce, rouge } from "@/lib/theme";
 import { LABEL_STATUT_CRA, COULEUR_STATUT_CRA, libelleMois, type StatutCra } from "@/lib/feuilles-de-temps";
+import { CorrectionCra } from "@/components/admin/CorrectionCra";
 
 type Feuille = {
   id: string;
@@ -26,18 +27,32 @@ type Feuille = {
 export default function FeuillesDeTempsAdminPage() {
   const [feuilles, setFeuilles] = useState<Feuille[]>([]);
   const [chargement, setChargement] = useState(true);
+  const [erreurChargement, setErreurChargement] = useState("");
   const [motifs, setMotifs] = useState<Record<string, string>>({});
   const [envoi, setEnvoi] = useState<string | null>(null);
 
-  function recharger() {
+  // `silencieux` : rafraîchit la liste sans repasser par l'écran
+  // « Chargement… », qui démonterait le formulaire de correction et son
+  // message de confirmation.
+  function recharger(silencieux = false) {
+    if (!silencieux) setChargement(true);
+    setErreurChargement("");
     fetch("/api/feuilles-de-temps")
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      })
       .then((data) => {
         setFeuilles(data.feuilles ?? []);
-        setChargement(false);
-      });
+      })
+      .catch(() => {
+        // FIX (19/10/2026) — même défaut que /admin/clients : sans ce
+        // catch, un 403/500/réseau laissait `chargement` bloqué à `true`.
+        setErreurChargement("Impossible de charger les feuilles de temps. Vérifiez votre connexion et réessayez.");
+      })
+      .finally(() => setChargement(false));
   }
-  useEffect(recharger, []);
+  useEffect(() => recharger(), []);
 
   async function agir(id: string, action: "validerAdmin" | "rejeter") {
     setEnvoi(id + action);
@@ -51,6 +66,21 @@ export default function FeuillesDeTempsAdminPage() {
   }
 
   if (chargement) return <div>Chargement...</div>;
+
+  if (erreurChargement) {
+    return (
+      <div>
+        <h1 style={{ marginBottom: 4, color: bleuFonce }}>Feuilles de temps</h1>
+        <p role="alert" style={{ color: rouge, fontSize: 14, margin: "12px 0" }}>{erreurChargement}</p>
+        <button
+          onClick={() => recharger()}
+          style={{ fontSize: 13, padding: "8px 14px", background: bleu, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
+        >
+          Réessayer
+        </button>
+      </div>
+    );
+  }
 
   const enAttente = feuilles.filter((f) => f.statut === "Soumise");
   const autres = feuilles.filter((f) => f.statut !== "Soumise");
@@ -111,6 +141,8 @@ export default function FeuillesDeTempsAdminPage() {
         ))}
       </div>
 
+      <CorrectionCra onCorrection={() => recharger(true)} />
+
       <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Historique</p>
       {autres.length === 0 && <p style={{ fontSize: 13, color: "#888" }}>Aucune autre feuille de temps.</p>}
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -122,13 +154,11 @@ export default function FeuillesDeTempsAdminPage() {
             </span>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
               {f.statut === "ValideeClient" && (
-                <a
-                  href={`/api/feuilles-de-temps/facture?feuilleId=${f.id}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ fontSize: 11, fontWeight: 600 }}
-                >
-                  Facture PDF
+                // La facture se valide (numéro réglementaire) et se télécharge
+                // depuis Factures : un seul document de facture, celui de la
+                // Facture enregistrée.
+                <a href="/admin/factures" style={{ fontSize: 11, fontWeight: 600 }}>
+                  Facture
                 </a>
               )}
               <span style={{ fontSize: 11, fontWeight: 600, color: COULEUR_STATUT_CRA[f.statut] }}>

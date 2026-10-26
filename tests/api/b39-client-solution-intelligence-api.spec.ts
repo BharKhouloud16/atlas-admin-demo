@@ -48,6 +48,9 @@ async function creerProfilCandidatDeTest(suffixe: string) {
       prenom: "Test",
       cvValide: true,
       competences: ["Kubernetes"],
+      // Seules les compétences vérifiées par ATLAS couvrent un besoin côté
+      // Client (lib/talent/admissibilite.ts, décision du 25/10/2026).
+      competencesGraph: { create: [{ competence: "Kubernetes", statut: "VERIFIE", confiance: "HAUTE" }] },
       seniorite: "Senior",
       anneesExperience: 6,
       tjmEstime: 650,

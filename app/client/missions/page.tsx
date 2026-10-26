@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { grisTexte } from "@/lib/theme";
+import { VIDEO_PRESENTATION_ACTIVE } from "@/lib/fonctionnalites-v1";
 import type { Realisation } from "@/app/api/ingenieur/realisations/route";
 import type { BadgeConfiance } from "@/lib/scoring";
 import { Card, Section, EmptyState, Bouton, Badge } from "@/components/client/primitives";
@@ -84,7 +85,7 @@ export default function MissionsClientPage() {
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {missions.map((m) => {
             const ouverte = ouvertes.has(m.id);
-            const aVitrine = (m.profil.realisations?.length ?? 0) > 0 || Boolean(m.profil.badge) || m.profil.aVideo;
+            const aVitrine = (m.profil.realisations?.length ?? 0) > 0 || Boolean(m.profil.badge) || (VIDEO_PRESENTATION_ACTIVE && m.profil.aVideo);
             return (
               <Card key={m.id}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
@@ -141,7 +142,7 @@ function ProfilVitrineDetail({ profil }: { profil: ProfilVitrine }) {
 
   return (
     <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #eee", display: "flex", flexDirection: "column", gap: 12 }}>
-      {profil.aVideo && (
+      {VIDEO_PRESENTATION_ACTIVE && profil.aVideo && (
         <div>
           <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 6px" }}>Vidéo de présentation</p>
           <video

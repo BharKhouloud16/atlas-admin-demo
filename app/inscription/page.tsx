@@ -124,10 +124,11 @@ export default function InscriptionPage() {
             boxShadow: "0 2px 12px rgba(18,34,74,0.06)",
           }}
         >
-          <h1 style={{ fontSize: 20, marginBottom: 12, color: bleuFonce }}>Compte créé</h1>
+          <h1 style={{ fontSize: 20, marginBottom: 12, color: bleuFonce }}>Demande enregistrée</h1>
           <p style={{ color: grisTexte, fontSize: 14, lineHeight: 1.6 }}>
-            Un email de confirmation vous a été envoyé : cliquez sur le lien qu&apos;il contient pour valider votre
-            adresse. Votre compte sera ensuite en attente de validation par l&apos;administrateur, qui vous
+            Consultez votre boîte mail : si cette adresse peut être utilisée, vous avez reçu un email de
+            confirmation — cliquez sur le lien qu&apos;il contient pour valider votre adresse. Si elle est déjà
+            associée à un compte, l&apos;email reçu vous indique comment vous connecter. Votre compte sera ensuite en attente de validation par l&apos;administrateur, qui vous
             préviendra par email dès que votre accès sera activé.
           </p>
           {lienVerificationDemo && (

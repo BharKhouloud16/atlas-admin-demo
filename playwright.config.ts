@@ -32,6 +32,9 @@ import { defineConfig, devices } from "@playwright/test";
 // il s'exécute donc toujours avant le reste, une seule fois par run.
 export default defineConfig({
   testDir: "./tests",
+  // tests/preview = tests DISTANTS sur une Preview Vercel : jamais lancés par
+  // cette configuration (CI locale, base jetable). Voir playwright.preview.config.ts.
+  testIgnore: ["**/preview/**"],
   fullyParallel: true,
   workers: process.env.CI ? 1 : undefined,
   retries: process.env.CI ? 1 : 0,

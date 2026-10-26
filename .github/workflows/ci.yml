@@ -16,9 +16,10 @@ jobs:
     runs-on: ubuntu-latest
 
     # Base Postgres jetable pour ce run uniquement (jamais la base de
-    # production) — nécessaire car `npm run build` exécute
-    # `prisma migrate deploy` (voir package.json), et les tests E2E ont
-    # besoin de données réelles (voir prisma/seed.ts).
+    # production) — les migrations y sont appliquées explicitement (étape
+    # "Migrations (base CI jetable)" ci-dessous) : `npm run build` ne les
+    # exécute plus. Les tests E2E ont besoin de données réelles (voir
+    # prisma/seed.ts).
     services:
       postgres:
         image: postgres:16
@@ -56,27 +57,53 @@ jobs:
       # arbitraire) tout en couvrant la suite actuelle ; aucun test ne dépend
       # de la valeur exacte du seuil de rate-limiting lui-même (mécanisme
       # inchangé, toujours actif).
-      RATE_LIMIT_LOGIN_MAX_IP: "600"
+      # CI FIX (19/10/2026, PR V1) — même cause, la suite est passée à 1387
+      # tests : CI #336 a échoué sur un seul test, le premier à attendre le
+      # message « Identifiants invalides » après ~600 connexions depuis la même
+      # IP (le limiteur renvoie alors 429 « Trop de tentatives… »). Seuil relevé
+      # à 1000 pour la CI uniquement (Production garde sa valeur par défaut,
+      # 20 / 15 min) ; la consommation réelle est désormais mesurée à chaque run
+      # (étape « Consommation du limiteur de connexion » ci-dessous).
+      RATE_LIMIT_LOGIN_MAX_IP: "1000"
+      # SÉCURITÉ : liens démo (vérification d'email, réinitialisation de mot de
+      # passe) renvoyés dans les réponses API UNIQUEMENT dans ce run CI, sur sa
+      # base jetable, pour tester ces parcours sans boîte mail. Jamais sur
+      # Vercel (ignoré dès que VERCEL_ENV est défini, voir lib/liens-demo.ts).
+      ATLAS_LIENS_DEMO: "oui"
+      # Base des liens envoyés par email (lib/email.ts) : sans elle, aucun
+      # email contenant un lien n'est tenté (fail-closed, jamais de repli vers
+      # le domaine de Production).
+      EMAIL_APP_BASE_URL: http://localhost:3000
+      # Simulations réservées à la CI (lib/simulation-ci.ts) : stockage du CV
+      # et extraction déterministe des PDF de test fictifs, pour tester le
+      # parcours Ingénieur complet sans Vercel Blob ni API Claude. Ignorées
+      # sur Vercel (VERCEL/VERCEL_ENV toujours définis) et hors CI=true.
+      ATLAS_SIMULATIONS_CI: "oui"
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          # Pas de `cache: npm` ici : ce dépôt est géré sans installation
-          # locale (déploiement par upload web GitHub, voir mémoire projet),
-          # donc aucun package-lock.json n'est commité — `actions/setup-node`
-          # exigerait un fichier de verrouillage pour son cache, et `npm ci`
-          # aussi. On utilise `npm install` ci-dessous à la place.
+          node-version: 22
+          cache: npm
 
+      # Versions figées par package-lock.json (lot V1, 25/10/2026) : la CI
+      # installe exactement l'arbre de dépendances commité, au lieu de
+      # résoudre de nouvelles versions à chaque exécution.
       - name: Installation des dépendances
-        run: npm install
+        run: npm ci
 
       - name: Vérification des types TypeScript
         run: npx tsc --noEmit
 
-      - name: Build (génère le client Prisma, applique les migrations sur la base CI, build Next.js)
+      # Un build (CI, Vercel Preview ou Production) ne doit jamais appliquer
+      # de migrations implicitement. Elles restent une étape explicite,
+      # appliquée ici uniquement à la base CI jetable de ce run.
+      - name: Migrations (base CI jetable)
+        run: npm run migrate:deploy
+
+      - name: Build (génère le client Prisma, build Next.js)
         run: npm run build
 
       - name: Données de démo (pour les tests E2E)
@@ -89,6 +116,13 @@ jobs:
         run: npx playwright test
         env:
           CI: true
+
+      # Lecture seule, base CI jetable : mesure le nombre de tentatives de
+      # connexion comptées par le limiteur pendant la suite, pour suivre la
+      # marge restante sous RATE_LIMIT_LOGIN_MAX_IP.
+      - name: Consommation du limiteur de connexion (diagnostic)
+        if: always()
+        run: psql "$DATABASE_URL" -c 'SELECT cle, compteur FROM "TentativeIp" ORDER BY compteur DESC LIMIT 5;' || true
 
       - name: Rapport Playwright (si des tests ont échoué)
         if: failure()

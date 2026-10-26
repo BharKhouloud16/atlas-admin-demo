@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { adresseIp, verifierLimiteIp } from "@/lib/rate-limit";
+import { devSeedDisponible } from "@/lib/dev-seed-garde";
 
 // Permet de remplir la base de données de démo depuis le navigateur, sans
 // terminal — utile pour un déploiement Vercel où on ne peut pas taper de
@@ -34,6 +35,10 @@ function comparaisonSure(a: string, b: string): boolean {
 }
 
 export async function GET(req: NextRequest) {
+  // SÉCURITÉ : jamais disponible en Production Vercel (voir lib/dev-seed-garde.ts).
+  if (!devSeedDisponible()) {
+    return NextResponse.json({ error: "Introuvable." }, { status: 404 });
+  }
   const seedToken = process.env.SEED_TOKEN;
   if (!seedToken) {
     // Aucune valeur par défaut : si la variable n'est pas configurée, la
