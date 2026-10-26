@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { bleu, bleuFonce, rouge } from "@/lib/theme";
 import { LABEL_STATUT_CRA, COULEUR_STATUT_CRA, libelleMois, type StatutCra } from "@/lib/feuilles-de-temps";
+import { CorrectionCra } from "@/components/admin/CorrectionCra";
 
 type Feuille = {
   id: string;
@@ -30,8 +31,11 @@ export default function FeuillesDeTempsAdminPage() {
   const [motifs, setMotifs] = useState<Record<string, string>>({});
   const [envoi, setEnvoi] = useState<string | null>(null);
 
-  function recharger() {
-    setChargement(true);
+  // `silencieux` : rafraîchit la liste sans repasser par l'écran
+  // « Chargement… », qui démonterait le formulaire de correction et son
+  // message de confirmation.
+  function recharger(silencieux = false) {
+    if (!silencieux) setChargement(true);
     setErreurChargement("");
     fetch("/api/feuilles-de-temps")
       .then((r) => {
@@ -48,7 +52,7 @@ export default function FeuillesDeTempsAdminPage() {
       })
       .finally(() => setChargement(false));
   }
-  useEffect(recharger, []);
+  useEffect(() => recharger(), []);
 
   async function agir(id: string, action: "validerAdmin" | "rejeter") {
     setEnvoi(id + action);
@@ -69,7 +73,7 @@ export default function FeuillesDeTempsAdminPage() {
         <h1 style={{ marginBottom: 4, color: bleuFonce }}>Feuilles de temps</h1>
         <p role="alert" style={{ color: rouge, fontSize: 14, margin: "12px 0" }}>{erreurChargement}</p>
         <button
-          onClick={recharger}
+          onClick={() => recharger()}
           style={{ fontSize: 13, padding: "8px 14px", background: bleu, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
         >
           Réessayer
@@ -136,6 +140,8 @@ export default function FeuillesDeTempsAdminPage() {
           </div>
         ))}
       </div>
+
+      <CorrectionCra onCorrection={() => recharger(true)} />
 
       <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Historique</p>
       {autres.length === 0 && <p style={{ fontSize: 13, color: "#888" }}>Aucune autre feuille de temps.</p>}

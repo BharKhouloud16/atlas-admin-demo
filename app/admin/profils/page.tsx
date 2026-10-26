@@ -11,6 +11,7 @@ import {
 } from "@/lib/scoring";
 import { TOUTES_COMPETENCES } from "@/lib/competences";
 import { VIDEO_PRESENTATION_ACTIVE } from "@/lib/fonctionnalites-v1";
+import { CompetencesProfil } from "@/components/admin/CompetencesProfil";
 import { bleu, bleuFonce, rouge } from "@/lib/theme";
 import type { Realisation } from "@/app/api/ingenieur/realisations/route";
 
@@ -701,6 +702,7 @@ function DetailProfil({ l, badge }: { l: Ligne; badge: ReturnType<typeof calcule
           </p>
         )}
         {l.p.cvUrl && <HistoriqueCv profilId={l.p.id} />}
+        <CompetencesProfil profilId={l.p.id} />
       </div>
       <div>
         <p style={{ fontSize: 12, textTransform: "uppercase", color: "#888", marginBottom: 8 }}>
