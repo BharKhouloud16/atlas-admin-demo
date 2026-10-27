@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { listerAgentsIdentity } from "@/lib/agents/identity";
 import { listerPermissionsAgent, possedePermissionActive } from "@/lib/agents/permissions";
 import { creerPropositionAction } from "@/lib/strategic/propositions";
+import { obtenirStatutAutorisationStrategique } from "@/lib/strategic/authorization-status";
 import { nouveauCorrelationId } from "@/lib/security/events";
 import { estCorrelationIdValide, estStrategicProposalStatutValide } from "@/lib/strategic/domain";
 
@@ -39,15 +40,32 @@ export async function GET(req: NextRequest) {
     const limiteBrute = Number(searchParams.get("limite"));
     const limite = Number.isFinite(limiteBrute) && limiteBrute > 0 ? Math.min(limiteBrute, 200) : 100;
 
-    const propositions = await prisma.strategicActionProposal.findMany({
+    const propositionsBrutes = await prisma.strategicActionProposal.findMany({
       where: {
         ...(statut && estStrategicProposalStatutValide(statut) ? { statut } : {}),
         ...(agentId ? { agentId } : {}),
       },
+      // `autorisation` (StrategicAuthorization, legacy B21) reste inclus
+      // TEL QUEL — donnée HISTORIQUE uniquement (B24 Lot C1), jamais la
+      // vérité d'autorisation courante depuis B24 Lot C2 : voir le nouveau
+      // champ `autorisationDerivee` ci-dessous, seule source lue pour
+      // déterminer l'état d'autorisation ACTUEL (B22, read-derived).
       include: { autorisation: true },
       orderBy: { createdAt: "desc" },
       take: limite,
     });
+
+    // B24 Lot C2 (14/09/2026) : statut d'autorisation READ-DERIVED —
+    // calculé à la lecture depuis StrategicAuthorizationLink +
+    // AuthorizationRequest (B22, seule autorité), jamais depuis
+    // `statut`/`autorisation` (gelés, historiques depuis B24 Lot C1) ni
+    // depuis une valeur envoyée par le client. Aucune écriture.
+    const propositions = await Promise.all(
+      propositionsBrutes.map(async (proposition) => ({
+        ...proposition,
+        autorisationDerivee: await obtenirStatutAutorisationStrategique(proposition.id),
+      }))
+    );
 
     return NextResponse.json({ propositions });
   } catch {
