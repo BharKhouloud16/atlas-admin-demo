@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { bleu, bordure, grisTexte } from "@/lib/theme";
+import { bleu, bordure, grisTexte, vert, orange, rouge } from "@/lib/theme";
 
 type Motif = { critere: string; poidsPct?: number; detail: string };
 
@@ -185,6 +185,7 @@ export default function TalentAdminDetailPage() {
                 </button>
               </div>
             )}
+            <FicheCompleteCandidat profilId={e.profilId} />
           </li>
         ))}
       </ul>
@@ -193,6 +194,216 @@ export default function TalentAdminDetailPage() {
     </div>
   );
 }
+
+// ENGINEER PROFILE V2 — ATLAS PROFESSIONAL CAPABILITY TWIN — Lot 1.
+//
+// Supprime le fossé entre /admin/talent/[id] (shortlist : score/confiance/
+// motifs) et /admin/profils (CV/Skill Graph/portfolio) : un Admin peut
+// désormais ouvrir la fiche complète d'un candidat shortlisté SANS changer
+// de page. Réutilise entièrement GET /api/profils/[id]/fiche-complete (Lot
+// 1), qui compose lui-même les moteurs existants (Talent Trust, Skill
+// Graph, Mission Intelligence, Professional Memory) — aucun nouveau calcul
+// ici, uniquement de l'affichage. Chargée à la demande (accordéon fermé par
+// défaut) : "intelligence complexe derrière, expérience simple devant."
+type FicheComplete = {
+  profilId: string;
+  identite: {
+    nom: string;
+    prenom: string | null;
+    seniorite: string | null;
+    anneesExperience: number | null;
+    disponibilite: string | null;
+    fraicheurDisponibilite: "RECENTE" | "VIEILLISSANTE" | "OBSOLETE" | "INCONNUE";
+    explicationFraicheurDisponibilite: string;
+    paysResidence: string | null;
+    cvValide: boolean;
+  };
+  skillGraph: {
+    id: string;
+    competence: string;
+    statut: "VERIFIE" | "DECLARE" | "INFERE" | "INCONNU";
+    niveau: number | null;
+    confianceDetaillee: { confiance: string; explication: string; nombrePreuves: number };
+  }[];
+  certifications: { id: string; nom: string; organisme: string | null; statut: string }[];
+  langues: { id: string; langue: string; niveau: string | null; statut: string }[];
+  missions: { id: string; repere: string | null; statut: string; evaluation: { note: number } | null }[];
+  memoireProfessionnelle: { competence: string; missions: { id: string; repere: string | null }[] }[];
+  foundation: {
+    talentTrust: {
+      niveauGlobal: string;
+      composants: Record<string, { label: string; niveau: string; evidence: string }>;
+    };
+  };
+};
+
+const COULEUR_STATUT: Record<string, string> = { VERIFIE: vert, DECLARE: bleu, INFERE: orange, INCONNU: grisTexte, OBSOLETE: rouge, VIEILLISSANTE: orange, RECENTE: vert, INCONNUE: grisTexte };
+
+function FicheCompleteCandidat({ profilId }: { profilId: string }) {
+  const [ouverte, setOuverte] = useState(false);
+  const [fiche, setFiche] = useState<FicheComplete | null>(null);
+  const [chargement, setChargement] = useState(false);
+  const [erreur, setErreur] = useState<string | null>(null);
+
+  async function basculer() {
+    if (ouverte) {
+      setOuverte(false);
+      return;
+    }
+    setOuverte(true);
+    if (fiche) return; // déjà chargée une première fois — jamais un refetch inutile
+    setChargement(true);
+    setErreur(null);
+    const reponse = await fetch(`/api/profils/${profilId}/fiche-complete`);
+    setChargement(false);
+    if (!reponse.ok) {
+      setErreur("Impossible de charger la fiche complète.");
+      return;
+    }
+    setFiche(await reponse.json());
+  }
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <button
+        onClick={basculer}
+        style={{ fontSize: 12, padding: "4px 10px", background: "none", color: bleu, border: `1px solid ${bleu}`, borderRadius: 6, cursor: "pointer" }}
+      >
+        {ouverte ? "▲ Masquer la fiche complète" : "▼ Voir la fiche complète"}
+      </button>
+      {ouverte && chargement && <p style={{ fontSize: 12, color: "#888", margin: "8px 0 0" }}>Chargement…</p>}
+      {ouverte && erreur && <p style={{ fontSize: 12, color: rouge, margin: "8px 0 0" }}>{erreur}</p>}
+      {ouverte && fiche && (
+        <div style={{ marginTop: 10, border: `1px solid ${bordure}`, borderRadius: 8, padding: 12, background: "#fafbfd", display: "flex", flexDirection: "column", gap: 12 }}>
+          <SectionIdentite fiche={fiche} />
+          <SectionTrust trust={fiche.foundation.talentTrust} />
+          <SectionSkills skillGraph={fiche.skillGraph} memoire={fiche.memoireProfessionnelle} />
+          {(fiche.certifications.length > 0 || fiche.langues.length > 0) && <SectionCertificationsLangues fiche={fiche} />}
+          <SectionMissions missions={fiche.missions} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Badge({ texte, couleur }: { texte: string; couleur: string }) {
+  return (
+    <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 999, border: `1px solid ${couleur}`, color: couleur, whiteSpace: "nowrap" }}>
+      {texte}
+    </span>
+  );
+}
+
+function SectionIdentite({ fiche }: { fiche: FicheComplete }) {
+  const { identite } = fiche;
+  return (
+    <div>
+      <h3 style={titreSection}>Identité</h3>
+      <p style={{ margin: 0, fontSize: 12, color: grisTexte }}>
+        {identite.seniorite ?? "Séniorité non déterminée"}
+        {identite.anneesExperience != null ? ` · ${identite.anneesExperience} an(s) d'expérience` : ""}
+        {identite.paysResidence ? ` · ${identite.paysResidence}` : ""}
+        {!identite.cvValide && " · CV non encore validé"}
+      </p>
+      <p style={{ margin: "4px 0 0", fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
+        <span>{identite.disponibilite ?? "Disponibilité non renseignée"}</span>
+        <Badge texte={identite.fraicheurDisponibilite} couleur={COULEUR_STATUT[identite.fraicheurDisponibilite]} />
+      </p>
+      <p style={{ margin: "2px 0 0", fontSize: 11, color: "#888" }}>{identite.explicationFraicheurDisponibilite}</p>
+    </div>
+  );
+}
+
+function SectionTrust({ trust }: { trust: FicheComplete["foundation"]["talentTrust"] }) {
+  return (
+    <div>
+      <h3 style={titreSection}>
+        Talent Trust <Badge texte={trust.niveauGlobal} couleur={COULEUR_STATUT[trust.niveauGlobal] ?? grisTexte} />
+      </h3>
+      <ul style={{ margin: "6px 0 0", padding: 0, listStyle: "none", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+        {Object.values(trust.composants).map((c) => (
+          <li key={c.label} style={{ fontSize: 11, color: grisTexte }}>
+            <Badge texte={c.niveau} couleur={COULEUR_STATUT[c.niveau] ?? grisTexte} /> {c.label}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function SectionSkills({ skillGraph, memoire }: { skillGraph: FicheComplete["skillGraph"]; memoire: FicheComplete["memoireProfessionnelle"] }) {
+  const missionsParCompetence = new Map(memoire.map((m) => [m.competence, m.missions]));
+  if (skillGraph.length === 0) {
+    return <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Aucune compétence sur le Skill Graph pour ce candidat.</p>;
+  }
+  return (
+    <div>
+      <h3 style={titreSection}>Compétences &amp; preuves</h3>
+      <ul style={{ margin: "6px 0 0", padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 4 }}>
+        {skillGraph.map((c) => {
+          const missions = missionsParCompetence.get(c.competence) ?? [];
+          return (
+            <li key={c.id} style={{ fontSize: 12 }}>
+              <Badge texte={c.statut} couleur={COULEUR_STATUT[c.statut]} />{" "}
+              <strong>{c.competence}</strong>
+              {c.niveau != null && ` (niveau ${c.niveau}/5)`}
+              <span style={{ color: "#888" }}> — {c.confianceDetaillee.explication}</span>
+              {missions.length > 0 && (
+                <span style={{ color: bleu }}>
+                  {" "}
+                  · prouvée par {missions.length} mission(s) : {missions.map((m) => m.repere ?? m.id.slice(0, 6)).join(", ")}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+function SectionCertificationsLangues({ fiche }: { fiche: FicheComplete }) {
+  return (
+    <div>
+      <h3 style={titreSection}>Certifications &amp; langues</h3>
+      <ul style={{ margin: "6px 0 0", padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 4 }}>
+        {fiche.certifications.map((c) => (
+          <li key={c.id} style={{ fontSize: 12 }}>
+            <Badge texte={c.statut} couleur={COULEUR_STATUT[c.statut]} /> {c.nom}
+            {c.organisme && ` (${c.organisme})`}
+          </li>
+        ))}
+        {fiche.langues.map((l) => (
+          <li key={l.id} style={{ fontSize: 12 }}>
+            <Badge texte={l.statut} couleur={COULEUR_STATUT[l.statut]} /> {l.langue}
+            {l.niveau && ` — ${l.niveau}`}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function SectionMissions({ missions }: { missions: FicheComplete["missions"] }) {
+  if (missions.length === 0) {
+    return <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Aucune mission dans l&apos;historique de ce candidat.</p>;
+  }
+  return (
+    <div>
+      <h3 style={titreSection}>Missions &amp; résultats</h3>
+      <ul style={{ margin: "6px 0 0", padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 4 }}>
+        {missions.map((m) => (
+          <li key={m.id} style={{ fontSize: 12, color: grisTexte }}>
+            {m.repere ?? m.id.slice(0, 6)} — {m.statut}
+            {m.evaluation && ` · évaluation ${m.evaluation.note}/5`}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+const titreSection: React.CSSProperties = { margin: 0, fontSize: 12, textTransform: "uppercase", letterSpacing: 0.4, color: "#888" };
 
 const MODES_TRAVAIL = ["Remote", "Hybride", "Sur site"] as const;
 
