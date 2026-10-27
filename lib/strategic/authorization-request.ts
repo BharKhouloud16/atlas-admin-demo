@@ -8,6 +8,7 @@ import {
 import { estAutonomyLevelValide, estAutonomyLevelSupporte, type AutonomyLevelValeur } from "@/lib/control-plane/domain";
 import { creerDemandeAutorisation, revoquerDemande } from "@/lib/control-plane/authorization";
 import { plafonnerTexteStrategique, PLAFOND_CHAMP_STRATEGIQUE } from "./domain";
+import { deriverStatutAutorisationStrategique } from "./authorization-status";
 
 // COMPANY ATLAS — B24 Lot B (14/09/2026) : SEUL chemin capable de faire
 // naître une AuthorizationRequest B22 depuis une StrategicActionProposal
@@ -54,8 +55,11 @@ import { plafonnerTexteStrategique, PLAFOND_CHAMP_STRATEGIQUE } from "./domain";
 
 // Statuts B21 terminaux au sens de la RÈGLE MÉTIER DÉJÀ EXISTANTE (voir
 // lib/strategic/propositions.ts, autoriserProposition) — jamais réémis.
-// Réutilisés tels quels, aucune nouvelle règle inventée ici.
-const STATUTS_PROPOSAL_TERMINAUX = new Set(["AUTORISEE", "REFUSEE", "EXECUTEE", "CONTROLEE"]);
+// Réutilisés tels quels, aucune nouvelle règle inventée ici. Exporté
+// (B27, 14/09/2026) pour être réutilisé tel quel par
+// lib/strategic/execution-adapter.ts — jamais une seconde définition du
+// même vocabulaire.
+export const STATUTS_PROPOSAL_TERMINAUX = new Set(["AUTORISEE", "REFUSEE", "EXECUTEE", "CONTROLEE"]);
 
 type ProposalVerrouillee = {
   id: string;
@@ -239,16 +243,36 @@ dependances?: { revoquerDemande?: typeof revoquerDemande }
       // jamais depuis un champ dénormalisé sur la proposition ou le lien
       // (aucun champ status/decision n'existe sur StrategicAuthorizationLink,
       // par construction — Lot A, section 4).
+      //
+      // B24 Lot C3 (14/09/2026) — CORRECTIF GEL/LIFECYCLE : `status` en base
+      // peut rester "PENDING" bien après expiresAt si personne n'a jamais
+      // tenté d'approuver la demande (B22, lib/control-plane/authorization.ts,
+      // approuverDemande ne retaggue EXPIRED que paresseusement — voir
+      // lib/strategic/authorization-status.ts, note d'expiration). Sans ce
+      // correctif, une telle demande bloquait PERMANENTMENT toute nouvelle
+      // tentative sur cette proposition (aucune approbation ni révocation
+      // n'étant jamais requise pour "libérer" le blocage) — une proposition
+      // pouvait donc rester gelée indéfiniment. Corrigé en réutilisant EXACTEMENT
+      // la même règle de projection que B24 Lot C2 (deriverStatutAutorisationStrategique)
+      // plutôt que d'inventer une seconde interprétation de l'expiration :
+      // seule une demande dont le statut DÉRIVÉ reste "PENDING" bloque une
+      // nouvelle demande — jamais une lecture brute du champ `status`.
+      // N'écrit rien (aucune mise à jour de `status` ici — ce lot ne modifie
+      // toujours pas le mécanisme d'expiration de B22, seulement la lecture
+      // que B21 en fait pour son propre invariant).
       const liensExistants = await tx.strategicAuthorizationLink.findMany({
         where: { proposalId: proposal.id },
         select: { authorizationRequestId: true },
       });
       if (liensExistants.length > 0) {
-        const demandesEnCours = await tx.authorizationRequest.findMany({
+        const demandesEnCoursCandidates = await tx.authorizationRequest.findMany({
           where: { id: { in: liensExistants.map((l) => l.authorizationRequestId) }, status: "PENDING" },
-          select: { id: true },
+          select: { id: true, expiresAt: true },
         });
-        if (demandesEnCours.length > 0) {
+        const demandesReellementEnCours = demandesEnCoursCandidates.filter(
+          (d) => deriverStatutAutorisationStrategique({ id: d.id, status: "PENDING", decision: null, expiresAt: d.expiresAt }).statut === "PENDING"
+        );
+        if (demandesReellementEnCours.length > 0) {
           return {
             ok: false as const,
             erreur: "Une AuthorizationRequest PENDING existe déjà pour cette proposition — une seule à la fois.",
