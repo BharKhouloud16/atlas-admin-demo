@@ -13,7 +13,7 @@ export default function ImporterCVPage() {
     e.preventDefault();
     setError("");
     if (!fichier) {
-      setError("Sélectionnez un fichier (PDF ou Word).");
+      setError("Sélectionnez un fichier PDF.");
       return;
     }
 
@@ -21,29 +21,34 @@ export default function ImporterCVPage() {
     const form = new FormData();
     form.append("cv", fichier);
 
-    const res = await fetch("/api/ingenieur/cv", { method: "POST", body: form });
-    const data = await res.json();
-    setLoading(false);
-
-    if (!res.ok) {
-      setError(data.error ?? "Échec de l'import.");
-      return;
+    // V1 : le bouton est toujours libéré (erreur réseau, réponse non JSON…).
+    try {
+      const res = await fetch("/api/ingenieur/cv", { method: "POST", body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error ?? "Échec de l'import.");
+        return;
+      }
+      router.push("/ingenieur/cv/verifier");
+    } catch {
+      setError("Impossible de contacter le serveur. Vérifiez votre connexion puis réessayez.");
+    } finally {
+      setLoading(false);
     }
-    router.push("/ingenieur/cv/verifier");
   }
 
   return (
     <main style={{ maxWidth: 480, margin: "80px auto", padding: 24 }}>
       <h1 style={{ fontSize: 22, marginBottom: 8 }}>Importer votre CV</h1>
       <p style={{ fontSize: 14, color: "#4b5567", marginBottom: 24 }}>
-        Dernière étape avant d&apos;accéder à votre espace : importez votre CV (PDF ou Word).
+        Dernière étape avant d&apos;accéder à votre espace : importez votre CV au format PDF (10 Mo maximum).
         Vous pourrez ensuite vérifier et valider les informations extraites, une par une.
       </p>
 
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <input
           type="file"
-          accept=".pdf,.doc,.docx"
+          accept=".pdf,application/pdf"
           onChange={(e) => setFichier(e.target.files?.[0] ?? null)}
           style={{ border: "1px solid #e4e7ee", borderRadius: 8, padding: 12 }}
         />

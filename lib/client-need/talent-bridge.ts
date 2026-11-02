@@ -14,7 +14,7 @@
 // dont le texte source n'est pas strictement parsable reste `null` — à
 // saisir manuellement par l'Admin, jamais deviné.
 
-export type FaitPourSuggestion = { cle: string; valeur: string; statut: string };
+export type FaitPourSuggestion = { cle: string; valeur: string; statut: string; createdAt?: string | Date };
 
 export type ChampSuggere<T> = { valeur: T; statut: string } | null;
 
@@ -66,7 +66,24 @@ function parserDateStricte(valeur: string): string | null {
 // d'une clé singleton l'emporte (même discipline que dernierFaitParCle,
 // lib/client-need/faits.ts), les clés répétables (COMPETENCE) sont toutes
 // conservées.
-export function suggererCriteresDemande(faits: FaitPourSuggestion[]): SuggestionCriteresDemande {
+// LOT 1 (ANO-04) : une compétence retirée par le client (ligne INCONNU,
+// source client_retrait) ne doit plus alimenter le matching. Les faits sans
+// date (appelants historiques) gardent leur ordre d'arrivée.
+function competencesActuelles(faits: FaitPourSuggestion[]): FaitPourSuggestion[] {
+  const dernier = new Map<string, FaitPourSuggestion>();
+  for (const f of faits) {
+    if (f.cle !== "COMPETENCE") continue;
+    dernier.set(f.valeur.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase(), f);
+  }
+  return [...dernier.values()].filter((f) => f.statut !== "INCONNU" && f.valeur.trim().length > 0);
+}
+
+export function suggererCriteresDemande(faitsBruts: FaitPourSuggestion[]): SuggestionCriteresDemande {
+  // LOT 1 : ordre chronologique explicite quand les dates sont fournies
+  // (Prisma ne garantit aucun ordre sans orderBy) — tri stable sinon.
+  const faits = faitsBruts.every((f) => f.createdAt !== undefined)
+    ? [...faitsBruts].sort((a, b) => new Date(a.createdAt!).getTime() - new Date(b.createdAt!).getTime())
+    : faitsBruts;
   const role = dernierFait(faits, "ROLE");
   const seniorite = dernierFait(faits, "SENIORITE");
   const anneesExperience = dernierFait(faits, "ANNEES_EXPERIENCE_MIN");
@@ -84,7 +101,7 @@ export function suggererCriteresDemande(faits: FaitPourSuggestion[]): Suggestion
 
   return {
     titreSuggere: role ? { valeur: role.valeur, statut: role.statut } : null,
-    competencesExtraites: faits.filter((f) => f.cle === "COMPETENCE").map((f) => ({ valeur: f.valeur, statut: f.statut })),
+    competencesExtraites: competencesActuelles(faits).map((f) => ({ valeur: f.valeur, statut: f.statut })),
     senioriteSouhaitee: seniorite ? { valeur: seniorite.valeur, statut: seniorite.statut } : null,
     anneesExperienceMin: anneesExperience && anneesParsees !== null ? { valeur: anneesParsees, statut: anneesExperience.statut } : null,
     localisation: localisation ? { valeur: localisation.valeur, statut: localisation.statut } : null,

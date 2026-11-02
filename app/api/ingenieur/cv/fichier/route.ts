@@ -32,6 +32,11 @@ export async function GET(req: NextRequest) {
   // actuel, avec les mêmes vérifications d'accès ci-dessus (déjà limitées
   // au bon profilId avant d'arriver ici).
   const versionId = req.nextUrl.searchParams.get("versionId");
+  // Un lien de partage (accès sans compte) ne donne accès qu'au CV actuel,
+  // jamais aux versions archivées.
+  if (versionId && !session) {
+    return NextResponse.json({ error: "Accès non autorisé" }, { status: 403 });
+  }
 
   let cvUrl: string | null;
   let cvNomFichier: string | null;

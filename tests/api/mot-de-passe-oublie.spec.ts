@@ -20,9 +20,11 @@ test.describe("API — /api/auth/mot-de-passe-oublie", () => {
     const corpsExistant = await reponseExistant.json();
     const corpsInexistant = await reponseInexistant.json();
     expect(corpsExistant.message).toBe(corpsInexistant.message);
-    // Le lien démo n'est renvoyé que si le compte existe réellement — mais
-    // ce champ seul ne doit jamais suffire à distinguer les deux cas côté
-    // code HTTP/message, ce qui est déjà vérifié ci-dessus.
+    // Le lien démo n'existe QUE parce que ce serveur de CI tourne avec
+    // ATLAS_LIENS_DEMO=oui (base jetable). Sans cette variable — et toujours
+    // sur Vercel Preview/Production — aucun lien n'est renvoyé et les deux
+    // réponses sont strictement identiques : voir
+    // tests/api/securite-liens-demo.spec.ts et lib/liens-demo.ts.
     expect(corpsExistant.lienReinitialisationDemo).toBeTruthy();
     expect(corpsInexistant.lienReinitialisationDemo).toBeUndefined();
   });

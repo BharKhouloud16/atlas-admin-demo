@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { bleu, bordure, grisTexte } from "@/lib/theme";
+import { bleu, bordure, grisTexte, rouge } from "@/lib/theme";
 
 type DemandeAdmin = {
   id: string;
@@ -31,15 +31,27 @@ const LABEL_STATUT: Record<string, string> = {
 export default function TalentAdminPage() {
   const [demandes, setDemandes] = useState<DemandeAdmin[]>([]);
   const [chargement, setChargement] = useState(true);
+  const [erreurChargement, setErreurChargement] = useState("");
 
-  useEffect(() => {
+  function charger() {
+    setChargement(true);
+    setErreurChargement("");
     fetch("/api/talent/demandes")
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      })
       .then((d) => {
         setDemandes(Array.isArray(d) ? d : []);
-        setChargement(false);
-      });
-  }, []);
+      })
+      .catch(() => {
+        // FIX (19/10/2026) — même défaut que /admin/clients : sans ce
+        // catch, un 403/500/réseau laissait `chargement` bloqué à `true`.
+        setErreurChargement("Impossible de charger les demandes. Vérifiez votre connexion et réessayez.");
+      })
+      .finally(() => setChargement(false));
+  }
+  useEffect(charger, []);
 
   return (
     <div>
@@ -53,7 +65,18 @@ export default function TalentAdminPage() {
         </Link>
       </div>
       {chargement && <p style={{ color: "#888" }}>Chargement…</p>}
-      {!chargement && demandes.length === 0 && <p style={{ color: "#888" }}>Aucune demande pour l&apos;instant.</p>}
+      {!chargement && erreurChargement && (
+        <div>
+          <p role="alert" style={{ color: rouge, fontSize: 13, margin: "0 0 8px" }}>{erreurChargement}</p>
+          <button
+            onClick={charger}
+            style={{ fontSize: 13, padding: "6px 12px", background: bleu, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
+          >
+            Réessayer
+          </button>
+        </div>
+      )}
+      {!chargement && !erreurChargement && demandes.length === 0 && <p style={{ color: "#888" }}>Aucune demande pour l&apos;instant.</p>}
       <ul style={{ listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: 8 }}>
         {demandes.map((d) => (
           <li key={d.id}>

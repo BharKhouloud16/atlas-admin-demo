@@ -14,8 +14,22 @@ export async function POST() {
     return NextResponse.json({ error: "Accès réservé à l'administrateur" }, { status: 403 });
   }
 
+  // Une 2FA déjà active ne se remplace pas par cette route : sans cela, une
+  // session seule (sans mot de passe ni code) écrasait le secret et
+  // désactivait la protection. La désactiver d'abord exige le mot de passe
+  // (voir /api/auth/2fa/desactiver). Écriture conditionnée à totpActif=false
+  // pour qu'une activation concurrente ne soit jamais écrasée non plus.
   const secret = genererSecret();
-  await prisma.user.update({ where: { email: session.email }, data: { totpSecret: secret, totpActif: false } });
+  const { count } = await prisma.user.updateMany({
+    where: { email: session.email, totpActif: false },
+    data: { totpSecret: secret },
+  });
+  if (count === 0) {
+    return NextResponse.json(
+      { error: "La double authentification est déjà active. Désactivez-la d'abord avec votre mot de passe." },
+      { status: 409 }
+    );
+  }
 
   const urlOtp = urlOtpAuth(session.email, secret);
   const qrCode = await qrCodeDataUrl(urlOtp);

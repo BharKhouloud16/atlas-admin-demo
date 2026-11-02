@@ -10,6 +10,12 @@ import type { NiveauConfianceOption, StatutDisponibiliteOption } from "./types";
 // être modifié sans nécessité réelle (aucune ici : Json suffit).
 export type DonneesSolutionOption = {
   signatureSource: string;
+  // LOT 2 (28/10/2026) : identifiant opaque commun à toutes les lignes d'une
+  // même génération (vague) — jamais exposé, sert à ne relire que la
+  // dernière vague. Absent des lignes antérieures à cette évolution.
+  vagueId?: string;
+  niveauCorrespondance?: "FORTE" | "PARTIELLE";
+  competencesManquantes?: string[];
   competencesCorrespondantes: string[];
   niveauConfiance: NiveauConfianceOption;
   rationale: string[];
@@ -33,6 +39,8 @@ export type SolutionOptionVue = {
   titre: string;
   justification: string;
   competencesCorrespondantes: string[];
+  niveauCorrespondance: "FORTE" | "PARTIELLE" | null; // null : option générée avant les règles d'admissibilité
+  competencesManquantes: string[];
   niveauConfiance: NiveauConfianceOption;
   criteresAPreciser: string[];
   disponibilite: { statut: StatutDisponibiliteOption; detail: string | null };

@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
-import { dernierFaitParCle } from "@/lib/client-need/faits";
+import { dernierFaitParCle, valeursActuellesRepetables } from "@/lib/client-need/faits";
 import { CLES_CLARIFIABLES, prioriserClarifications } from "@/lib/client-need/clarification";
 import { evaluerCoherenceBesoin } from "@/lib/client-need/coherence";
 import type { ClientNeedFaitCle, ClientNeedStatut } from "@prisma/client";
+import { TOUTES_COMPETENCES } from "@/lib/competences";
 
 // COMPANY ATLAS — LOT 3 : Client Need Validation & Clarification (15/09/2026).
 //
@@ -40,10 +41,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const cle = body?.cle;
   const action = body?.action;
 
-  if (typeof cle !== "string" || !CLES_CLARIFIABLES_SET.has(cle)) {
+  // LOT 1 (28/10/2026, ANO-04) : les compétences (clé répétable) se gèrent
+  // par AJOUTER / RETIRER, une valeur à la fois, dans la liste fermée des
+  // compétences connues du matching (lib/competences.ts) — jamais une valeur
+  // libre qui ne correspondrait à aucun profil. RETIRER ajoute une ligne
+  // INCONNU (source client_retrait) : l'historique reste additif.
+  const estCompetence = cle === "COMPETENCE" && (action === "AJOUTER" || action === "RETIRER");
+  if (typeof cle !== "string" || (!CLES_CLARIFIABLES_SET.has(cle) && !estCompetence)) {
     return NextResponse.json({ error: "Clé invalide ou hors périmètre de clarification." }, { status: 400 });
   }
-  if (action !== "CONFIRMER" && action !== "CORRIGER") {
+  if (!estCompetence && action !== "CONFIRMER" && action !== "CORRIGER") {
     return NextResponse.json({ error: "action doit être CONFIRMER ou CORRIGER." }, { status: 400 });
   }
 
@@ -51,9 +58,28 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const dernierActuel = dernierFaitParCle(faitsExistants).get(cle);
 
   let nouvelleValeur: string;
-  let source: "client_confirmation" | "client_correction";
+  let source: "client_confirmation" | "client_correction" | "client_ajout" | "client_retrait";
+  let statutFait: "VERIFIE" | "INCONNU" = "VERIFIE";
 
-  if (action === "CONFIRMER") {
+  if (estCompetence) {
+    const demandee = typeof body?.valeur === "string" ? body.valeur.trim() : "";
+    // AJOUTER : uniquement une compétence de la liste fermée du matching.
+    // RETIRER : uniquement une compétence ACTUELLEMENT présente sur ce besoin
+    // (y compris une valeur historique hors liste).
+    const competence =
+      action === "AJOUTER"
+        ? TOUTES_COMPETENCES.find((c) => c === demandee)
+        : valeursActuellesRepetables(faitsExistantsPourCompetences(besoin.faits), "COMPETENCE").find((f) => f.valeur === demandee)?.valeur;
+    if (!competence) {
+      return NextResponse.json(
+        { error: action === "AJOUTER" ? "Compétence inconnue : choisissez-la dans la liste proposée." : "Cette compétence ne fait pas partie du besoin." },
+        { status: 400 }
+      );
+    }
+    nouvelleValeur = competence;
+    source = action === "AJOUTER" ? "client_ajout" : "client_retrait";
+    statutFait = action === "AJOUTER" ? "VERIFIE" : "INCONNU";
+  } else if (action === "CONFIRMER") {
     if (!dernierActuel || !dernierActuel.valeur) {
       return NextResponse.json({ error: "Aucune valeur actuelle à confirmer pour cette clé." }, { status: 400 });
     }
@@ -65,6 +91,17 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ error: "valeur requise pour une correction (jamais une valeur inventée)." }, { status: 400 });
     }
     nouvelleValeur = valeurBrute.trim().slice(0, 200);
+    // LOT 1 : les valeurs numériques utilisées par le matching sont
+    // normalisées (« 550 € » -> « 550 ») ou refusées, jamais stockées sous
+    // une forme que le matching ignorerait silencieusement.
+    if (cle === "BUDGET_MONTANT" || cle === "ANNEES_EXPERIENCE_MIN") {
+      const nombre = Number(nouvelleValeur.replace(/[\s\u00a0\u202f€$£]|eur(os?)?|usd|gbp/gi, "").replace(",", "."));
+      const entierRequis = cle === "ANNEES_EXPERIENCE_MIN";
+      if (!Number.isFinite(nombre) || nombre <= 0 || (entierRequis && !Number.isInteger(nombre))) {
+        return NextResponse.json({ error: entierRequis ? "Indiquez un nombre d'années entier." : "Indiquez un montant en chiffres (ex. 550)." }, { status: 400 });
+      }
+      nouvelleValeur = String(nombre);
+    }
     source = "client_correction";
   }
 
@@ -73,7 +110,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       needId: besoin.id,
       cle: cle as ClientNeedFaitCle,
       valeur: nouvelleValeur,
-      statut: "VERIFIE",
+      statut: statutFait,
       source,
     },
   });
@@ -108,4 +145,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   });
 
   return NextResponse.json({ besoin: besoinMisAJour }, { status: 201 });
+}
+
+function faitsExistantsPourCompetences<T extends { cle: string; valeur: string; statut: string; createdAt: Date }>(faits: T[]): T[] {
+  return faits.filter((f) => f.cle === "COMPETENCE");
 }

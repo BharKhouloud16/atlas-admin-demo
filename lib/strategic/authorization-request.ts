@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   estAgentPermissionActionValide,
@@ -208,122 +209,144 @@ dependances?: { revoquerDemande?: typeof revoquerDemande }
   // (aucune différence de résultat, mais plus simple à lire).
   let aRevoquerApresRollbackPropre: string | null = null;
 
-  let resultatTx: DemandeAutorisationStrategiqueResultat;
-  try {
-    // BEGIN — verrou transactionnel sur la proposition (directive B24 Lot B,
+  // Motif de la compensation CAS B (incohérence défensive, ou conflit
+  // détecté à la revérification ANO-09 ci-dessous).
+  let motifRevocation = "AuthorizationRequest créée incohérente avec le contexte attendu";
+
+  // ANO-09 (01/11/2026) — BLOCAGE AVEC UNE SEULE CONNEXION, CORRIGÉ.
+  // Avant : creerDemandeAutorisation() (B22, client Prisma global) était
+  // appelée À L'INTÉRIEUR de prisma.$transaction(). La transaction tient
+  // l'unique connexion du pool (connection_limit=1 en Preview, ANO-01) ;
+  // B22 attend une seconde connexion qui ne se libère jamais : la
+  // transaction reste « idle in transaction » et bloque tout le serveur.
+  // Désormais, AUCUNE connexion n'est tenue pendant l'appel B22 :
+  //   1. transaction courte : verrou FOR UPDATE + contrôles (proposition,
+  //      statut terminal, PENDING existant) ;
+  //   2. appel B22 HORS transaction (inchangé : B22 n'est pas modifié) ;
+  //   3. transaction courte : NOUVEAU verrou FOR UPDATE, revérification des
+  //      mêmes règles, vérification défensive, création du lien.
+  // La sérialisation des appels concurrents est conservée par le verrou de
+  // l'étape 3 : si un autre appel a lié une demande PENDING entre-temps (ou
+  // si la proposition est devenue terminale), la demande créée à l'étape 2
+  // est révoquée par la compensation B22 existante et l'appel reçoit 409.
+  // Invariant inchangé : jamais deux demandes PENDING liées à la même
+  // proposition, jamais de lien sans demande, jamais de demande active
+  // sans lien (sauf échec de la compensation, signalé explicitement).
+  const verifierProposition = async (
+    tx: Prisma.TransactionClient
+  ): Promise<{ ok: true; proposal: ProposalVerrouillee } | { ok: false; erreur: string; code: 404 | 409 }> => {
+    // Verrou transactionnel sur la proposition (directive B24 Lot B,
     // section 10) : SELECT ... FOR UPDATE, jamais un simple "SELECT puis
-    // INSERT" (race-prone sous PostgreSQL Read Committed). Deux appels
-    // concurrents pour la MÊME proposalId se sérialisent ici : le second
-    // bloque jusqu'à la fin de la transaction du premier.
-    resultatTx = await prisma.$transaction(async (tx) => {
-      const lignes = await tx.$queryRaw<ProposalVerrouillee[]>`
-        SELECT "id", "agentId", "correlationId", "statut", "perimetre"
-        FROM "StrategicActionProposal"
-        WHERE "id" = ${params.proposalId}
-        FOR UPDATE
-      `;
-      const proposal = lignes[0];
-      if (!proposal) {
-        return { ok: false as const, erreur: "Proposition introuvable.", code: 404 as const };
-      }
-      if (STATUTS_PROPOSAL_TERMINAUX.has(proposal.statut)) {
+    // INSERT" (race-prone sous PostgreSQL Read Committed).
+    const lignes = await tx.$queryRaw<ProposalVerrouillee[]>`
+      SELECT "id", "agentId", "correlationId", "statut", "perimetre"
+      FROM "StrategicActionProposal"
+      WHERE "id" = ${params.proposalId}
+      FOR UPDATE
+    `;
+    const proposal = lignes[0];
+    if (!proposal) {
+      return { ok: false, erreur: "Proposition introuvable.", code: 404 };
+    }
+    if (STATUTS_PROPOSAL_TERMINAUX.has(proposal.statut)) {
+      return {
+        ok: false,
+        erreur: `Proposition déjà au statut ${proposal.statut} — une demande d'autorisation ne peut plus être créée.`,
+        code: 409,
+      };
+    }
+    // Un seul PENDING à la fois (directive B24 Lot B, section 10) — dérivé
+    // en LIVE depuis StrategicAuthorizationLink + AuthorizationRequest.status,
+    // jamais depuis un champ dénormalisé.
+    const liensExistants = await tx.strategicAuthorizationLink.findMany({
+      where: { proposalId: proposal.id },
+      select: { authorizationRequestId: true },
+    });
+    if (liensExistants.length > 0) {
+      const demandesEnCours = await tx.authorizationRequest.findMany({
+        where: { id: { in: liensExistants.map((l) => l.authorizationRequestId) }, status: "PENDING" },
+        select: { id: true },
+      });
+      if (demandesEnCours.length > 0) {
         return {
-          ok: false as const,
-          erreur: `Proposition déjà au statut ${proposal.statut} — une demande d'autorisation ne peut plus être créée.`,
-          code: 409 as const,
+          ok: false,
+          erreur: "Une AuthorizationRequest PENDING existe déjà pour cette proposition — une seule à la fois.",
+          code: 409,
         };
       }
+    }
+    return { ok: true, proposal };
+  };
 
-      // Un seul PENDING à la fois (directive B24 Lot B, section 10) — dérivé
-      // en LIVE depuis StrategicAuthorizationLink + AuthorizationRequest.status,
-      // jamais depuis un champ dénormalisé sur la proposition ou le lien
-      // (aucun champ status/decision n'existe sur StrategicAuthorizationLink,
-      // par construction — Lot A, section 4).
-      const liensExistants = await tx.strategicAuthorizationLink.findMany({
-        where: { proposalId: proposal.id },
-        select: { authorizationRequestId: true },
-      });
-      if (liensExistants.length > 0) {
-        const demandesEnCours = await tx.authorizationRequest.findMany({
-          where: { id: { in: liensExistants.map((l) => l.authorizationRequestId) }, status: "PENDING" },
-          select: { id: true },
-        });
-        if (demandesEnCours.length > 0) {
-          return {
-            ok: false as const,
-            erreur: "Une AuthorizationRequest PENDING existe déjà pour cette proposition — une seule à la fois.",
-            code: 409 as const,
-          };
-        }
-      }
+  let resultatTx: DemandeAutorisationStrategiqueResultat;
+  try {
+    // ÉTAPE 1 — contrôles sous verrou, transaction courte, aucun appel B22.
+    const controle = await prisma.$transaction((tx) => verifierProposition(tx));
+    if (!controle.ok) {
+      return controle;
+    }
+    const proposalInitiale = controle.proposal;
 
-      // agentId et correlationId TOUJOURS dérivés de la proposition verrouillée
-      // — jamais du corps de la requête (directive B24 Lot B, sections 6/7).
-      // objective/reason dérivés du contenu réel de la proposition, jamais
-      // fournis par le client à ce niveau (payload minimal, section 18 de
-      // l'ordre : seuls action/scope/requestedAutonomyLevel sont acceptés).
-      //
-      // NOTE D'ATOMICITÉ (honnête, non maquillée — inchangée depuis Lot B) :
-      // creerDemandeAutorisation() est un mécanisme B22 EXISTANT, NON
-      // MODIFIÉ — il utilise son propre client Prisma top-level
-      // (prisma.authorizationRequest.create), pas `tx`. Son écriture n'est
-      // donc PAS dans la même transaction SQL que ce verrou. Le verrou FOR
-      // UPDATE sur la proposition reste néanmoins ce qui sérialise
-      // réellement les appelants concurrents (voir section PENDING
-      // ci-dessus) : tant que cette transaction n'a pas COMMIT/ROLLBACK,
-      // aucun autre appel sur la MÊME proposalId ne peut avancer au-delà de
-      // son propre SELECT ... FOR UPDATE. Le risque résiduel n'est donc PAS
-      // un double PENDING durable, mais une fenêtre BRÈVE où une
-      // AuthorizationRequest orpheline (pas encore compensée) coexiste avec
-      // une nouvelle demande légitime créée juste après la fin de CETTE
-      // transaction — voir "Risques résiduels" du rapport B24 Lot B-FIX1 ;
-      // fenêtre auto-cicatrisante (la compensation ci-dessous s'exécute
-      // immédiatement après), jamais un contournement de permission (B24
-      // Lot B-FIX1, section "ATTENTION À LA CONCURRENCE").
-      const resultatB22 = await creerDemandeAutorisation({
-        correlationId: proposal.correlationId,
-        agentId: proposal.agentId,
-        action,
-        scope,
-        resource: proposal.perimetre ?? undefined,
-        objective: plafonnerTexteStrategique(`StrategicActionProposal ${proposal.id}`, PLAFOND_CHAMP_STRATEGIQUE) ?? proposal.id,
-        reason: "Demande d'autorisation créée depuis une StrategicActionProposal (B21 → B22, B24 Lot B).",
-        requestedAutonomyLevel,
-      });
-      if (!resultatB22.ok) {
-        // CAS A (ordre, B24 Lot B-FIX1) : B22 n'a rien commité — aucune
-        // compensation n'est nécessaire ni possible.
-        return { ok: false as const, erreur: resultatB22.erreur, code: 409 as const };
+    // ÉTAPE 2 — B22 HORS transaction : aucune connexion n'est retenue
+    // pendant cet appel. agentId et correlationId TOUJOURS dérivés de la
+    // proposition verrouillée — jamais du corps de la requête (directive
+    // B24 Lot B, sections 6/7). B22 reste la SEULE autorité de décision.
+    const resultatB22 = await creerDemandeAutorisation({
+      correlationId: proposalInitiale.correlationId,
+      agentId: proposalInitiale.agentId,
+      action,
+      scope,
+      resource: proposalInitiale.perimetre ?? undefined,
+      objective: plafonnerTexteStrategique(`StrategicActionProposal ${proposalInitiale.id}`, PLAFOND_CHAMP_STRATEGIQUE) ?? proposalInitiale.id,
+      reason: "Demande d'autorisation créée depuis une StrategicActionProposal (B21 → B22, B24 Lot B).",
+      requestedAutonomyLevel,
+    });
+    if (!resultatB22.ok) {
+      // CAS A (ordre, B24 Lot B-FIX1) : B22 n'a rien commité — aucune
+      // compensation n'est nécessaire ni possible.
+      return { ok: false, erreur: resultatB22.erreur, code: 409 };
+    }
+    // À partir d'ici, l'AuthorizationRequest existe réellement et est
+    // commitée côté B22 — toute erreur désormais déclenche compensation.
+    authorizationRequestIdCommise = resultatB22.id;
+
+    // ÉTAPE 3 — revérification sous NOUVEAU verrou puis création du lien.
+    resultatTx = await prisma.$transaction(async (tx) => {
+      const revue = await verifierProposition(tx);
+      if (!revue.ok) {
+        // Un appel concurrent a lié une demande PENDING, ou la proposition
+        // est devenue terminale, pendant l'étape 2 : la demande créée par
+        // CET appel est révoquée (compensation B22 existante, après la fin
+        // propre de la transaction) et l'appel reçoit le refus métier.
+        aRevoquerApresRollbackPropre = resultatB22.id;
+        motifRevocation = `demande concurrente ou proposition modifiée pendant la création (${revue.erreur})`;
+        return revue;
       }
-      // À partir d'ici, l'AuthorizationRequest existe réellement et est
-      // commitée côté B22 — toute erreur désormais déclenche compensation.
-      authorizationRequestIdCommise = resultatB22.id;
+      const proposal = revue.proposal;
 
       // Vérification défensive du contexte avant toute création de lien
-      // (directive B24 Lot B, section 9) — sous fonctionnement normal, ne
-      // peut pas échouer (ces valeurs sont celles-là mêmes qu'on vient de
-      // transmettre), mais vérifiée explicitement plutôt que silencieusement
-      // supposée, même discipline que le reste de ce projet.
+      // (directive B24 Lot B, section 9) — contre la proposition RELUE sous
+      // verrou, et contre celle de l'étape 1.
       const demandeCreee = await tx.authorizationRequest.findUnique({ where: { id: resultatB22.id } });
       const coherente =
         !params._forcerIncoherenceDefensivePourTest &&
         !!demandeCreee &&
+        proposal.agentId === proposalInitiale.agentId &&
+        proposal.correlationId === proposalInitiale.correlationId &&
+        proposal.perimetre === proposalInitiale.perimetre &&
         demandeCreee.agentId === proposal.agentId &&
         demandeCreee.correlationId === proposal.correlationId &&
         demandeCreee.action === action &&
         demandeCreee.scope === scope;
       if (!coherente) {
-        // CAS B (ordre) — la transaction se termine proprement (rollback
-        // normal, pas d'exception) ; la compensation est déclenchée juste
-        // après, hors transaction.
+        // CAS B (ordre) — la transaction se termine proprement ; la
+        // compensation est déclenchée juste après, hors transaction.
         aRevoquerApresRollbackPropre = resultatB22.id;
         return { ok: false as const, erreur: "AuthorizationRequest créée incohérente avec le contexte attendu — annulée.", code: 409 as const };
       }
 
       // CAS C (ordre) : point d'injection de test — jamais atteignable
-      // depuis la route HTTP (voir documentation du paramètre). Provoque
-      // une défaillance RÉELLE de cette étape précise, exactement comme le
-      // ferait une vraie erreur Prisma/réseau à cet instant précis.
+      // depuis la route HTTP (voir documentation du paramètre).
       if (params._simulerEchecCreationLienPourTest) {
         throw new Error("Échec simulé de StrategicAuthorizationLink.create (B24 Lot B-FIX1, test de compensation uniquement).");
       }
@@ -397,7 +420,7 @@ dependances?: { revoquerDemande?: typeof revoquerDemande }
   if (!resultatTx.ok && aRevoquerApresRollbackPropre) {
     const compensation = await tenterRevocationCompensatoire(
       aRevoquerApresRollbackPropre,
-      "AuthorizationRequest créée incohérente avec le contexte attendu",
+      motifRevocation,
       revoquerDemandeReel
     );
     if (!compensation.ok) {

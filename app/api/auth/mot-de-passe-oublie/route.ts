@@ -1,9 +1,12 @@
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { envoyerEmailReinitialisationMotDePasse } from "@/lib/email";
+import { envoyerEmailReinitialisationMotDePasse, MESSAGE_EMAIL_INDISPONIBLE, parcoursEmailIndisponible } from "@/lib/email";
+import { attendreDureeMinimale } from "@/lib/duree-reponse";
 import { demanderReinitialisationSchema, premierMessageZod } from "@/lib/validation";
 import { adresseIp, verifierLimiteIp } from "@/lib/rate-limit";
+import { avecLienDemo } from "@/lib/liens-demo";
+import { lireCorpsJson } from "@/lib/api-errors";
 
 // B14 — Étape 1 du mot de passe oublié : demande d'un lien de
 // réinitialisation. Volontairement calquée sur le circuit de vérification
@@ -30,6 +33,12 @@ function genererToken() {
 }
 
 export async function POST(req: NextRequest) {
+  // Sur Vercel sans envoi d'email opérationnel : refus identique pour toute
+  // adresse, avant tout accès à la base (voir lib/email.ts).
+  if (parcoursEmailIndisponible()) {
+    return NextResponse.json({ error: MESSAGE_EMAIL_INDISPONIBLE }, { status: 503 });
+  }
+
   const ip = adresseIp(req);
   const autorise = await verifierLimiteIp(`mot-de-passe-oublie:${ip}`);
   if (!autorise) {
@@ -39,7 +48,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const corpsBrut = await req.json();
+  const corpsBrut = await lireCorpsJson(req);
+  if (corpsBrut === null) {
+    return NextResponse.json({ error: "Requête invalide." }, { status: 400 });
+  }
   const analyse = demanderReinitialisationSchema.safeParse(corpsBrut);
   if (!analyse.success) {
     return NextResponse.json({ error: premierMessageZod(analyse.error) }, { status: 400 });
@@ -51,9 +63,12 @@ export async function POST(req: NextRequest) {
     message: "Si un compte existe avec cette adresse, un email de réinitialisation a été envoyé.",
   };
 
+  const debut = Date.now();
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) {
-    // Ne jamais révéler si l'adresse existe — même réponse dans les deux cas.
+    // Ne jamais révéler si l'adresse existe — même réponse (et même durée,
+    // voir lib/duree-reponse.ts) dans les deux cas.
+    await attendreDureeMinimale(debut);
     return NextResponse.json(messageGenerique);
   }
 
@@ -64,13 +79,13 @@ export async function POST(req: NextRequest) {
   });
 
   await envoyerEmailReinitialisationMotDePasse({ to: email, token });
+  await attendreDureeMinimale(debut);
 
-  return NextResponse.json({
-    ...messageGenerique,
-    // ⚠️ Démo : aucun fournisseur d'email n'est branché (voir lib/email.ts) —
-    // le lien n'arrive pas réellement en boîte de réception, il est renvoyé
-    // ici pour permettre de tester le parcours (même convention que
-    // lienVerificationDemo sur /api/auth/signup).
-    lienReinitialisationDemo: `/reinitialiser-mot-de-passe?token=${token}`,
-  });
+  // SÉCURITÉ : le lien de réinitialisation n'est jamais renvoyé, sauf en
+  // environnement de test explicitement autorisé (voir lib/liens-demo.ts).
+  // Hors de ce cas, la réponse est strictement identique à celle d'un compte
+  // inexistant.
+  return NextResponse.json(
+    avecLienDemo(messageGenerique, "lienReinitialisationDemo", `/reinitialiser-mot-de-passe?token=${token}`)
+  );
 }

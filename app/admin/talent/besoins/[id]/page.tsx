@@ -292,6 +292,110 @@ export default function BesoinTalentAdminDetailPage() {
           )}
         </section>
       )}
+
+      <ActionsClientTalent besoinId={detail.besoin.id} />
     </div>
+  );
+}
+
+// LOT 2 (28/10/2026) — actions du Client sur les profils proposés : l'Admin
+// voit quel profil se cache derrière chaque proposition anonyme et fait
+// avancer la demande. Aucune mission n'est créée ici (outil existant).
+type ActionClient = {
+  id: string;
+  type: "POURSUIVRE" | "NE_PAS_RETENIR" | "AUTRES_PROFILS";
+  statut: "ENVOYEE" | "PRISE_EN_CHARGE" | "CLOTUREE";
+  commentaire: string | null;
+  createdAt: string;
+  origine: "MATCHING" | "EQUIPE_ATLAS" | null;
+  profil: { id: string; nom: string; prenom: string | null } | null;
+};
+
+const LIBELLE_ACTION: Record<ActionClient["type"], string> = {
+  POURSUIVRE: "Souhaite poursuivre",
+  NE_PAS_RETENIR: "Ne retient pas",
+  AUTRES_PROFILS: "Demande d'autres profils",
+};
+const LIBELLE_STATUT_ACTION: Record<ActionClient["statut"], string> = {
+  ENVOYEE: "À traiter",
+  PRISE_EN_CHARGE: "Prise en charge",
+  CLOTUREE: "Clôturée",
+};
+
+function ActionsClientTalent({ besoinId }: { besoinId: string }) {
+  const [actions, setActions] = useState<ActionClient[] | null>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
+
+  function charger() {
+    fetch(`/api/talent/besoins/${besoinId}/actions-client`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((d) => setActions(d.actions ?? []))
+      .catch(() => setErreur("Impossible de charger les demandes du client."));
+  }
+  useEffect(charger, [besoinId]);
+
+  async function avancer(id: string, statut: "PRISE_EN_CHARGE" | "CLOTUREE") {
+    const reponse = await fetch(`/api/talent/actions-client/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ statut }),
+    });
+    if (!reponse.ok) {
+      const data = await reponse.json().catch(() => ({}));
+      setErreur(data.error ?? "Une erreur est survenue.");
+    }
+    charger();
+  }
+
+  return (
+    <section style={{ marginTop: 24 }}>
+      <h2 style={{ fontSize: 15 }}>Demandes du client sur les profils proposés</h2>
+      {erreur && <p role="alert" style={{ color: rouge, fontSize: 13 }}>{erreur}</p>}
+      {actions && actions.length === 0 && <p style={{ fontSize: 13, color: grisTexte }}>Aucune demande pour l&apos;instant.</p>}
+      {actions && actions.length > 0 && (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ textAlign: "left", color: grisTexte }}>
+              <th style={{ padding: 6 }}>Date</th>
+              <th style={{ padding: 6 }}>Demande</th>
+              <th style={{ padding: 6 }}>Profil (visible Admin)</th>
+              <th style={{ padding: 6 }}>Commentaire</th>
+              <th style={{ padding: 6 }}>Statut</th>
+              <th style={{ padding: 6 }}>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {actions.map((a) => (
+              <tr key={a.id} style={{ borderTop: `1px solid ${bordure}` }}>
+                <td style={{ padding: 6 }}>{new Date(a.createdAt).toLocaleDateString("fr-FR")}</td>
+                <td style={{ padding: 6 }}>{LIBELLE_ACTION[a.type]}</td>
+                <td style={{ padding: 6 }}>
+                  {a.profil ? (
+                    <Link href={`/admin/profils?profilId=${a.profil.id}`}>{[a.profil.prenom, a.profil.nom].filter(Boolean).join(" ")}</Link>
+                  ) : (
+                    "—"
+                  )}
+                  {a.origine && <span style={{ color: grisTexte }}> · {a.origine === "MATCHING" ? "matching" : "shortlist"}</span>}
+                </td>
+                <td style={{ padding: 6 }}>{a.commentaire ?? "—"}</td>
+                <td style={{ padding: 6, color: a.statut === "ENVOYEE" ? orange : a.statut === "CLOTUREE" ? grisTexte : vert }}>{LIBELLE_STATUT_ACTION[a.statut]}</td>
+                <td style={{ padding: 6, display: "flex", gap: 6 }}>
+                  {a.statut === "ENVOYEE" && (
+                    <button onClick={() => avancer(a.id, "PRISE_EN_CHARGE")} style={{ background: bleu, color: "#fff", border: "none", borderRadius: 6, padding: "4px 10px", cursor: "pointer" }}>
+                      Prendre en charge
+                    </button>
+                  )}
+                  {a.statut !== "CLOTUREE" && (
+                    <button onClick={() => avancer(a.id, "CLOTUREE")} style={{ background: "#fff", color: grisTexte, border: `1px solid ${bordure}`, borderRadius: 6, padding: "4px 10px", cursor: "pointer" }}>
+                      Clôturer
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
   );
 }

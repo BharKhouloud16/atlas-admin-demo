@@ -25,3 +25,22 @@ export function dernierFaitParCle<T extends FaitPourValeurActuelle>(faits: T[]):
   }
   return dernier;
 }
+
+// LOT 1 (28/10/2026, ANO-04) : clés RÉPÉTABLES — plusieurs valeurs actuelles
+// coexistent (ex. trois compétences). `dernierFaitParCle` ne doit jamais
+// servir à les AFFICHER (il n'en garderait qu'une). Leur valeur actuelle se
+// lit par couple (clé, valeur) : la dernière ligne de chaque couple gagne,
+// et une ligne statut INCONNU (source "client_retrait") retire la valeur,
+// sans jamais effacer l'historique additif.
+export const CLES_REPETABLES = new Set<string>(["COMPETENCE", "CONTRAINTE", "CRITERE_REUSSITE", "PRIORITE", "RISQUE", "PREFERENCE"]);
+
+function cleValeur(valeur: string): string {
+  return valeur.normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toLowerCase();
+}
+
+export function valeursActuellesRepetables<T extends FaitPourValeurActuelle>(faits: T[], cle: string): T[] {
+  const tries = [...faits].filter((f) => f.cle === cle).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  const dernier = new Map<string, T>();
+  for (const fait of tries) dernier.set(cleValeur(fait.valeur), fait);
+  return [...dernier.values()].filter((f) => f.statut !== "INCONNU" && f.valeur.trim().length > 0);
+}

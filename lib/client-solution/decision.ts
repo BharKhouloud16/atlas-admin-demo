@@ -40,12 +40,20 @@ export async function deciderSolution(params: {
   if (!recommandation) return { ok: false, code: "OPTION_INTROUVABLE" };
   if (recommandation.niveau !== "RECOMMANDATION") return { ok: false, code: "NIVEAU_INVALIDE" };
 
-  const derniereRecommandation = await prisma.solutionOption.findFirst({
-    where: { needId: params.needId, niveau: "RECOMMANDATION" },
-    orderBy: { createdAt: "desc" },
-  });
-  if (derniereRecommandation?.id !== recommandation.id) {
-    return { ok: false, code: "RECOMMANDATION_OBSOLETE" };
+  // REV-02 (01/11/2026) : la recommandation doit appartenir à la vague
+  // AFFICHÉE (dernière recherche mémorisée) ; à défaut de recherche
+  // mémorisée (besoins antérieurs), la dernière recommandation écrite.
+  const vague = await prisma.solutionVague.findFirst({ where: { needId: params.needId }, orderBy: { createdAt: "desc" }, select: { optionIds: true } });
+  if (vague) {
+    if (!vague.optionIds.includes(recommandation.id)) return { ok: false, code: "RECOMMANDATION_OBSOLETE" };
+  } else {
+    const derniereRecommandation = await prisma.solutionOption.findFirst({
+      where: { needId: params.needId, niveau: "RECOMMANDATION" },
+      orderBy: { createdAt: "desc" },
+    });
+    if (derniereRecommandation?.id !== recommandation.id) {
+      return { ok: false, code: "RECOMMANDATION_OBSOLETE" };
+    }
   }
 
   const donneesSource = recommandation.donnees as unknown as DonneesSolutionOption;

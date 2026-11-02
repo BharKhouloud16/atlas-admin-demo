@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
-import type { ClientNeedStatut } from "@prisma/client";
+import { Prisma, type ClientNeedStatut } from "@prisma/client";
 
 // COMPANY ATLAS — LOT 2 : Client Need Intelligence Foundation (15/09/2026).
 //
@@ -21,6 +21,7 @@ import type { ClientNeedStatut } from "@prisma/client";
 // par le serveur (lib/client-need/clarification.ts, LOT 3) — le client ne
 // doit jamais pouvoir le forcer directement (décision CEO LOT 3).
 const STATUTS_MODIFIABLES_PAR_CLIENT = new Set(["SOUMIS", "VALIDE", "ARCHIVE"]);
+const STATUTS_PROJET_CLOS = new Set(["ABANDONNE", "TERMINE"]);
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getSession();
@@ -68,6 +69,17 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       );
     }
     data.statut = body.statut as ClientNeedStatut;
+    // REV-01 (01/11/2026) : le besoin qui porte un projet actif se gère
+    // depuis l'onglet Projets — l'archiver ici désynchroniserait le projet.
+    if (data.statut === "ARCHIVE") {
+      const projet = await prisma.projet.findUnique({ where: { needId: besoin.id }, select: { titre: true, statut: true } });
+      if (projet && !STATUTS_PROJET_CLOS.has(projet.statut)) {
+        return NextResponse.json(
+          { error: `Ce besoin porte le projet « ${projet.titre} » : il ne peut pas être archivé tant que le projet est actif. Gérez-le depuis l'onglet Projets.`, projet: true },
+          { status: 409 }
+        );
+      }
+    }
   }
 
   if (Object.keys(data).length === 0) {
@@ -94,9 +106,40 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
     return NextResponse.json({ error: "Besoin introuvable." }, { status: 404 });
   }
 
+  // REV-01 (01/11/2026) — cohérence des données : un besoin n'est jamais
+  // supprimé s'il porte un projet (le projet, ses propositions et son
+  // historique en dépendent) ni s'il a une demande en cours de traitement
+  // par l'équipe ATLAS (elle serait effacée en cascade). L'archivage reste
+  // possible et ne supprime rien.
+  const [projet, demandesEnCours] = await Promise.all([
+    prisma.projet.findUnique({ where: { needId: besoin.id }, select: { titre: true } }),
+    prisma.actionTalentClient.count({ where: { needId: besoin.id, statut: { in: ["ENVOYEE", "PRISE_EN_CHARGE"] } } }),
+  ]);
+  if (projet) {
+    return NextResponse.json(
+      { error: `Ce besoin porte le projet « ${projet.titre} » : il ne peut pas être supprimé. Pour arrêter, abandonnez le projet depuis l'onglet Projets.`, projet: true },
+      { status: 409 }
+    );
+  }
+  if (demandesEnCours > 0) {
+    return NextResponse.json(
+      { error: "Une demande liée à ce besoin est en cours de traitement par l'équipe ATLAS : il ne peut pas être supprimé. Vous pouvez l'archiver." },
+      { status: 409 }
+    );
+  }
+
   // onDelete: Cascade (ClientNeedFait -> ClientNeed) — les faits associés
   // sont supprimés avec le besoin, aucune ligne orpheline.
-  await prisma.clientNeed.delete({ where: { id: params.id } });
+  try {
+    await prisma.clientNeed.delete({ where: { id: params.id } });
+  } catch (e) {
+    // Course : un projet a été créé sur ce besoin entre la vérification et la
+    // suppression — la contrainte de clé étrangère protège les données.
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2003") {
+      return NextResponse.json({ error: "Ce besoin vient d'être rattaché à un projet : il ne peut pas être supprimé." }, { status: 409 });
+    }
+    throw e;
+  }
 
   return NextResponse.json({ ok: true });
 }

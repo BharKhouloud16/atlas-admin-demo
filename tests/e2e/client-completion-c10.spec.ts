@@ -54,19 +54,25 @@ test.describe("Client — Vue d'ensemble : Actions requises + centre d'Attention
     });
 
     await page.goto("/client");
-    // Attend que les fetches de la page (dont GET /api/client/attentions,
-    // qui déclenche la synchronisation Billing/Besoin -> Attention) soient
-    // résolus avant toute assertion — même garde que le reste de la suite.
-    await expect(page.getByText(/information(s)? de profil à confirmer/i)).toBeVisible();
 
-    // "besoin à clarifier" n'est structurellement plus jamais affiché dans
-    // Actions requises depuis la V2.3 (voir commentaire ci-dessus) — jamais
-    // deux sections annonçant le même fait. Scopé à la section "Actions
-    // requises" elle-même (pas à la page entière) : le même besoin apparaît
-    // légitimement dans la section "Attention" au-dessus (sa nouvelle
-    // destination V2.3), ce qui est le comportement attendu, pas une fuite.
-    const sectionActionsRequises = page.locator("section", { has: page.getByRole("heading", { name: "Actions requises", exact: true }) });
-    await expect(sectionActionsRequises.getByText(new RegExp(`Besoin "${besoin.titre}"`, "i"))).toHaveCount(0);
+    // LOT 4 (28/10/2026) : « Actions requises » et « Attention » sont
+    // fusionnées dans « Travail à faire » (tableau de bord agrégé). Le besoin
+    // à clarifier y figure UNE seule fois — via son Attention, jamais en
+    // doublon (même exigence qu'en V2.3 : jamais deux annonces du même fait).
+    const travail = page.locator("section#travail-a-faire");
+    await expect(travail.getByRole("heading", { name: "Travail à faire" })).toBeVisible();
+    const plus = travail.getByRole("button", { name: /Afficher les \d+ autres? actions?/ });
+    if (await plus.count()) await plus.click();
+    await expect(travail.getByText(/information(s)? de profil à confirmer/i)).toBeVisible();
+    // Liste complète (l'écran n'en affiche que les 8 premières) : le besoin
+    // à clarifier y figure exactement une fois.
+    const tableau = await (await page.request.get("/api/client/tableau-de-bord")).json();
+    // REV-11 (01/11/2026) : les besoins à préciser sont regroupés en une
+    // tâche qui les nomme tous (`elements`).
+    const taches = (tableau.travailAFaire.donnees as { titre: string; detail: string; elements?: string[] }[]).filter(
+      (t) => t.titre.includes(besoin.titre!) || t.detail.includes(besoin.titre!) || (t.elements ?? []).includes(besoin.titre!)
+    );
+    expect(taches).toHaveLength(1);
 
     // La vraie migration : la synchronisation déclenchée par la page a bien
     // produit l'Attention correspondante, jamais recréée manuellement ici.

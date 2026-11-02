@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
-import { listerSolutionsExistantes } from "@/lib/client-solution/generation";
+import { listerSolutionsExistantes, analyserCandidatsPourAdmin } from "@/lib/client-solution/generation";
 
 // COMPANY ATLAS — V2.1-C : C3 Solution Intelligence — vue Admin.
 //
@@ -24,9 +24,17 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
   }
 
   const lignes = await listerSolutionsExistantes(params.id);
+  // Vue Admin complète (lecture seule) : présentables, opportunités et non
+  // pertinents, avec écarts et actions possibles — jamais exposée au Client.
+  const analyse = (await analyserCandidatsPourAdmin(params.id)) ?? [];
   return NextResponse.json({
     options: lignes.filter((l) => l.niveau === "OPTION"),
     recommandations: lignes.filter((l) => l.niveau === "RECOMMANDATION"),
     decisions: lignes.filter((l) => l.niveau === "DECISION"),
+    analyse: {
+      presentables: analyse.filter((a) => a.admissibilite.categorieAdmin === "PRESENTABLE"),
+      opportunites: analyse.filter((a) => a.admissibilite.categorieAdmin === "OPPORTUNITE"),
+      nonPertinents: analyse.filter((a) => a.admissibilite.categorieAdmin === "NON_PERTINENT").length,
+    },
   });
 }

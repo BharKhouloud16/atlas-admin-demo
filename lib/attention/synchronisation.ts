@@ -147,6 +147,39 @@ function cle(type: string, source: string, sourceId: string): string {
 // ci-dessous (Client scopé, Admin global). `entites` peut représenter un
 // seul Client ou l'intégralité du dépôt : le coût reste borné (3 requêtes)
 // quel que soit son volume.
+// Comparaison indépendante de l'ordre des clés (jsonb réordonne les clés
+// en base) : une différence d'ordre seule ne doit pas compter comme changement.
+function canonique(v: unknown): unknown {
+  if (v instanceof Date) return v.toISOString();
+  if (Array.isArray(v)) return v.map(canonique);
+  if (v && typeof v === "object") {
+    return Object.fromEntries(
+      Object.keys(v as Record<string, unknown>)
+        .filter((k) => (v as Record<string, unknown>)[k] !== undefined)
+        .sort()
+        .map((k) => [k, canonique((v as Record<string, unknown>)[k])])
+    );
+  }
+  return v ?? null;
+}
+
+function jsonEgal(a: unknown, b: unknown): boolean {
+  return JSON.stringify(canonique(a)) === JSON.stringify(canonique(b));
+}
+
+function attentionInchangee(existante: Attention, c: EntiteASynchroniser["candidats"][number]): boolean {
+  return (
+    existante.titre === c.titre &&
+    existante.resume === c.resume &&
+    existante.raison === c.raison &&
+    existante.categorie === c.categorie &&
+    existante.priorite === c.priorite &&
+    jsonEgal(existante.actionDisponible, c.actionDisponible) &&
+    jsonEgal(existante.metadata, c.metadata) &&
+    (existante.expiresAt?.getTime() ?? null) === (c.expiresAt ? new Date(c.expiresAt).getTime() : null)
+  );
+}
+
 async function synchroniserEntites(entites: EntiteASynchroniser[], maintenant: Date): Promise<void> {
   if (entites.length === 0) return;
 
@@ -193,6 +226,12 @@ async function synchroniserEntites(entites: EntiteASynchroniser[], maintenant: D
       // une facture ré-échue après une nouvelle échéance) doit se réouvrir —
       // jamais rester figée sur un statut obsolète.
       const doitReouvrir = existante.statut === "RESOLUE" || existante.statut === "EXPIREE";
+      // OBS-05 (28/10/2026) : une Attention dont aucun champ ne change n'est
+      // plus réécrite. Auparavant, chaque synchronisation (à chaque message
+      // envoyé) réécrivait TOUTES les Attention existantes du client, une
+      // requête par ligne : coût croissant avec l'historique, aggravé par
+      // `connection_limit=1` (requêtes strictement séquentielles).
+      if (!doitReouvrir && attentionInchangee(existante, c)) continue;
       aMettreAJour.push({
         id: existante.id,
         data: {

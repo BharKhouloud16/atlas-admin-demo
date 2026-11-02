@@ -10,6 +10,8 @@
 // l'appelant (voir app/api/ingenieur/cv/route.ts) retombe alors sur un
 // modèle de champs vides à compléter manuellement.
 
+import { simulationsCiActives } from "@/lib/simulation-ci";
+
 export type ChampCV = {
   categorie: string;
   libelle: string;
@@ -77,6 +79,12 @@ function resultatNeutre(): ResultatExtractionCV {
 // qu'il ne s'agit pas d'un profil informatique/QA que l'import est rejeté
 // (voir app/api/ingenieur/cv/route.ts).
 export async function extraireInfosCV(pdfBase64: string): Promise<ResultatExtractionCV> {
+  // CI uniquement (impossible sur Vercel) : extraction déterministe des PDF
+  // de test fictifs, voir lib/simulation-ci.ts.
+  if (simulationsCiActives()) {
+    const { extraireInfosCvSimulation } = await import("@/lib/cv-extraction-simulation");
+    return extraireInfosCvSimulation(pdfBase64);
+  }
   const cle = process.env.ANTHROPIC_API_KEY;
   if (!cle) {
     throw new Error(

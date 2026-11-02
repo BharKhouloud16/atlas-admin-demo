@@ -91,6 +91,13 @@ model User {
   echecsConnexion  Int       @default(0)
   verrouilleJusqua DateTime?
 
+  // Version des sessions (voir lib/auth.ts) : chaque JWT porte la version du
+  // compte au moment de son émission ; getSession() refuse tout jeton dont la
+  // version diffère. Incrémentée à chaque changement ou réinitialisation du
+  // mot de passe : toutes les autres sessions ouvertes sont révoquées.
+  // 0 par défaut : les comptes et jetons existants restent valides.
+  sessionVersion Int @default(0)
+
   // Authentification à deux facteurs (TOTP) — pour l'instant réservée au
   // rôle ADMIN (le compte le plus sensible, accès aux coûts/marges
   // internes). totpSecret reste vide tant que la configuration n'est pas
@@ -1006,30 +1013,43 @@ model EmergencyStop {
 }
 
 model Client {
-  id                    String           @id @default(cuid())
-  nom                   String // raison sociale
-  pays                  String? // pays d'implantation du client (affiché dans l'historique de mission ingénieur, et sert à terme au calendrier de jours fériés des feuilles de temps)
-  secteur               String?
-  contactReferent       String? // nom de la personne de contact côté client
-  email                 String?
-  telephone             String?
-  identifiantEntreprise String? // RC / RNE selon le pays
-  formeJuridique        String? // SARL, SA, EURL, Auto-entrepreneur, etc.
-  statutPreferere       TypeContrat?
-  dateDebutPrevue       DateTime?
-  notes                 String?
-  createdAt             DateTime         @default(now())
-  updatedAt             DateTime         @updatedAt
-  missions              Mission[]
-  documents             Document[]
-  compte                User? // le compte de connexion du client, une fois inscrit
-  demandesTalent        DemandeTalent[] // ATLAS TALENT (fondations, 06/09) — voir DemandeTalent
-  clientNeeds           ClientNeed[] // Client Need Intelligence (LOT 2, 15/09) — voir ClientNeed
-  clientProfile         ClientProfile? // Profil Client durable (LOT 4, 15/09) — voir ClientProfile
-  messages              Message[] // CLIENT COMPLETION PROGRAM — C8 (16/09/2026) — voir Message
-  solutionOptions       SolutionOption[] // V2.1-A — C3 Solution Intelligence (16/09/2026) — voir SolutionOption
-  factures              Facture[] // V2.2-B — Billing Foundation (17/09/2026) — voir Facture
-  messageLectures       MessageLecture[] // V2.5 — Communication Intelligence (21/09/2026) — voir MessageLecture
+  id                      String               @id @default(cuid())
+  nom                     String // raison sociale
+  pays                    String? // pays d'implantation du client (affiché dans l'historique de mission ingénieur, et sert à terme au calendrier de jours fériés des feuilles de temps)
+  secteur                 String?
+  contactReferent         String? // nom de la personne de contact côté client
+  email                   String?
+  telephone               String?
+  identifiantEntreprise   String? // RC / RNE selon le pays
+  formeJuridique          String? // SARL, SA, EURL, Auto-entrepreneur, etc.
+  // LOT 3 (28/10/2026) — profil entreprise, complétude progressive (voir
+  // lib/client-profile/completude.ts). Tous facultatifs en base : chaque
+  // étape (qualification, contractualisation, facturation) exige les siens.
+  adresseSiege            String?
+  adresseFacturation      String? // vide = identique à l'adresse du siège
+  identifiantFiscal       String? // n° de TVA intracommunautaire, matricule fiscal… selon le pays
+  siteWeb                 String?
+  fonctionContact         String? // fonction de l'interlocuteur principal
+  contactFacturationNom   String?
+  contactFacturationEmail String?
+  statutPreferere         TypeContrat?
+  dateDebutPrevue         DateTime?
+  notes                   String?
+  createdAt               DateTime             @default(now())
+  updatedAt               DateTime             @updatedAt
+  missions                Mission[]
+  documents               Document[]
+  compte                  User? // le compte de connexion du client, une fois inscrit
+  demandesTalent          DemandeTalent[] // ATLAS TALENT (fondations, 06/09) — voir DemandeTalent
+  clientNeeds             ClientNeed[] // Client Need Intelligence (LOT 2, 15/09) — voir ClientNeed
+  clientProfile           ClientProfile? // Profil Client durable (LOT 4, 15/09) — voir ClientProfile
+  messages                Message[] // CLIENT COMPLETION PROGRAM — C8 (16/09/2026) — voir Message
+  solutionOptions         SolutionOption[] // V2.1-A — C3 Solution Intelligence (16/09/2026) — voir SolutionOption
+  actionsTalent           ActionTalentClient[] // LOT 2 (28/10/2026) — suivi des profils proposés, voir ActionTalentClient
+  activationAtlasOs       ActivationAtlasOs? // LOT 5 (28/10/2026) — activation volontaire d'ATLAS OS
+  projets                 Projet[] // LOT 6 (28/10/2026) — projets complets confiés à ATLAS
+  factures                Facture[] // V2.2-B — Billing Foundation (17/09/2026) — voir Facture
+  messageLectures         MessageLecture[] // V2.5 — Communication Intelligence (21/09/2026) — voir MessageLecture
 }
 
 // Fiche interne d'un profil d'ingénieur. Créée automatiquement, vide de
@@ -1148,6 +1168,11 @@ model Mission {
   // de demande source.
   sourceDemande   DemandeTalent? @relation(fields: [sourceDemandeId], references: [id])
   sourceDemandeId String?
+  // LOT 6 (28/10/2026) : mission réalisée dans le cadre d'un projet complet
+  // (une mission par profil engagé). Facultatif : les missions Talent
+  // existantes n'ont pas de projet.
+  projet          Projet?        @relation(fields: [projetId], references: [id])
+  projetId        String?
 
   // Contexte opérationnel réellement décidé pour cette intervention —
   // jamais une seconde source de vérité pour le besoin (celui-ci reste
@@ -1405,11 +1430,18 @@ model ClientNeed {
   // DemandeTalent à partir de ce besoin (voir DemandeTalent.sourceNeedId).
   // Jamais renseigné automatiquement.
   demandeTalentCreee DemandeTalent?
+  // LOT 2 (28/10/2026) : actions du Client sur les profils proposés pour ce
+  // besoin (poursuivre, ne pas retenir, demander d'autres profils).
+  actionsTalent      ActionTalentClient[]
+  // LOT 6 (28/10/2026) : présent si ce besoin a été exprimé comme un projet
+  // complet (voir Projet) — mêmes faits, même analyse, mêmes clarifications.
+  projet             Projet?
   // V2.1-A : options/recommandations/décisions C3 Solution Intelligence
   // rattachées à ce besoin (voir SolutionOption ci-dessous) — relation
   // requise par Prisma en contrepartie de SolutionOption.need, aucun champ
   // existant modifié.
   solutionOptions    SolutionOption[]
+  solutionVagues     SolutionVague[] // REV-02 (01/11/2026) — état de recherche des profils, voir SolutionVague
   createdAt          DateTime                  @default(now())
   updatedAt          DateTime                  @updatedAt
 
@@ -1827,6 +1859,18 @@ model RegleFiscale {
 // rester visible côté Client (il doit savoir qu'elle a été annulée),
 // tandis qu'une Facture BROUILLON/VALIDEE (jamais envoyée) ou ANNULEE
 // avant tout envoi ne doit jamais lui apparaître.
+// Compteur de numérotation réglementaire des factures (lot CRA V1,
+// 25/10/2026) : une ligne par année d'émission, incrémentée dans la même
+// transaction que la validation de la facture (lib/billing/transitions.ts).
+// Une validation qui échoue n'avance jamais le compteur : la séquence
+// FA-{année}-{numéro} reste chronologique et continue. Les factures
+// antérieures gardent leur numéro d'origine.
+model CompteurFacture {
+  annee     Int      @id
+  dernier   Int
+  updatedAt DateTime @updatedAt
+}
+
 model Facture {
   id                 String         @id @default(cuid())
   client             Client         @relation(fields: [clientId], references: [id])
@@ -2093,4 +2137,254 @@ model PreferenceNotification {
   categoriesEmail AttentionCategorie[]
   createdAt       DateTime             @default(now())
   updatedAt       DateTime             @updatedAt
+}
+
+// LOT 2 (28/10/2026) — Suivi des profils proposés (espace Talents du Client).
+//
+// Une ligne par action du Client, jamais modifiée par lui (ajout seul) :
+// « je souhaite poursuivre avec ce profil », « ne pas retenir », « demander
+// d'autres profils ». La cible est soit une option anonymisée générée par
+// C3 (SolutionOption, niveau OPTION), soit une entrée de shortlist VALIDÉE
+// par un Admin (ShortlistEntree) — simples colonnes résolues et vérifiées
+// en code applicatif (même patron que SolutionOption.sourceOptionId), jamais
+// un identifiant de profil exposé au Client.
+//
+// Une action n'affecte JAMAIS un profil à une mission et ne révèle jamais
+// son identité : elle est traitée par un Admin (statut), qui reste seul à
+// créer une mission avec les outils existants.
+model ActionTalentClient {
+  id                String                   @id @default(cuid())
+  client            Client                   @relation(fields: [clientId], references: [id])
+  clientId          String
+  need              ClientNeed               @relation(fields: [needId], references: [id], onDelete: Cascade)
+  needId            String
+  type              ActionTalentClientType
+  solutionOptionId  String?
+  shortlistEntreeId String?
+  commentaire       String?
+  statut            ActionTalentClientStatut @default(ENVOYEE)
+  creeParEmail      String
+  traiteParEmail    String?
+  traiteLe          DateTime?
+  createdAt         DateTime                 @default(now())
+
+  @@index([needId])
+  @@index([clientId])
+}
+
+enum ActionTalentClientType {
+  POURSUIVRE
+  NE_PAS_RETENIR
+  AUTRES_PROFILS
+}
+
+enum ActionTalentClientStatut {
+  ENVOYEE
+  PRISE_EN_CHARGE
+  CLOTUREE
+}
+
+// LOT 2 (28/10/2026) — correspondance option C3 -> profil, RÉSERVÉE à l'Admin.
+//
+// SolutionOption ne porte jamais d'identifiant de profil (frontière de
+// sécurité C3, voir lib/client-solution/types.ts). Pour qu'un Admin puisse
+// traiter « je souhaite poursuivre avec le Profil B », la génération écrit
+// ici, dans la même transaction, quel profil se cache derrière chaque
+// option. Aucune route Client ne lit cette table.
+model SolutionOptionProfilInterne {
+  solutionOptionId String   @id
+  profilId         String
+  createdAt        DateTime @default(now())
+
+  @@index([profilId])
+}
+
+// LOT 5 (28/10/2026) — ATLAS OS, module OPTIONNEL activé volontairement.
+//
+// Une ligne par client au plus (clientId unique), créée par sa demande
+// d'activation. Le Client demande, un Admin active ou refuse ; jamais
+// d'activation automatique, aucun paiement ni abonnement (rien de tel
+// n'existe dans ATLAS). Chaque décision est aussi tracée dans le journal
+// d'activité (JournalActivite). Le contrôle d'accès est fait côté serveur
+// (lib/atlas-os/activation.ts).
+model ActivationAtlasOs {
+  id              String        @id @default(cuid())
+  client          Client        @relation(fields: [clientId], references: [id])
+  clientId        String        @unique
+  statut          StatutAtlasOs
+  demandeLe       DateTime      @default(now())
+  demandeParEmail String
+  motifDemande    String?
+  decideLe        DateTime?
+  decideParEmail  String?
+  motifDecision   String?
+  updatedAt       DateTime      @updatedAt
+}
+
+enum StatutAtlasOs {
+  DEMANDEE
+  ACTIVEE
+  REFUSEE
+  DESACTIVEE
+}
+
+// LOT 6 (28/10/2026) — PROJETS COMPLETS confiés à ATLAS.
+//
+// Un projet NAÎT d'un besoin (ClientNeed, relation 1-1) : sa description est
+// analysée par le même moteur (faits, clarifications, cohérence) — jamais un
+// second moteur d'analyse. Le projet ajoute ce qu'un besoin de profil n'a
+// pas : objectif, résultat attendu, périmètre, calendrier, propositions de
+// delivery versionnées, et le lien vers les missions existantes (une par
+// profil engagé) une fois l'engagement confirmé.
+//
+// États (EvenementProjet trace chaque passage, avec son auteur) :
+//   A_QUALIFIER -> QUALIFIE -> PROPOSITION_INDICATIVE -> PROPOSITION_VERIFIEE
+//   -> ACCEPTEE (par le Client) -> ENGAGEMENT_CONFIRME (par un Admin)
+//   -> EN_COURS -> TERMINE ; ABANDONNE possible avant ENGAGEMENT_CONFIRME.
+// Une proposition INDICATIVE n'engage personne : aucune équipe, aucun tarif
+// ferme ni aucune date garantie tant qu'un Admin ne l'a pas VÉRIFIÉE.
+model Projet {
+  id                  String              @id @default(cuid())
+  client              Client              @relation(fields: [clientId], references: [id])
+  clientId            String
+  need                ClientNeed          @relation(fields: [needId], references: [id])
+  needId              String              @unique
+  type                TypeProjet
+  titre               String
+  objectif            String
+  resultatAttendu     String
+  perimetre           String?
+  contraintes         String?
+  exigencesTechniques String?
+  calendrierSouhaite  String?
+  budgetIndicatif     String?
+  statut              StatutProjet        @default(A_QUALIFIER)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  propositions        PropositionProjet[]
+  evenements          EvenementProjet[]
+  missions            Mission[]
+
+  @@index([clientId])
+}
+
+enum TypeProjet {
+  DELIVERY // projet de delivery porté par une équipe ATLAS
+  SERVICE_ATLAS_OS // prestation ATLAS OS (QA, sécurité, audit…) — exige ATLAS OS activé
+}
+
+enum StatutProjet {
+  A_QUALIFIER
+  QUALIFIE
+  PROPOSITION_INDICATIVE
+  PROPOSITION_VERIFIEE
+  ACCEPTEE
+  ENGAGEMENT_CONFIRME
+  EN_COURS
+  TERMINE
+  ABANDONNE
+}
+
+// Proposition de delivery, versionnée : une nouvelle version remplace la
+// précédente (REMPLACEE), jamais une modification en place une fois publiée.
+model PropositionProjet {
+  id               String                  @id @default(cuid())
+  projet           Projet                  @relation(fields: [projetId], references: [id], onDelete: Cascade)
+  projetId         String
+  version          Int
+  niveau           NiveauPropositionProjet @default(INDICATIVE)
+  statut           StatutPropositionProjet @default(BROUILLON)
+  approche         String
+  perimetre        String
+  // [{ role, nombre, competences: string[] }] — rôles ENVISAGÉS, jamais des
+  // personnes nommées ni une disponibilité affirmée.
+  equipe           Json
+  // [{ nom, livrables: string[], dureeEstimee: string | null }]
+  etapes           Json
+  delaiEstime      String?
+  budgetEstimeMin  Float?
+  budgetEstimeMax  Float?
+  devise           String                  @default("EUR")
+  hypotheses       String[]                @default([])
+  exclusions       String[]                @default([])
+  creeParEmail     String
+  publieeLe        DateTime?
+  verifieeParEmail String?
+  verifieeLe       DateTime?
+  decisionLe       DateTime?
+  decisionParEmail String?
+  createdAt        DateTime                @default(now())
+
+  @@unique([projetId, version])
+}
+
+enum NiveauPropositionProjet {
+  INDICATIVE // estimation, à vérifier : équipe, tarif et délais non engageants
+  VERIFIEE // vérifiée par un Admin : équipe disponible, budget et délais confirmés
+}
+
+enum StatutPropositionProjet {
+  BROUILLON
+  PUBLIEE
+  ACCEPTEE
+  DECLINEE
+  REMPLACEE
+}
+
+// Journal du projet, ajout seul : chaque transition et chaque échange
+// (demande de précision, ajustement de périmètre) avec son auteur.
+model EvenementProjet {
+  id               String               @id @default(cuid())
+  projet           Projet               @relation(fields: [projetId], references: [id], onDelete: Cascade)
+  projetId         String
+  type             String
+  detail           String?
+  acteurEmail      String
+  acteurRole       Role
+  createdAt        DateTime             @default(now())
+  // REV (01/11/2026) — demandes du Client à traiter par l'équipe ATLAS
+  // (intérêt, demande de précision) : NULL pour tout autre événement.
+  statutTraitement StatutDemandeClient?
+  traiteLe         DateTime?
+  traiteParEmail   String?
+
+  @@index([projetId])
+  @@index([statutTraitement])
+}
+
+// REV (01/11/2026) — suivi par l'équipe ATLAS d'une demande du Client.
+enum StatutDemandeClient {
+  ENVOYEE
+  PRISE_EN_CHARGE
+  CLOTUREE
+}
+
+// REV-02 (01/11/2026) — ÉTAT DE RECHERCHE des profils pour un besoin.
+//
+// Une ligne par recherche effectuée, y compris quand AUCUN profil ne
+// correspond (auparavant rien n'était mémorisé et la recherche complète
+// était relancée à chaque affichage). Une recherche est À JOUR tant que :
+//   - les critères du besoin n'ont pas changé (signatureCriteres) ;
+//   - le vivier de profils n'a pas changé (empreinteVivier : profils,
+//     compétences, preuves, missions, évaluations).
+// Sinon elle est recalculée à la demande (jamais pour tous les besoins lors
+// d'un simple affichage). Si le résultat recalculé est identique
+// (empreinteResultat), la vague d'options existante est conservée : aucune
+// nouvelle ligne SolutionOption, les profils ne changent pas sous les yeux du
+// Client.
+model SolutionVague {
+  id                String     @id @default(cuid())
+  need              ClientNeed @relation(fields: [needId], references: [id], onDelete: Cascade)
+  needId            String
+  clientId          String
+  signatureCriteres String
+  empreinteVivier   String
+  empreinteResultat String?
+  // Lignes SolutionOption (options + recommandation) de la vague affichée ;
+  // vide = aucun profil ne correspond.
+  optionIds         String[]   @default([])
+  createdAt         DateTime   @default(now())
+
+  @@unique([needId, signatureCriteres, empreinteVivier])
+  @@index([needId, createdAt])
 }

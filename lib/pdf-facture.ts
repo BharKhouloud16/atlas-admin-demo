@@ -31,6 +31,10 @@ export type DonneesFactureExport = {
   heuresSupplementaires: number;
   tjmVente: number;
   deviseTjm?: string; // EUR par défaut
+  // Montants enregistrés sur la Facture (lib/billing/creation.ts). Quand ils
+  // sont fournis, le pied de facture reprend exactement ces montants HT,
+  // TVA et TTC au lieu de recalculer un total HT depuis le CRA.
+  montantsFacture?: { ht: number; tva: number; ttc: number };
 };
 
 function formaterMontant(montant: number, devise: string): string {
@@ -137,21 +141,35 @@ export async function genererFacturePdf(d: DonneesFactureExport): Promise<Uint8A
   page.drawLine({ start: { x: MARGE, y }, end: { x: LARGEUR_PAGE - MARGE, y }, thickness: 0.75, color: GRIS_CLAIR });
   y -= 20;
 
-  const totalGeneral = totalJours + totalHeuresSup;
-  page.drawText("Total HT (TVA non applicable, art. 293B du CGI ou équivalent)", {
-    x: MARGE,
-    y,
-    size: 8,
-    font: police,
-    color: GRIS,
-  });
-  page.drawText(formaterMontant(totalGeneral, devise), {
-    x: colX.total,
-    y,
-    size: 12,
-    font: policeGrasse,
-    color: BLEU_FONCE,
-  });
+  const totalGeneral = d.montantsFacture?.ht ?? totalJours + totalHeuresSup;
+  if (d.montantsFacture && d.montantsFacture.tva > 0) {
+    // TVA enregistrée sur la Facture : HT, TVA et TTC affichés tels quels.
+    for (const [libelle, montant] of [
+      ["Total HT", d.montantsFacture.ht],
+      ["TVA", d.montantsFacture.tva],
+    ] as const) {
+      page.drawText(libelle, { x: MARGE, y, size: 9, font: police, color: GRIS });
+      page.drawText(formaterMontant(montant, devise), { x: colX.total, y, size: 10, font: police, color: GRIS });
+      y -= 18;
+    }
+    page.drawText("Total TTC", { x: MARGE, y, size: 9, font: policeGrasse, color: GRIS });
+    page.drawText(formaterMontant(d.montantsFacture.ttc, devise), { x: colX.total, y, size: 12, font: policeGrasse, color: BLEU_FONCE });
+  } else {
+    page.drawText("Total HT (TVA non applicable, art. 293B du CGI ou équivalent)", {
+      x: MARGE,
+      y,
+      size: 8,
+      font: police,
+      color: GRIS,
+    });
+    page.drawText(formaterMontant(totalGeneral, devise), {
+      x: colX.total,
+      y,
+      size: 12,
+      font: policeGrasse,
+      color: BLEU_FONCE,
+    });
+  }
   y -= 40;
 
   page.drawText(

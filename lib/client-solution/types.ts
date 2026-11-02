@@ -14,6 +14,10 @@ export type StatutDisponibiliteOption = "CONNUE" | "UNKNOWN";
 // indirectement un Engineer (voir revue architecturale V2.1, section 6).
 export type OptionClientSafe = {
   typeSolution: "TALENT";
+  // Niveau de correspondance (lib/talent/admissibilite.ts). Optionnel :
+  // absent des options construites avant cette évolution.
+  niveauCorrespondance?: "FORTE" | "PARTIELLE";
+  competencesManquantes?: string[];
   competencesCorrespondantes: string[];
   niveauConfiance: NiveauConfianceOption;
   rationale: string[];
@@ -21,7 +25,11 @@ export type OptionClientSafe = {
   disponibilite: { statut: StatutDisponibiliteOption; detail: string | null };
 };
 
-export type OptionOrdonnee = OptionClientSafe & { rang: number };
+// `indexSource` (LOT 2, 28/10/2026) : position de l'option dans le tableau
+// FOURNI à comparerOptions — un simple entier, jamais persisté ni exposé ;
+// il permet à la génération de relier une option à son profil d'origine dans
+// une table réservée à l'Admin (SolutionOptionProfilInterne).
+export type OptionOrdonnee = OptionClientSafe & { rang: number; indexSource: number };
 
 export type RecommandationSolution = {
   // Pointe vers OptionOrdonnee.rang, jamais un identifiant de profil ou de
@@ -43,5 +51,5 @@ export type ResultatComparaison = {
   // ou données trop insuffisantes même avec 1 option) — jamais une
   // recommandation forcée. Voir raisonAbsenceRecommandation pour le motif.
   recommandation: RecommandationSolution | null;
-  raisonAbsenceRecommandation: "AUCUNE_OPTION" | "DONNEES_INSUFFISANTES" | null;
+  raisonAbsenceRecommandation: "AUCUNE_OPTION" | "DONNEES_INSUFFISANTES" | "AUCUNE_CORRESPONDANCE_FORTE" | null;
 };

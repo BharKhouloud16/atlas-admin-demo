@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { grisTexte } from "@/lib/theme";
 import { Card, Section, EmptyState, Badge, Bouton, type BadgeVariant } from "@/components/client/primitives";
-import { dernierFaitParCle } from "@/lib/client-need/faits";
-import { prioriserClarifications, type Clarification } from "@/lib/client-need/clarification";
+import { dernierFaitParCle, valeursActuellesRepetables, CLES_REPETABLES } from "@/lib/client-need/faits";
+import { prioriserClarifications, CLES_CLARIFIABLES, type Clarification } from "@/lib/client-need/clarification";
+import { TOUTES_COMPETENCES } from "@/lib/competences";
 import { SolutionsBesoin } from "@/components/client/SolutionsBesoin";
+import { AssistantBesoin } from "@/components/client/AssistantBesoin";
 
 // COMPANY ATLAS — LOT 2 : Client Need Intelligence Foundation (15/09/2026).
 // Remplace le "Bientôt disponible" du LOT 1 — premier point d'entrée réel
@@ -41,6 +44,8 @@ type Besoin = {
   // DemandeTalent → ClientNeed), jamais un nouveau statut de besoin, jamais
   // aucun détail interne de la mission (tarifs, ingénieur, marge).
   missionEnCours: boolean;
+  // REV-01 (01/11/2026) : projet porté par ce besoin, le cas échéant.
+  projet?: { id: string; titre: string; statut: string } | null;
 };
 
 const LABEL_CLE: Record<string, string> = {
@@ -109,6 +114,10 @@ const LABEL_PROVENANCE: Record<string, string> = {
 function libelleProvenance(fait: Pick<Fait, "statut" | "source">): string {
   if (fait.statut === "VERIFIE" && fait.source === "client_confirmation") return "Confirmé par vous";
   if (fait.statut === "VERIFIE" && fait.source === "client_correction") return "Corrigé par vous";
+  if (fait.statut === "VERIFIE" && fait.source === "client_ajout") return "Ajouté par vous";
+  // LOT 1 (ANO-03) : une valeur lue automatiquement dans votre texte est une
+  // INTERPRÉTATION d'ATLAS, à vérifier — jamais présentée comme « déclarée ».
+  if (fait.statut === "DECLARE" && fait.source === "extraction") return "Compris par ATLAS";
   return LABEL_PROVENANCE[fait.statut] ?? fait.statut;
 }
 
@@ -129,13 +138,26 @@ export default function BesoinsClientPage() {
   const [chargement, setChargement] = useState(true);
   const [ouverts, setOuverts] = useState<Set<string>>(new Set());
 
+  const [erreurChargement, setErreurChargement] = useState(false);
+
+  // LOT 1 (ANO-05) : jamais de réponse mise en cache, et une erreur réseau ou
+  // serveur affiche un message au lieu d'un chargement infini.
   function charger() {
-    fetch("/api/client/besoins")
-      .then((r) => r.json())
+    fetch("/api/client/besoins", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((d) => {
         setBesoins(d.besoins ?? []);
-        setChargement(false);
-      });
+        setErreurChargement(false);
+      })
+      .catch(() => setErreurChargement(true))
+      .finally(() => setChargement(false));
+  }
+
+  // LOT 1 (ANO-05) : la réponse du serveur à une correction contient le
+  // besoin à jour — il remplace immédiatement la carte, sans attendre un
+  // rechargement de la liste.
+  function remplacer(maj: Partial<Besoin> & { id: string }) {
+    setBesoins((prev) => prev.map((b) => (b.id === maj.id ? { ...b, ...maj } : b)));
   }
 
   useEffect(() => {
@@ -155,62 +177,30 @@ export default function BesoinsClientPage() {
     <div>
       <Section title="Exprimer un besoin">
         <p style={{ color: grisTexte, fontSize: 13, margin: "-4px 0 12px" }}>
-          Décrivez votre besoin en quelques phrases, en langage naturel. ATLAS l&apos;analyse et vous montre ce qu&apos;il a
-          compris — vous restez toujours libre de le compléter ou de le corriger.
+          Décrivez votre besoin et précisez vos critères. ATLAS l&apos;analyse et vous montre ce qu&apos;il a compris — vous
+          restez toujours libre de le compléter ou de le corriger.
         </p>
-        <FormulaireBesoin onCree={charger} />
+        <AssistantBesoin onCree={charger} />
       </Section>
 
       <Section title="Vos besoins">
         {chargement && <EmptyState message="Chargement…" />}
-        {!chargement && besoins.length === 0 && <EmptyState message="Aucun besoin exprimé pour l'instant." />}
+        {!chargement && erreurChargement && (
+          <Card>
+            <p role="alert" style={{ margin: 0, fontSize: 13 }}>
+              Impossible de charger vos besoins pour le moment.{" "}
+              <Bouton variant="secondary" onClick={charger}>Réessayer</Bouton>
+            </p>
+          </Card>
+        )}
+        {!chargement && !erreurChargement && besoins.length === 0 && <EmptyState message="Aucun besoin exprimé pour l'instant." />}
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {besoins.map((b) => (
-            <CarteBesoin key={b.id} besoin={b} ouvert={ouverts.has(b.id)} basculer={() => basculer(b.id)} recharger={charger} />
+            <CarteBesoin key={b.id} besoin={b} ouvert={ouverts.has(b.id)} basculer={() => basculer(b.id)} recharger={charger} remplacer={remplacer} />
           ))}
         </div>
       </Section>
     </div>
-  );
-}
-
-function FormulaireBesoin({ onCree }: { onCree: () => void }) {
-  const [texteOriginal, setTexteOriginal] = useState("");
-  const [envoi, setEnvoi] = useState(false);
-  const [erreur, setErreur] = useState<string | null>(null);
-
-  async function envoyer() {
-    setErreur(null);
-    setEnvoi(true);
-    const reponse = await fetch("/api/client/besoins", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ texteOriginal }),
-    });
-    setEnvoi(false);
-    if (!reponse.ok) {
-      const data = await reponse.json().catch(() => ({}));
-      setErreur(data.error ?? "Une erreur est survenue.");
-      return;
-    }
-    setTexteOriginal("");
-    onCree();
-  }
-
-  return (
-    <Card>
-      <textarea
-        placeholder="Ex. : Nous cherchons deux QA automation seniors pour renforcer notre équipe pendant six mois, principalement sur Playwright et Java, avec possibilité de remote."
-        value={texteOriginal}
-        onChange={(e) => setTexteOriginal(e.target.value)}
-        rows={4}
-        style={{ width: "100%", padding: 8, fontFamily: "inherit", marginBottom: 8, borderRadius: 6 }}
-      />
-      {erreur && <p style={{ color: "#c0392b", fontSize: 13, margin: "0 0 8px" }}>{erreur}</p>}
-      <Bouton onClick={envoyer} disabled={texteOriginal.trim().length < 10 || envoi}>
-        {envoi ? "Analyse en cours…" : "Envoyer"}
-      </Bouton>
-    </Card>
   );
 }
 
@@ -219,18 +209,23 @@ function CarteBesoin({
   ouvert,
   basculer,
   recharger,
+  remplacer,
 }: {
   besoin: Besoin;
   ouvert: boolean;
   basculer: () => void;
   recharger: () => void;
+  remplacer: (maj: Partial<Besoin> & { id: string }) => void;
 }) {
   // LOT 3 : seule la DERNIÈRE valeur par clé est affichée — l'historique
   // complet (additif, jamais écrasé) reste disponible côté données/audit
   // mais n'est jamais montré tel quel dans l'Espace Client.
   const dernierParCle = dernierFaitParCle(besoin.faits);
   const faitsActuels = [...dernierParCle.values()];
-  const faitsConnus = faitsActuels.filter((f) => f.statut !== "INCONNU" && f.cle !== "HYPOTHESE_DOMAINE_SOLUTION");
+  // LOT 1 (ANO-04) : les clés répétables (compétences…) sont affichées
+  // TOUTES, à part ; « dernière valeur par clé » ne vaut que pour les autres.
+  const faitsConnus = faitsActuels.filter((f) => f.statut !== "INCONNU" && f.cle !== "HYPOTHESE_DOMAINE_SOLUTION" && !CLES_REPETABLES.has(f.cle));
+  const competences = valeursActuellesRepetables(besoin.faits, "COMPETENCE");
   const hypothese = dernierParCle.get("HYPOTHESE_DOMAINE_SOLUTION");
 
   const clarifications = prioriserClarifications(
@@ -263,23 +258,20 @@ function CarteBesoin({
               <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 6px" }}>ATLAS comprend</p>
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 {faitsConnus.map((f) => (
-                  <div key={f.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-                    <span>
-                      {LABEL_CLE[f.cle] ?? f.cle} : <strong>{f.valeur}</strong>
-                    </span>
-                    <Badge variant={VARIANT_PROVENANCE[f.statut]}>{libelleProvenance(f)}</Badge>
-                  </div>
+                  <FaitModifiable key={f.id} besoinId={besoin.id} fait={f} remplacer={remplacer} />
                 ))}
               </div>
             </div>
           )}
+
+          <CompetencesBesoin besoinId={besoin.id} competences={competences} remplacer={remplacer} />
 
           {clarifications.length > 0 && (
             <div>
               <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 6px" }}>Questions à préciser</p>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {clarifications.map((c) => (
-                  <QuestionClarification key={c.cle} besoinId={besoin.id} clarification={c} recharger={recharger} />
+                  <QuestionClarification key={c.cle} besoinId={besoin.id} clarification={c} remplacer={remplacer} />
                 ))}
               </div>
             </div>
@@ -312,6 +304,9 @@ function CarteBesoin({
             <div>
               <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 6px" }}>Solutions possibles</p>
               <SolutionsBesoin besoinId={besoin.id} statutBesoin={besoin.statut} />
+              <p style={{ margin: "8px 0 0", fontSize: 13 }}>
+                <Link href={`/client/talent#besoin-${besoin.id}`}>Comparer les profils proposés et indiquer avec lesquels poursuivre →</Link>
+              </p>
             </div>
           )}
 
@@ -329,11 +324,11 @@ function CarteBesoin({
 function QuestionClarification({
   besoinId,
   clarification,
-  recharger,
+  remplacer,
 }: {
   besoinId: string;
   clarification: Clarification;
-  recharger: () => void;
+  remplacer: (maj: Partial<Besoin> & { id: string }) => void;
 }) {
   const [correction, setCorrection] = useState(false);
   const [valeur, setValeur] = useState("");
@@ -354,9 +349,10 @@ function QuestionClarification({
       setErreur(data.error ?? "Une erreur est survenue.");
       return;
     }
+    const data = await reponse.json().catch(() => null);
     setValeur("");
     setCorrection(false);
-    recharger();
+    if (data?.besoin) remplacer(data.besoin);
   }
 
   return (
@@ -414,40 +410,219 @@ function QuestionClarification({
 
 function ActionsBesoin({ besoin, recharger }: { besoin: Besoin; recharger: () => void }) {
   const [envoi, setEnvoi] = useState(false);
+  const [erreur, setErreur] = useState<string | null>(null);
+  // REV-01 (01/11/2026) : un besoin qui porte un projet se gère depuis
+  // l'onglet Projets — ni suppression, ni archivage tant que le projet vit.
+  const projetActif = besoin.projet && !["ABANDONNE", "TERMINE"].includes(besoin.projet.statut);
 
-  async function changerStatut(statut: string) {
+  async function appeler(init: RequestInit) {
+    setErreur(null);
     setEnvoi(true);
-    await fetch(`/api/client/besoins/${besoin.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ statut }),
-    });
+    const r = await fetch(`/api/client/besoins/${besoin.id}`, init).catch(() => null);
     setEnvoi(false);
+    if (!r || !r.ok) {
+      const d = r ? await r.json().catch(() => ({})) : {};
+      setErreur(d.error ?? "L'opération n'a pas pu être effectuée. Réessayez.");
+      return;
+    }
     recharger();
   }
 
-  async function supprimer() {
-    setEnvoi(true);
-    await fetch(`/api/client/besoins/${besoin.id}`, { method: "DELETE" });
-    setEnvoi(false);
-    recharger();
+  const changerStatut = (statut: string) =>
+    appeler({ method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ statut }) });
+
+  function supprimer() {
+    if (!window.confirm("Supprimer définitivement ce besoin ?")) return;
+    appeler({ method: "DELETE" });
   }
 
   return (
-    <div style={{ display: "flex", gap: 8 }}>
-      {besoin.statut !== "VALIDE" && (
-        <Bouton variant="secondary" onClick={() => changerStatut("VALIDE")} disabled={envoi}>
-          Valider ce besoin
-        </Bouton>
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {besoin.projet && (
+        <p style={{ margin: 0, fontSize: 13 }}>
+          Ce besoin porte le projet{" "}
+          <Link href="/client/projets">« {besoin.projet.titre} »</Link>
+          {projetActif ? " : il se gère depuis l'onglet Projets." : "."}
+        </p>
       )}
-      {besoin.statut !== "ARCHIVE" && (
-        <Bouton variant="secondary" onClick={() => changerStatut("ARCHIVE")} disabled={envoi}>
-          Archiver
-        </Bouton>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {besoin.statut !== "VALIDE" && (
+          <Bouton variant="secondary" onClick={() => changerStatut("VALIDE")} disabled={envoi}>
+            Valider ce besoin
+          </Bouton>
+        )}
+        {besoin.statut !== "ARCHIVE" && !projetActif && (
+          <Bouton variant="secondary" onClick={() => changerStatut("ARCHIVE")} disabled={envoi}>
+            Archiver
+          </Bouton>
+        )}
+        {!besoin.projet && (
+          <Bouton variant="secondary" onClick={supprimer} disabled={envoi} style={{ color: "#c0392b" }}>
+            Supprimer
+          </Bouton>
+        )}
+      </div>
+      {erreur && (
+        <p role="alert" style={{ margin: 0, fontSize: 13, color: "#c0392b" }}>
+          {erreur}
+        </p>
       )}
-      <Bouton variant="secondary" onClick={supprimer} disabled={envoi} style={{ color: "#c0392b" }}>
-        Supprimer
-      </Bouton>
+    </div>
+  );
+}
+
+// LOT 1 (28/10/2026, ANO-03) : toute valeur comprise par ATLAS peut être
+// corrigée par le client, pas seulement les informations manquantes — une
+// interprétation fausse (ex. un budget lu comme « 2027 ») ne doit jamais
+// rester bloquée jusqu'à la validation du besoin.
+const CLES_CORRIGEABLES = new Set<string>(CLES_CLARIFIABLES);
+
+async function envoyerFait(besoinId: string, corps: { cle: string; action: string; valeur?: string }) {
+  const reponse = await fetch(`/api/client/besoins/${besoinId}/faits`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(corps),
+  });
+  const data = await reponse.json().catch(() => ({}));
+  if (!reponse.ok) throw new Error(data.error ?? "Une erreur est survenue.");
+  return data.besoin as (Partial<Besoin> & { id: string }) | undefined;
+}
+
+function FaitModifiable({
+  besoinId,
+  fait,
+  remplacer,
+}: {
+  besoinId: string;
+  fait: Fait;
+  remplacer: (maj: Partial<Besoin> & { id: string }) => void;
+}) {
+  const [edition, setEdition] = useState(false);
+  const [valeur, setValeur] = useState(fait.valeur);
+  const [envoi, setEnvoi] = useState(false);
+  const [erreur, setErreur] = useState<string | null>(null);
+  const corrigeable = CLES_CORRIGEABLES.has(fait.cle);
+  const libelle = LABEL_CLE[fait.cle] ?? fait.cle;
+
+  async function enregistrer() {
+    setErreur(null);
+    setEnvoi(true);
+    try {
+      const maj = await envoyerFait(besoinId, { cle: fait.cle, action: "CORRIGER", valeur });
+      setEdition(false);
+      if (maj) remplacer(maj);
+    } catch (e) {
+      setErreur((e as Error).message);
+    } finally {
+      setEnvoi(false);
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span>
+          {libelle} : <strong>{fait.valeur}</strong>
+        </span>
+        <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <Badge variant={VARIANT_PROVENANCE[fait.statut]}>{libelleProvenance(fait)}</Badge>
+          {corrigeable && !edition && (
+            <Bouton variant="secondary" onClick={() => { setValeur(fait.valeur); setEdition(true); }} aria-label={`Corriger : ${libelle}`}>
+              Corriger
+            </Bouton>
+          )}
+        </span>
+      </div>
+      {edition && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <label style={{ fontSize: 12 }}>
+            <span style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" }}>Nouvelle valeur pour {libelle}</span>
+            <input
+              value={valeur}
+              onChange={(e) => setValeur(e.target.value)}
+              style={{ padding: 6, borderRadius: 6, fontFamily: "inherit", fontSize: 13 }}
+            />
+          </label>
+          <Bouton onClick={enregistrer} disabled={envoi || valeur.trim().length === 0}>
+            {envoi ? "Enregistrement…" : "Enregistrer"}
+          </Bouton>
+          <Bouton variant="secondary" onClick={() => setEdition(false)} disabled={envoi}>
+            Annuler
+          </Bouton>
+        </div>
+      )}
+      {erreur && <p role="alert" style={{ color: "#c0392b", fontSize: 12, margin: 0 }}>{erreur}</p>}
+    </div>
+  );
+}
+
+// LOT 1 (ANO-04) : toutes les compétences actuelles, chacune retirable, et
+// ajout depuis la liste fermée utilisée par le matching.
+function CompetencesBesoin({
+  besoinId,
+  competences,
+  remplacer,
+}: {
+  besoinId: string;
+  competences: Fait[];
+  remplacer: (maj: Partial<Besoin> & { id: string }) => void;
+}) {
+  const [ajout, setAjout] = useState("");
+  const [envoi, setEnvoi] = useState(false);
+  const [erreur, setErreur] = useState<string | null>(null);
+  const presentes = new Set(competences.map((c) => c.valeur));
+  const disponibles = TOUTES_COMPETENCES.filter((c) => !presentes.has(c));
+
+  async function agir(action: "AJOUTER" | "RETIRER", valeur: string) {
+    setErreur(null);
+    setEnvoi(true);
+    try {
+      const maj = await envoyerFait(besoinId, { cle: "COMPETENCE", action, valeur });
+      if (action === "AJOUTER") setAjout("");
+      if (maj) remplacer(maj);
+    } catch (e) {
+      setErreur((e as Error).message);
+    } finally {
+      setEnvoi(false);
+    }
+  }
+
+  return (
+    <div>
+      <p style={{ fontSize: 11, textTransform: "uppercase", color: "#888", margin: "0 0 6px" }}>Compétences recherchées</p>
+      {competences.length === 0 && <p style={{ margin: "0 0 6px", fontSize: 13, color: grisTexte }}>Aucune compétence reconnue pour l&apos;instant.</p>}
+      <ul style={{ listStyle: "none", padding: 0, margin: "0 0 8px", display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {competences.map((c) => (
+          <li key={c.id} style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid #dde3ea", borderRadius: 999, padding: "2px 4px 2px 10px", fontSize: 13 }}>
+            <span>{c.valeur}</span>
+            <Badge variant={VARIANT_PROVENANCE[c.statut]}>{libelleProvenance(c)}</Badge>
+            <button
+              type="button"
+              onClick={() => agir("RETIRER", c.valeur)}
+              disabled={envoi}
+              aria-label={`Retirer la compétence ${c.valeur}`}
+              style={{ border: 0, background: "transparent", cursor: "pointer", fontSize: 14, padding: "0 6px" }}
+            >
+              ×
+            </button>
+          </li>
+        ))}
+      </ul>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <label style={{ fontSize: 12, color: grisTexte }}>
+          Ajouter une compétence{" "}
+          <select value={ajout} onChange={(e) => setAjout(e.target.value)} style={{ padding: 6, borderRadius: 6, fontSize: 13 }}>
+            <option value="">Choisir…</option>
+            {disponibles.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+        </label>
+        <Bouton variant="secondary" onClick={() => agir("AJOUTER", ajout)} disabled={envoi || !ajout}>
+          Ajouter
+        </Bouton>
+      </div>
+      {erreur && <p role="alert" style={{ color: "#c0392b", fontSize: 12, margin: "6px 0 0" }}>{erreur}</p>}
     </div>
   );
 }

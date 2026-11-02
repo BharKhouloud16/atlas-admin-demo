@@ -48,6 +48,17 @@ test.describe("Connexion", () => {
     await expect(page.getByText(/identifiants invalides/i)).toBeVisible();
   });
 
+  test("une erreur réseau pendant la connexion réactive le bouton pour réessayer", async ({ page }) => {
+    await page.route("**/api/auth/login", (route) => route.abort("failed"));
+    await page.goto("/connexion?role=ingenieur");
+    await page.getByPlaceholder("Email").fill("ingenieur-demo@example.com");
+    await page.getByPlaceholder("Mot de passe").fill(MOT_DE_PASSE);
+    await page.getByRole("button", { name: /se connecter/i }).click();
+
+    await expect(page.getByText(/impossible de contacter le serveur/i)).toBeVisible();
+    await expect(page.getByRole("button", { name: /se connecter/i })).toBeEnabled();
+  });
+
   test("un compte en attente de validation ne peut pas se connecter", async ({ page }) => {
     await seConnecter(page, "en-attente-demo@example.com", MOT_DE_PASSE);
     await expect(page).toHaveURL(/\/connexion/);
