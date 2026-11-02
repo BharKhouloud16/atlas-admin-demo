@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
-import { extraireBesoinClient, CLES_IMPORTANTES_SI_ABSENTES } from "@/lib/client-need/extraction";
-import { evaluerCoherenceBesoin } from "@/lib/client-need/coherence";
-import { nouveauCorrelationId } from "@/lib/security/events";
-import type { ClientNeedFaitCle } from "@prisma/client";
+import { validerCriteresDeclares } from "@/lib/client-need/criteres-declares";
+import { preparerNouveauBesoin } from "@/lib/client-need/creation";
 
 // COMPANY ATLAS — LOT 2 : Client Need Intelligence Foundation (15/09/2026).
 //
@@ -33,6 +31,8 @@ export async function GET() {
       // missionEnCours — jamais les champs internes de Mission (tarifs,
       // marge, profil ingénieur) ne sont sélectionnés ici.
       demandeTalentCreee: { select: { id: true, missions: { select: { id: true } } } },
+      // REV-01 (01/11/2026) : signale le projet porté par ce besoin.
+      projet: { select: { id: true, titre: true, statut: true } },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -67,38 +67,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "texteOriginal ne doit jamais dépasser 4000 caractères." }, { status: 400 });
     }
     const titre = typeof body?.titre === "string" && body.titre.trim().length > 0 ? body.titre.trim().slice(0, 200) : null;
+    // LOT 7 (01/11/2026) : critères déclarés dans l'assistant (facultatifs,
+    // validés côté serveur). Un appel sans `criteres` se comporte comme avant.
+    const criteres = validerCriteresDeclares(body?.criteres);
+    if (!criteres.ok) return NextResponse.json({ error: criteres.erreur }, { status: 400 });
 
-    const extraction = await extraireBesoinClient(texteOriginal);
-
-    // Complète les attributs importants non détectés par une ligne
-    // INCONNU explicite plutôt que silencieuse (jamais une valeur
-    // inventée) — voir lib/client-need/extraction.ts.
-    const clesDetectees = new Set(extraction.faits.map((f) => f.cle));
-    const faitsInconnus: { cle: ClientNeedFaitCle; valeur: string; statut: "INCONNU" }[] = CLES_IMPORTANTES_SI_ABSENTES.filter(
-      (cle) => !clesDetectees.has(cle)
-    ).map((cle) => ({ cle: cle as ClientNeedFaitCle, valeur: "", statut: "INCONNU" as const }));
-
-    const coherence = evaluerCoherenceBesoin(extraction.faits);
-
-    const correlationId = nouveauCorrelationId();
+    // LOT 6 (28/10/2026) : préparation factorisée dans
+    // lib/client-need/creation.ts (réutilisée par les projets complets),
+    // comportement inchangé.
     const besoin = await prisma.clientNeed.create({
-      data: {
-        clientId: session.clientId,
-        correlationId,
-        texteOriginal,
-        titre,
-        statut: "SOUMIS",
-        coherenceStatut: coherence.statut,
-        coherenceDetail: coherence.detail,
-        analyseProvider: extraction.provider,
-        analyseeLe: new Date(),
-        faits: {
-          create: [
-            ...extraction.faits.map((f) => ({ cle: f.cle as ClientNeedFaitCle, valeur: f.valeur, statut: f.statut, source: "extraction" })),
-            ...faitsInconnus.map((f) => ({ cle: f.cle, valeur: f.valeur, statut: f.statut, source: null })),
-          ],
-        },
-      },
+      data: await preparerNouveauBesoin({ clientId: session.clientId, texteOriginal, titre, faitsSupplementaires: criteres.faits }),
       include: { faits: true },
     });
 

@@ -1,214 +1,294 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { grisTexte, bleu } from "@/lib/theme";
-import { Card, Section, EmptyState, Badge, AttentionCard, type AttentionCardData } from "@/components/client/primitives";
-import type { FeuilleClient } from "@/components/client/FeuillesATraiter";
-import type { MissionEvaluable } from "@/components/client/EvaluationsAFaire";
+import { bleu, bleuFonce, bordure, grisTexte } from "@/lib/theme";
+import { Card, Badge, Bouton, type BadgeVariant } from "@/components/client/primitives";
+import type { TableauDeBord, TacheAFaire, Bloc } from "@/lib/client-dashboard/tableau-de-bord";
+import { LIBELLE_ETAT_ATLAS_OS } from "@/lib/atlas-os/etats";
+import { Icone, type NomIcone } from "@/components/client/Icones";
 
-// COMPANY ATLAS — LOT 1 : Client Workspace Foundation (15/09/2026).
+// LOT 4 (28/10/2026) — Vue d'ensemble du Client, centre de pilotage.
 //
-// Remplace l'ancien dashboard (4 listes empilées sans hiérarchie) par une
-// véritable Vue d'ensemble : les mêmes données déjà servies par les mêmes
-// routes existantes (GET /api/client/missions, /api/client/documents,
-// /api/feuilles-de-temps, /api/evaluations, /api/talent/demandes — AUCUNE
-// nouvelle route), réorganisées par priorité (directive de l'ordre, section
-// 4) : 1. Actions requises, 2. En cours, 3. Activité récente, 4. Documents
-// importants, 5. Résultats (teaser). Aucun agrégat calculé n'est présenté
-// comme une métrique officielle — seulement des comptages directs des
-// mêmes listes.
-//
-// CLIENT COMPLETION PROGRAM — C10 (16/09/2026) : "Actions requises"
-// n'agrégeait que 2 signaux (feuilles à valider, missions à évaluer) alors
-// que 2 autres existaient déjà, chacun visible uniquement sur sa propre
-// page (besoins/page.tsx, profil/page.tsx) — jamais remontés ici. Ajout de
-// GET /api/client/besoins (statut A_CLARIFIER) et GET /api/client/profil
-// (faits INFERE/OBSERVE, même filtre que profil/page.tsx aConfirmer) — deux
-// routes déjà existantes, aucune nouvelle route créée.
+// Un seul appel (/api/client/tableau-de-bord), agrégé côté serveur bloc par
+// bloc : un bloc en erreur n'empêche jamais l'affichage des autres, un délai
+// maximal évite tout « Chargement… » infini (registre OBS-03), les statuts
+// sont traduits en libellés métier (OBS-04). Tous les chiffres sont ceux du
+// client connecté : aucune donnée d'exemple, aucune actualité inventée.
 
-type Mission = { id: string; repere: string | null; statut: string; nbJours: number; createdAt: string; profil: { nom: string } };
-type DocumentClient = { id: string; titre: string; type: string; createdAt: string };
-type DemandeTalent = { id: string; titre: string | null; description: string; statut: string; createdAt: string };
-type FaitProfil = { statut: string };
+const DELAI_MAX_MS = 15_000;
 
-type ActiviteItem = { id: string; date: string; label: string; href: string };
+const PRIORITE: Record<TacheAFaire["priorite"], { texte: string; variant: BadgeVariant }> = {
+  OBLIGATOIRE: { texte: "Obligatoire", variant: "error" },
+  PRIORITAIRE: { texte: "Prioritaire", variant: "warning" },
+  A_COMPLETER: { texte: "À compléter", variant: "info" },
+  INFORMATION: { texte: "Information", variant: "neutral" },
+};
+
+const VARIANT_ATLAS_OS: Record<string, BadgeVariant> = { DISPONIBLE: "info", EN_ATTENTE: "warning", ACTIVE: "success", INDISPONIBLE: "neutral" };
 
 export default function VueDEnsembleClient() {
-  const [missions, setMissions] = useState<Mission[]>([]);
-  const [documents, setDocuments] = useState<DocumentClient[]>([]);
-  const [feuilles, setFeuilles] = useState<FeuilleClient[]>([]);
-  const [evaluables, setEvaluables] = useState<MissionEvaluable[]>([]);
-  const [demandes, setDemandes] = useState<DemandeTalent[]>([]);
-  const [faitsProfil, setFaitsProfil] = useState<FaitProfil[]>([]);
-  const [attentions, setAttentions] = useState<AttentionCardData[]>([]);
+  const [tableau, setTableau] = useState<TableauDeBord | null>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
   const [chargement, setChargement] = useState(true);
 
-  useEffect(() => {
-    Promise.all([
-      fetch("/api/client/missions").then((r) => r.json()),
-      fetch("/api/client/documents").then((r) => r.json()),
-      fetch("/api/feuilles-de-temps").then((r) => r.json()),
-      fetch("/api/evaluations").then((r) => r.json()),
-      fetch("/api/talent/demandes").then((r) => r.json()),
-      fetch("/api/client/profil").then((r) => r.json()),
-      fetch("/api/client/attentions").then((r) => r.json()),
-    ]).then(([m, d, f, ev, dem, p, att]) => {
-      setMissions(m ?? []);
-      setDocuments(Array.isArray(d) ? d : []);
-      setFeuilles(f.feuilles ?? []);
-      setEvaluables(ev.missions ?? []);
-      setDemandes(Array.isArray(dem) ? dem : []);
-      setFaitsProfil(p.faits ?? []);
-      setAttentions(att.attentions ?? []);
-      setChargement(false);
-    });
+  const charger = useCallback(() => {
+    setChargement(true);
+    setErreur(null);
+    const controleur = new AbortController();
+    const minuterie = setTimeout(() => controleur.abort(), DELAI_MAX_MS);
+    fetch("/api/client/tableau-de-bord", { cache: "no-store", signal: controleur.signal })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((d: TableauDeBord) => setTableau(d))
+      .catch((e: Error) =>
+        setErreur(e.name === "AbortError" ? "Le chargement prend plus de temps que prévu." : "Impossible de charger votre tableau de bord pour le moment.")
+      )
+      .finally(() => {
+        clearTimeout(minuterie);
+        setChargement(false);
+      });
   }, []);
 
-  const feuillesAValider = feuilles.filter((f) => f.statut === "ValideeAdmin");
-  const missionsAEvaluer = evaluables.filter((m) => !m.evaluation);
-  const faitsAConfirmer = faitsProfil.filter((f) => f.statut === "INFERE" || f.statut === "OBSERVE");
-  const totalActions = feuillesAValider.length + missionsAEvaluer.length + faitsAConfirmer.length;
+  useEffect(() => {
+    charger();
+  }, [charger]);
 
-  const missionsEnCours = missions.filter((m) => m.statut === "En cours");
-  const demandesEnCours = demandes.filter((d) => d.statut !== "CLOTUREE");
+  if (chargement && !tableau) {
+    return (
+      <p role="status" aria-live="polite" style={{ fontSize: 13, color: grisTexte }}>
+        Chargement de votre tableau de bord…
+      </p>
+    );
+  }
 
-  const activite: ActiviteItem[] = [
-    ...missions.map((m) => ({ id: `m-${m.id}`, date: m.createdAt, label: `Mission démarrée — ${m.repere ?? m.profil.nom}`, href: "/client/missions" })),
-    ...documents.map((d) => ({ id: `d-${d.id}`, date: d.createdAt, label: `Nouveau document — ${d.titre}`, href: "/client/documents" })),
-    ...demandes.map((d) => ({ id: `t-${d.id}`, date: d.createdAt, label: `Demande talent — ${d.titre ?? d.description.slice(0, 40)}`, href: "/client/talent" })),
-  ]
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-    .slice(0, 5);
+  if (!tableau) {
+    return (
+      <Card>
+        <p role="alert" style={{ margin: 0, fontSize: 13 }}>
+          {erreur} <Bouton variant="secondary" onClick={charger}>Réessayer</Bouton>
+        </p>
+      </Card>
+    );
+  }
 
-  if (chargement) return <EmptyState message="Chargement…" />;
-
-  // V2.3 — Communication Intelligence + Attention Center : Billing et
-  // Besoins (statut A_CLARIFIER) passent désormais par le centre
-  // d'Attention unifié (priorité/catégorie dérivées par
-  // lib/attention/generateurs.ts, jamais recalculées ici). La carte
-  // "besoin à clarifier" a donc été retirée de "Actions requises"
-  // ci-dessous (mandat section 4 : "éviter... notifications
-  // contradictoires" — jamais deux sections annonçant le même fait). Les
-  // autres signaux de "Actions requises" (feuilles à valider, missions à
-  // évaluer, profil à confirmer) ne sont volontairement PAS migrés dans ce
-  // lot (mandat section 7 : "commencer avec les événements réellement
-  // utiles") — voir rapport final V2.3, section B.
-  const attentionsPrioritaires = attentions.filter((a) => a.categorie === "ACTION_REQUISE" || a.categorie === "ALERTE").slice(0, 3);
+  const nom = tableau.client.ok ? tableau.client.donnees.nom : null;
 
   return (
-    <div>
-      {attentionsPrioritaires.length > 0 && (
-        <Section title="Attention" action={<Link href="/client/attentions" style={{ fontSize: 12, color: bleu, textDecoration: "none", fontWeight: 600 }}>Voir tout</Link>}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {attentionsPrioritaires.map((a) => (
-              <AttentionCard key={a.id} attention={a} />
-            ))}
-          </div>
-        </Section>
-      )}
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <header>
+        <h1 style={{ margin: 0, fontSize: 22, color: bleuFonce }}>{nom ? `Bonjour, ${nom}` : "Bonjour"}</h1>
+        <p style={{ margin: "4px 0 0", fontSize: 13, color: grisTexte }}>Voici un aperçu de votre activité et de vos actions prioritaires.</p>
+      </header>
 
-      <Section title="Actions requises">
-        {totalActions === 0 ? (
-          <EmptyState message="Rien ne requiert votre attention pour l'instant." />
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {feuillesAValider.length > 0 && (
-              <Link href="/client/finance" style={{ textDecoration: "none" }}>
-                <Card style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <p style={{ margin: 0, fontWeight: 600, color: "#111" }}>
-                    {feuillesAValider.length} feuille{feuillesAValider.length > 1 ? "s" : ""} de temps à valider
-                  </p>
-                  <Badge variant="warning">À traiter</Badge>
-                </Card>
-              </Link>
-            )}
-            {missionsAEvaluer.length > 0 && (
-              <Link href="/client/missions" style={{ textDecoration: "none" }}>
-                <Card style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <p style={{ margin: 0, fontWeight: 600, color: "#111" }}>
-                    {missionsAEvaluer.length} mission{missionsAEvaluer.length > 1 ? "s" : ""} terminée{missionsAEvaluer.length > 1 ? "s" : ""} à évaluer
-                  </p>
-                  <Badge variant="warning">À traiter</Badge>
-                </Card>
-              </Link>
-            )}
-            {faitsAConfirmer.length > 0 && (
-              <Link href="/client/profil" style={{ textDecoration: "none" }}>
-                <Card style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <p style={{ margin: 0, fontWeight: 600, color: "#111" }}>
-                    {faitsAConfirmer.length} information{faitsAConfirmer.length > 1 ? "s" : ""} de profil à confirmer
-                  </p>
-                  <Badge variant="warning">À traiter</Badge>
-                </Card>
-              </Link>
-            )}
-          </div>
-        )}
-      </Section>
+      <Compteurs bloc={tableau.compteurs} recharger={charger} />
 
-      <Section title="En cours" action={<Link href="/client/missions" style={{ fontSize: 12, color: bleu, textDecoration: "none", fontWeight: 600 }}>Voir tout</Link>}>
-        {missionsEnCours.length === 0 && demandesEnCours.length === 0 ? (
-          <EmptyState message="Aucune mission ni demande en cours." />
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {missionsEnCours.slice(0, 3).map((m) => (
-              <Card key={m.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <p style={{ margin: 0, fontWeight: 600 }}>{m.repere ?? m.profil.nom}</p>
-                <Badge variant="info">{m.nbJours} j</Badge>
-              </Card>
-            ))}
-            {demandesEnCours.slice(0, 2).map((d) => (
-              <Card key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <p style={{ margin: 0, fontWeight: 600 }}>{d.titre ?? d.description.slice(0, 50)}</p>
-                <Badge variant="neutral">{d.statut}</Badge>
-              </Card>
-            ))}
-          </div>
-        )}
-      </Section>
+      <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", alignItems: "start" }}>
+        <TravailAFaire bloc={tableau.travailAFaire} recharger={charger} />
+        <ActiviteRecente bloc={tableau.activite} recharger={charger} />
+      </div>
 
-      <Section title="Activité récente">
-        {activite.length === 0 ? (
-          <EmptyState message="Aucune activité récente." />
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {activite.map((a) => (
-              <Link key={a.id} href={a.href} style={{ textDecoration: "none", color: "inherit" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontSize: 13 }}>
-                  <span>{a.label}</span>
-                  <span style={{ color: grisTexte, whiteSpace: "nowrap" }}>{new Date(a.date).toLocaleDateString("fr-FR")}</span>
-                </div>
-              </Link>
-            ))}
-          </div>
-        )}
-      </Section>
-
-      <Section title="Documents importants" action={<Link href="/client/documents" style={{ fontSize: 12, color: bleu, textDecoration: "none", fontWeight: 600 }}>Voir tout</Link>}>
-        {documents.length === 0 ? (
-          <EmptyState message="Aucun document disponible pour l'instant." />
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {documents.slice(0, 3).map((d) => (
-              <Card key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <p style={{ margin: 0, fontWeight: 600 }}>{d.titre}</p>
-                <Badge variant="neutral">{d.type}</Badge>
-              </Card>
-            ))}
-          </div>
-        )}
-      </Section>
-
-      <Section title="Résultats" action={<Link href="/client/resultats" style={{ fontSize: 12, color: bleu, textDecoration: "none", fontWeight: 600 }}>Voir tout</Link>}>
-        {evaluables.filter((m) => m.evaluation).length === 0 ? (
-          <EmptyState message="Aucune mission évaluée pour l'instant." />
-        ) : (
+      <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", alignItems: "stretch" }}>
+        <CarteAtlasOs bloc={tableau.atlasOs} recharger={charger} />
+        <Card>
+          <h2 style={styleTitreCarte}>Actualités et veille</h2>
           <p style={{ margin: 0, fontSize: 13, color: grisTexte }}>
-            {evaluables.filter((m) => m.evaluation).length} mission{evaluables.filter((m) => m.evaluation).length > 1 ? "s" : ""} terminée{evaluables.filter((m) => m.evaluation).length > 1 ? "s" : ""} évaluée{evaluables.filter((m) => m.evaluation).length > 1 ? "s" : ""} — détail dans la rubrique Résultats.
+            Bientôt disponible : une veille réglementaire sourcée et datée, utile à vos besoins et à vos missions. Aucune actualité
+            n&apos;est affichée tant que ce service n&apos;est pas opérationnel.
           </p>
-        )}
-      </Section>
+        </Card>
+        <CarteProfilEntreprise bloc={tableau.completude} recharger={charger} />
+      </div>
     </div>
+  );
+}
+
+const styleTitreCarte = { margin: "0 0 8px", fontSize: 15, color: bleuFonce } as const;
+
+function BlocIndisponible({ titre, recharger }: { titre: string; recharger: () => void }) {
+  return (
+    <p role="alert" style={{ margin: 0, fontSize: 13, color: grisTexte }}>
+      {titre} momentanément indisponible. <Bouton variant="tertiary" onClick={recharger}>Réessayer</Bouton>
+    </p>
+  );
+}
+
+// LOT 7 (01/11/2026, planche) : indicateurs avec pictogramme et précision
+// calculée sur les données réelles du client (jamais d'exemple).
+function Compteurs({ bloc, recharger }: { bloc: TableauDeBord["compteurs"]; recharger: () => void }) {
+  if (!bloc.ok) return <Card><BlocIndisponible titre="Les indicateurs sont" recharger={recharger} /></Card>;
+  const c = bloc.donnees;
+  const cartes: { libelle: string; valeur: number; precision: string; icone: NomIcone; teinte: string; href: string }[] = [
+    { libelle: "Besoins en cours", valeur: c.besoinsEnCours, precision: c.besoinsCetteSemaine > 0 ? `+${c.besoinsCetteSemaine} cette semaine` : "Soumis, à préciser ou validés", icone: "besoins", teinte: "#2557d6", href: "/client/besoins" },
+    { libelle: "Besoins en attente", valeur: c.besoinsAPreciser, precision: c.besoinsAPreciser > 0 ? "À préciser par vous" : "Aucun à préciser", icone: "taches", teinte: "#d97706", href: "/client/besoins" },
+    { libelle: "Talents proposés", valeur: c.propositionsAExaminer, precision: "À examiner", icone: "talents", teinte: "#6d4fd6", href: "/client/talent" },
+    { libelle: "Projets en cours", valeur: c.projetsEnCours, precision: "De la qualification à la livraison", icone: "projets", teinte: "#0f7c8c", href: "/client/projets" },
+    { libelle: "Missions en cours", valeur: c.missionsActives, precision: "En cours", icone: "missions", teinte: "#1a7f4b", href: "/client/missions" },
+    { libelle: "Actions à faire", valeur: c.actionsAFaire, precision: c.actionsPrioritaires > 0 ? `${c.actionsPrioritaires} prioritaire${c.actionsPrioritaires > 1 ? "s" : ""}` : "Aucune prioritaire", icone: "notifications", teinte: "#c0392b", href: "#travail-a-faire" },
+  ];
+  return (
+    <ul aria-label="Indicateurs" style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
+      {cartes.map((k) => (
+        <li key={k.libelle}>
+          <Link href={k.href} style={{ textDecoration: "none", color: "inherit", display: "block", height: "100%" }}>
+            <Card style={{ height: "100%", boxSizing: "border-box" }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span aria-hidden="true" style={{ width: 30, height: 30, borderRadius: 8, display: "inline-flex", alignItems: "center", justifyContent: "center", background: `${k.teinte}1a`, color: k.teinte }}>
+                  <Icone nom={k.icone} taille={16} />
+                </span>
+                <span style={{ fontSize: 12, color: grisTexte }}>{k.libelle}</span>
+              </span>
+              <p style={{ margin: "8px 0 2px", fontSize: 26, fontWeight: 700, color: bleuFonce }} aria-label={`${k.libelle} : ${k.valeur}`}>
+                {k.valeur}
+              </p>
+              <p style={{ margin: 0, fontSize: 11, color: k.teinte, fontWeight: 600 }}>{k.precision}</p>
+            </Card>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+const TACHES_VISIBLES = 6;
+
+function TravailAFaire({ bloc, recharger }: { bloc: TableauDeBord["travailAFaire"]; recharger: () => void }) {
+  const [toutes, setToutes] = useState(false);
+  const liste = bloc.ok ? (toutes ? bloc.donnees : bloc.donnees.slice(0, TACHES_VISIBLES)) : [];
+  const restantes = bloc.ok ? bloc.donnees.length - TACHES_VISIBLES : 0;
+  return (
+    <section id="travail-a-faire" aria-labelledby="titre-travail">
+      <Card>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <h2 id="titre-travail" style={styleTitreCarte}>Travail à faire</h2>
+          <Link href="/client/attentions" style={{ fontSize: 12, color: bleu, textDecoration: "none", fontWeight: 600 }}>Voir tout</Link>
+        </div>
+        {!bloc.ok ? (
+          <BlocIndisponible titre="La liste des actions est" recharger={recharger} />
+        ) : bloc.donnees.length === 0 ? (
+          <p style={{ margin: 0, fontSize: 13, color: grisTexte }}>Rien ne requiert votre attention pour l&apos;instant.</p>
+        ) : (
+          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {liste.map((t) => (
+              <li key={t.id} style={{ borderTop: `1px solid ${bordure}` }}>
+                <Link href={t.href} style={{ display: "flex", gap: 10, justifyContent: "space-between", alignItems: "center", padding: "10px 0", textDecoration: "none", color: "inherit" }}>
+                  <span>
+                    <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#111" }}>{t.titre}</span>
+                    <span style={{ display: "block", fontSize: 12, color: grisTexte }}>{t.detail}</span>
+                  </span>
+                  <Badge variant={PRIORITE[t.priorite].variant}>{PRIORITE[t.priorite].texte}</Badge>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+        {bloc.ok && restantes > 0 && (
+          <Bouton variant="tertiary" onClick={() => setToutes(!toutes)} aria-expanded={toutes}>
+            {toutes ? "Afficher moins" : `Afficher les ${restantes} autre${restantes > 1 ? "s" : ""} action${restantes > 1 ? "s" : ""}`}
+          </Bouton>
+        )}
+      </Card>
+    </section>
+  );
+}
+
+function ActiviteRecente({ bloc, recharger }: { bloc: TableauDeBord["activite"]; recharger: () => void }) {
+  return (
+    <section aria-labelledby="titre-activite">
+      <Card>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <h2 id="titre-activite" style={styleTitreCarte}>Activité récente</h2>
+          <Link href="/client/attentions" style={{ fontSize: 12, color: bleu, textDecoration: "none", fontWeight: 600 }}>Voir tout</Link>
+        </div>
+        {!bloc.ok ? (
+          <BlocIndisponible titre="L'activité récente est" recharger={recharger} />
+        ) : bloc.donnees.length === 0 ? (
+          <p style={{ margin: 0, fontSize: 13, color: grisTexte }}>Aucune activité pour l&apos;instant.</p>
+        ) : (
+          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {bloc.donnees.map((e) => (
+              <li key={e.id} style={{ borderTop: `1px solid ${bordure}` }}>
+                <Link href={e.href} style={{ display: "flex", gap: 10, justifyContent: "space-between", padding: "8px 0", textDecoration: "none", color: "inherit", fontSize: 13 }}>
+                  <span>
+                    {e.libelle}
+                    {e.detail && <span style={{ display: "block", fontSize: 12, color: grisTexte }}>{e.detail}</span>}
+                  </span>
+                  <time dateTime={e.date} style={{ color: grisTexte, whiteSpace: "nowrap", fontSize: 12 }}>{new Date(e.date).toLocaleDateString("fr-FR")}</time>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    </section>
+  );
+}
+
+function CarteAtlasOs({ bloc, recharger }: { bloc: TableauDeBord["atlasOs"]; recharger: () => void }) {
+  return (
+    <Card>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+        <h2 style={{ ...styleTitreCarte, display: "flex", alignItems: "center", gap: 8 }}>
+          ATLAS OS
+          {bloc.ok && bloc.donnees.etat !== "ACTIVE" && <Badge variant="info">Option</Badge>}
+        </h2>
+        {bloc.ok && <Badge variant={VARIANT_ATLAS_OS[bloc.donnees.etat]}>{LIBELLE_ETAT_ATLAS_OS[bloc.donnees.etat]}</Badge>}
+      </div>
+      {!bloc.ok ? (
+        <BlocIndisponible titre="L'état d'ATLAS OS est" recharger={recharger} />
+      ) : (
+        <>
+          <p style={{ margin: "0 0 12px", fontSize: 13, color: grisTexte }}>
+            Module optionnel : prestations QA, sécurité et audit pilotées par ATLAS, activées à votre demande.
+          </p>
+          <Link
+            href="/client/atlas-os"
+            style={{ display: "inline-block", fontSize: 13, fontWeight: 600, textDecoration: "none", ...(bloc.donnees.etat === "DISPONIBLE" ? { color: "#fff", background: bleuFonce, padding: "8px 14px", borderRadius: 8 } : { color: bleu }) }}
+          >
+            {bloc.donnees.etat === "ACTIVE" ? "Ouvrir ATLAS OS →" : bloc.donnees.etat === "DISPONIBLE" ? "Découvrir et activer" : "Voir le détail →"}
+          </Link>
+        </>
+      )}
+    </Card>
+  );
+}
+
+function CarteProfilEntreprise({ bloc, recharger }: { bloc: Bloc<{ etapes: { etape: string; libelle: string; complete: boolean; manquants: string[] }[]; prochaineEtape: string | null; pourcentage: number }>; recharger: () => void }) {
+  return (
+    <Card>
+      <h2 style={styleTitreCarte}>Profil entreprise</h2>
+      {!bloc.ok ? (
+        <BlocIndisponible titre="L'état du profil est" recharger={recharger} />
+      ) : (
+        <>
+          <p style={{ margin: 0, fontSize: 13, color: bleu, fontWeight: 600 }}>{bloc.donnees.pourcentage} % complété</p>
+          <div
+            role="progressbar"
+            aria-label="Avancement du profil entreprise"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={bloc.donnees.pourcentage}
+            style={{ height: 6, borderRadius: 999, background: "#e9edf5", margin: "8px 0 10px", overflow: "hidden" }}
+          >
+            <div style={{ width: `${bloc.donnees.pourcentage}%`, height: "100%", background: bleu }} />
+          </div>
+          <ul style={{ listStyle: "none", padding: 0, margin: "0 0 12px", display: "flex", flexDirection: "column", gap: 4 }}>
+            {bloc.donnees.etapes
+              .filter((e) => e.etape !== "COMPTE")
+              .map((e) => (
+                <li key={e.etape} style={{ fontSize: 12, display: "flex", gap: 6, alignItems: "center" }}>
+                  <Badge variant={e.complete ? "success" : "warning"}>{e.complete ? "Prêt" : "À compléter"}</Badge>
+                  {e.libelle}
+                </li>
+              ))}
+          </ul>
+          <Link
+            href="/client/profil#entreprise"
+            style={{ display: "block", textAlign: "center", fontSize: 13, color: bleuFonce, fontWeight: 600, textDecoration: "none", border: `1px solid ${bordure}`, borderRadius: 8, padding: "8px 12px" }}
+          >
+            {bloc.donnees.pourcentage < 100 ? "Compléter mon profil" : "Voir mon profil"}
+          </Link>
+        </>
+      )}
+    </Card>
   );
 }

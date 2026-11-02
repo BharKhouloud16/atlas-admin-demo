@@ -1,3 +1,4 @@
+import { contientCompetence, contientTerme, extraireBudget, extraireDateDebut, extraireDuree } from "./heuristiques";
 // Abstraction provider-neutre pour toute fonctionnalité IA d'ATLAS TALENT
 // (AI Request Analyzer, et plus tard Matching Engine / Talent Agent — voir
 // lib/talent/). But : le système doit être "AI-native" (conçu pour l'IA dès
@@ -88,12 +89,8 @@ class AiProviderLocal implements AiProvider {
   async analyserTexte(texte: string, competencesConnues: string[]): Promise<SuggestionAnalyse> {
     const normalise = texte.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
-    const competences = competencesConnues.filter((c) => {
-      const cNormalise = c.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-      // une compétence composite ("Selenium WebDriver" n'existe pas ici,
-      // mais "TestNG / JUnit" oui) : on matche si l'un des segments "/" est présent
-      return cNormalise.split(" / ").some((segment) => normalise.includes(segment.trim()));
-    });
+    // LOT 1 (ANO-06) : segment reconnu comme mot entier uniquement.
+    const competences = competencesConnues.filter((c) => contientCompetence(normalise, c));
 
     const SENIORITES: { motCle: string; valeur: string }[] = [
       { motCle: "junior", valeur: "Junior" },
@@ -102,16 +99,15 @@ class AiProviderLocal implements AiProvider {
       { motCle: "expert", valeur: "Expert" },
       { motCle: "lead", valeur: "Expert" },
     ];
-    const seniorite = SENIORITES.find((s) => normalise.includes(s.motCle))?.valeur ?? null;
+    const seniorite = SENIORITES.find((s) => contientTerme(normalise, s.motCle, true))?.valeur ?? null;
 
     // Cherche un nombre suivi (ou précédé) d'un indice de TJM/budget ("TJM
     // 600", "600€/j", "budget 550 usd") — heuristique volontairement simple.
-    const matchBudget = normalise.match(/(\d{2,4})\s*(eur|usd|gbp|€|\$|£)?/);
-    const budgetTjmMax = matchBudget ? Number(matchBudget[1]) : null;
-    const deviseParSymbole: Record<string, string> = { "€": "EUR", "$": "USD", "£": "GBP" };
-    const budgetDevise = matchBudget?.[2]
-      ? deviseParSymbole[matchBudget[2]] ?? matchBudget[2].toUpperCase()
-      : null;
+    // LOT 1 (ANO-03) : montant seulement avec un signal monétaire explicite
+    // (lib/ai/heuristiques.ts) — jamais une année ni une durée.
+    const budget = extraireBudget(normalise);
+    const budgetTjmMax = budget ? budget.montant : null;
+    const budgetDevise = budget?.devise ?? null;
 
     // Confiance basse et déterministe : reflète honnêtement qu'il s'agit
     // d'une extraction par mots-clés, pas d'une compréhension du texte —
@@ -145,7 +141,7 @@ class AiProviderLocal implements AiProvider {
       "architecte", "product owner", "scrum master", "data engineer",
       "data scientist", "ux designer", "ui designer", "chef de projet", "lead",
     ];
-    const roleTrouve = ROLES_CONNUS.find((r) => normalise.includes(r));
+    const roleTrouve = ROLES_CONNUS.find((r) => contientTerme(normalise, r, true));
     if (roleTrouve) ajouter("ROLE", roleTrouve);
 
     // QUANTITE — chiffre ou nombre en toutes lettres (1 à 10), cherché près
@@ -155,9 +151,13 @@ class AiProviderLocal implements AiProvider {
       un: 1, une: 1, deux: 2, trois: 3, quatre: 4, cinq: 5, six: 6, sept: 7, huit: 8, neuf: 9, dix: 10,
     };
     if (roleTrouve) {
-      const fenetre = normalise.slice(0, normalise.indexOf(roleTrouve) + roleTrouve.length + 3);
-      const matchChiffre = fenetre.match(/(\d{1,2})\s+\S*$/);
-      const motNombre = Object.keys(MOTS_NOMBRES).find((m) => fenetre.includes(` ${m} `) || fenetre.startsWith(`${m} `));
+      // LOT 1 : le nombre cherché est celui qui PRÉCÈDE le rôle de près
+      // (« deux développeurs Java »), jamais un « un » plus loin dans la phrase.
+      const finRole = normalise.indexOf(roleTrouve) + roleTrouve.length;
+      const fenetre = normalise.slice(Math.max(0, finRole - roleTrouve.length - 30), finRole + 3);
+      const matchChiffre = fenetre.match(/(\d{1,2})\s+\S*$/) ?? fenetre.match(/(?:^|\s)(\d{1,2})\s+(?:\S+\s+){0,2}\S*$/);
+      const motsAvant = fenetre.split(/[^a-z0-9]+/).filter(Boolean);
+      const motNombre = [...motsAvant].reverse().find((m) => m in MOTS_NOMBRES);
       const quantite = matchChiffre ? Number(matchChiffre[1]) : motNombre ? MOTS_NOMBRES[motNombre] : null;
       if (quantite) ajouter("QUANTITE", String(quantite));
     }
@@ -172,7 +172,7 @@ class AiProviderLocal implements AiProvider {
       { motCle: "expert", valeur: "Expert" },
       { motCle: "lead", valeur: "Expert" },
     ];
-    const seniorite = SENIORITES.find((s) => normalise.includes(s.motCle));
+    const seniorite = SENIORITES.find((s) => contientTerme(normalise, s.motCle, true));
     if (seniorite) ajouter("SENIORITE", seniorite.valeur);
 
     // ANNEES_EXPERIENCE_MIN — distinct de DUREE (mission) : uniquement
@@ -184,22 +184,21 @@ class AiProviderLocal implements AiProvider {
     // COMPETENCE — répétable, une ligne par compétence reconnue (même
     // liste fermée que analyserTexte).
     for (const c of competencesConnues) {
-      const cNormalise = c.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
-      if (cNormalise.split(" / ").some((segment) => normalise.includes(segment.trim()))) {
-        ajouter("COMPETENCE", c);
-      }
+      if (contientCompetence(normalise, c)) ajouter("COMPETENCE", c);
     }
 
     // DUREE — "pendant/durant X mois/semaines/ans", contexte explicite
     // requis pour ne jamais confondre avec ANNEES_EXPERIENCE_MIN.
-    const matchDuree = normalise.match(/(?:pendant|durant)\s+(\d{1,3})\s*(mois|semaines?|ans?|annees?)/);
-    if (matchDuree) ajouter("DUREE", `${matchDuree[1]} ${matchDuree[2]}`);
+    // LOT 1 (ANO-03) : « pour 6 mois », « mission de 4 mois », « six mois ».
+    const duree = extraireDuree(normalise);
+    if (duree) ajouter("DUREE", duree);
 
     // DATE_DEBUT — mois nommé explicitement, jamais déduit d'une date
     // relative ("bientôt", "rapidement" relève de DISPONIBILITE ci-dessous).
-    const MOIS = ["janvier", "fevrier", "mars", "avril", "mai", "juin", "juillet", "aout", "septembre", "octobre", "novembre", "decembre"];
-    const moisTrouve = MOIS.find((m) => normalise.includes(m));
-    if (moisTrouve) ajouter("DATE_DEBUT", moisTrouve);
+    // LOT 1 : mois entier (« mai » n'est plus trouvé dans « maison »), avec
+    // l'année quand elle est écrite.
+    const dateDebut = extraireDateDebut(normalise);
+    if (dateDebut) ajouter("DATE_DEBUT", dateDebut);
 
     // DISPONIBILITE — mots-clés explicites uniquement.
     if (/(immediat|des que possible|au plus vite|rapidement)/.test(normalise)) {
@@ -208,23 +207,24 @@ class AiProviderLocal implements AiProvider {
 
     // LOCALISATION — réutilise lib/localisation.ts (PAYS), jamais une
     // nouvelle liste de villes/pays inventée pour ce lot.
-    const paysTrouve = paysConnus.find((p) => p !== "Autre" && normalise.includes(p.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()));
+    const paysTrouve = paysConnus.find((p) => p !== "Autre" && contientTerme(normalise, p));
     if (paysTrouve) ajouter("LOCALISATION", paysTrouve);
 
     // REMOTE — signal explicite uniquement, jamais déduit de l'absence de
     // mention "sur site".
-    if (/(remote|teletravail|a distance)/.test(normalise)) ajouter("REMOTE", "Remote possible");
+    if (/teletravail partiel|partiellement (a distance|en remote)|hybride/.test(normalise)) ajouter("REMOTE", "Hybride");
+    else if (/(remote|teletravail|a distance)/.test(normalise)) ajouter("REMOTE", "Remote possible");
     else if (/sur site/.test(normalise)) ajouter("REMOTE", "Sur site");
 
     // BUDGET — mêmes 4 clés génériques (Talent ET ATLAS OS), voir revue
     // architecturale point 1. BUDGET_TYPE n'est émis QUE si un signal
     // explicite existe (TJM/forfait/abonnement) — jamais deviné par défaut.
-    const matchBudget = normalise.match(/(\d{2,5})\s*(eur|usd|gbp|€|\$|£)?/);
-    if (matchBudget) {
-      ajouter("BUDGET_MONTANT", matchBudget[1]);
-      const deviseParSymbole: Record<string, string> = { "€": "EUR", "$": "USD", "£": "GBP" };
-      if (matchBudget[2]) ajouter("BUDGET_DEVISE", deviseParSymbole[matchBudget[2]] ?? matchBudget[2].toUpperCase());
-      if (/tjm|journalier|jour/.test(normalise)) ajouter("BUDGET_TYPE", "TJM");
+    // LOT 1 (ANO-03) : voir lib/ai/heuristiques.ts (extraireBudget).
+    const budget = extraireBudget(normalise);
+    if (budget) {
+      ajouter("BUDGET_MONTANT", String(budget.montant));
+      if (budget.devise) ajouter("BUDGET_DEVISE", budget.devise);
+      if (budget.journalier || /tjm|journalier/.test(normalise)) ajouter("BUDGET_TYPE", "TJM");
       else if (/forfait/.test(normalise)) ajouter("BUDGET_TYPE", "FORFAIT");
       else if (/abonnement/.test(normalise)) ajouter("BUDGET_TYPE", "ABONNEMENT");
     }

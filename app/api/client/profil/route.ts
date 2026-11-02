@@ -1,3 +1,5 @@
+import { evaluerCompletude, type ClientPourCompletude } from "@/lib/client-profile/completude";
+import { PAYS } from "@/lib/localisation";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
@@ -26,6 +28,14 @@ const CHAMPS_IDENTITE_CLIENT = [
   "telephone",
   "identifiantEntreprise",
   "formeJuridique",
+  // LOT 3 (28/10/2026) — profil entreprise complet.
+  "adresseSiege",
+  "adresseFacturation",
+  "identifiantFiscal",
+  "siteWeb",
+  "fonctionContact",
+  "contactFacturationNom",
+  "contactFacturationEmail",
 ] as const;
 
 export async function GET() {
@@ -86,6 +96,8 @@ export async function GET() {
 
   return NextResponse.json({
     client,
+    // LOT 3 : état de complétude par étape (voir lib/client-profile/completude.ts).
+    completude: evaluerCompletude(client as unknown as ClientPourCompletude),
     profile: { id: profile.id, createdAt: profile.createdAt, updatedAt: profile.updatedAt },
     faits: faitsActifs,
     besoins: { total: besoins.length, ouverts: besoinsOuverts, recents: besoins.slice(0, 5) },
@@ -95,16 +107,9 @@ export async function GET() {
   });
 }
 
-const CHAMPS_MODIFIABLES = new Set([
-  "nom",
-  "pays",
-  "secteur",
-  "contactReferent",
-  "email",
-  "telephone",
-  "identifiantEntreprise",
-  "formeJuridique",
-]);
+const CHAMPS_MODIFIABLES = new Set(CHAMPS_IDENTITE_CLIENT.filter((c) => c !== "id"));
+const LONGUEUR_MAX: Record<string, number> = { adresseSiege: 400, adresseFacturation: 400 };
+const RE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export async function PATCH(req: NextRequest) {
   const session = await getSession();
@@ -133,7 +138,18 @@ export async function PATCH(req: NextRequest) {
     if (brut !== null && typeof brut !== "string") {
       return NextResponse.json({ error: `${champ} invalide.` }, { status: 400 });
     }
-    data[champ] = brut === null ? null : brut.trim().slice(0, 200);
+    const valeur = brut === null ? null : brut.trim().slice(0, LONGUEUR_MAX[champ] ?? 200) || null;
+    // LOT 3 : formats contrôlés côté serveur (jamais seulement dans le formulaire).
+    if (valeur && (champ === "email" || champ === "contactFacturationEmail") && !RE_EMAIL.test(valeur)) {
+      return NextResponse.json({ error: `Adresse e-mail invalide (${champ}).` }, { status: 400 });
+    }
+    if (valeur && champ === "siteWeb" && !/^(https?:\/\/)?[^\s/$.?#].[^\s]*\.[^\s]{2,}$/i.test(valeur)) {
+      return NextResponse.json({ error: "Adresse de site Internet invalide." }, { status: 400 });
+    }
+    if (valeur && champ === "pays" && !(PAYS as readonly string[]).includes(valeur)) {
+      return NextResponse.json({ error: "Pays inconnu : choisissez-le dans la liste." }, { status: 400 });
+    }
+    data[champ] = valeur;
   }
 
   if (Object.keys(data).length === 0) {
@@ -148,5 +164,5 @@ export async function PATCH(req: NextRequest) {
     select: Object.fromEntries(CHAMPS_IDENTITE_CLIENT.map((c) => [c, true])),
   });
 
-  return NextResponse.json({ client });
+  return NextResponse.json({ client, completude: evaluerCompletude(client as unknown as ClientPourCompletude) });
 }

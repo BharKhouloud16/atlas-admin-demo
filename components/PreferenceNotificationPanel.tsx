@@ -73,19 +73,27 @@ export function PreferenceNotificationPanel({ apiUrl }: { apiUrl: string }) {
   if (chargement) return null;
 
   return (
-    <div style={{ border: `1px solid ${bordure}`, borderRadius: 8, padding: 12, marginBottom: 12, fontSize: 13 }}>
-      <p style={{ margin: "0 0 8px", fontWeight: 600 }}>Préférences de notification par email</p>
-      <label style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: emailActif ? 8 : 0, cursor: "pointer" }}>
-        <input type="checkbox" checked={emailActif} onChange={basculerEmailActif} />
-        Recevoir des emails de notification
-      </label>
+    // LOT 7 (28/10/2026) — OBS-06 : chaque case est reliée explicitement à
+    // son libellé (id/htmlFor) et les catégories sont regroupées dans un
+    // fieldset nommé, pour qu'un lecteur d'écran n'annonce plus « on ».
+    <fieldset style={{ border: `1px solid ${bordure}`, borderRadius: 8, padding: 12, margin: "0 0 12px", fontSize: 13 }}>
+      <legend style={{ padding: "0 4px", fontWeight: 600 }}>Préférences de notification par email</legend>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: emailActif ? 8 : 0 }}>
+        <input id="pref-notif-email-actif" type="checkbox" checked={emailActif} onChange={basculerEmailActif} />
+        <label htmlFor="pref-notif-email-actif" style={{ cursor: "pointer" }}>Recevoir des emails de notification</label>
+      </div>
       {emailActif && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginLeft: 4 }}>
+        <div role="group" aria-label="Catégories notifiées par email" style={{ display: "flex", flexWrap: "wrap", gap: 10, marginLeft: 4 }}>
           {TOUTES_CATEGORIES.map((c) => (
-            <label key={c.valeur} style={{ display: "flex", alignItems: "center", gap: 5, color: grisTexte, cursor: "pointer" }}>
-              <input type="checkbox" checked={categoriesEmail.includes(c.valeur)} onChange={() => basculerCategorie(c.valeur)} />
-              {c.label}
-            </label>
+            <div key={c.valeur} style={{ display: "flex", alignItems: "center", gap: 5, color: grisTexte }}>
+              <input
+                id={`pref-notif-${c.valeur}`}
+                type="checkbox"
+                checked={categoriesEmail.includes(c.valeur)}
+                onChange={() => basculerCategorie(c.valeur)}
+              />
+              <label htmlFor={`pref-notif-${c.valeur}`} style={{ cursor: "pointer" }}>{c.label}</label>
+            </div>
           ))}
         </div>
       )}
@@ -99,6 +107,6 @@ export function PreferenceNotificationPanel({ apiUrl }: { apiUrl: string }) {
           {erreur}
         </p>
       )}
-    </div>
+    </fieldset>
   );
 }

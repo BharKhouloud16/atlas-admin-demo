@@ -9,13 +9,16 @@ export default function LogoAtlas({
   taille = 28,
   href = "/",
   compact = false,
+  couleurTexte = bleuFonce,
 }: {
   taille?: number;
   href?: string | null;
   compact?: boolean;
+  // LOT 7 (28/10/2026) : couleur du nom, pour la navigation latérale sombre.
+  couleurTexte?: string;
 }) {
   const contenu = (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 10, fontWeight: 700, fontSize: 16, color: bleuFonce }}>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 10, fontWeight: 700, fontSize: 16, color: couleurTexte }}>
       <span
         style={{
           width: taille,

@@ -82,6 +82,13 @@ const SHARED_PREFIXES = ["/api/feuilles-de-temps", "/api/evaluations", "/api/gen
 // app/api/talent/demandes/*) — cette liste ne fait que laisser passer le
 // middleware, la défense en profondeur reste dans la route.
 const TALENT_PREFIXES = ["/api/talent"];
+// REV (01/11/2026) — routes réservées à l'Admin ajoutées par les lots 5 et 6
+// et la vue « Demandes clients ». Même patron que SHARED_PREFIXES (FIX B16) :
+// le middleware exige une session valide (un visiteur anonyme est refusé ici)
+// et laisse la route contrôler le rôle ADMIN, car seule la route peut
+// JOURNALISER le refus (rbac.acces_refuse, voir lib/security/acces-admin.ts)
+// — un refus prononcé par le middleware (Edge) ne serait jamais tracé.
+const ADMIN_SEULEMENT_PREFIXES = ["/api/projets", "/api/atlas-os", "/api/admin"];
 
 // Vérifie le token avec le secret courant, puis l'ancien si une rotation de
 // SESSION_SECRET est en cours (voir lib/session-secret.ts) — jose lève une
@@ -122,7 +129,8 @@ export async function middleware(req: NextRequest) {
       pathname.startsWith("/api/clients") || pathname.startsWith("/api/profils") ||
       pathname.startsWith("/api/missions") || pathname.startsWith("/api/generate-contract") ||
       pathname.startsWith("/api/comptes") || pathname.startsWith("/api/client") || pathname.startsWith("/api/ingenieur") ||
-      SHARED_PREFIXES.some((p) => pathname.startsWith(p)) || TALENT_PREFIXES.some((p) => pathname.startsWith(p)));
+      SHARED_PREFIXES.some((p) => pathname.startsWith(p)) || TALENT_PREFIXES.some((p) => pathname.startsWith(p)) ||
+      ADMIN_SEULEMENT_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`)));
 
   if (!isProtected) return NextResponse.next();
 
@@ -133,13 +141,16 @@ export async function middleware(req: NextRequest) {
     const { payload } = await verifierToken(token);
     const role = payload.role as string;
 
+    const routeAdminControleeParLaRoute = ADMIN_SEULEMENT_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+
     if (role === "CLIENT") {
       const allowed =
         pathname === "/admin"
           ? false
           : CLIENT_PREFIXES.some((p) => pathname.startsWith(p)) ||
             SHARED_PREFIXES.some((p) => pathname.startsWith(p)) ||
-            TALENT_PREFIXES.some((p) => pathname.startsWith(p));
+            TALENT_PREFIXES.some((p) => pathname.startsWith(p)) ||
+            routeAdminControleeParLaRoute;
       if (!allowed) return redirectToLogin(req, "/client");
     }
 
@@ -147,7 +158,8 @@ export async function middleware(req: NextRequest) {
       const allowed =
         pathname === "/admin" ||
         INGENIEUR_PREFIXES.some((p) => pathname.startsWith(p)) ||
-        SHARED_PREFIXES.some((p) => pathname.startsWith(p));
+        SHARED_PREFIXES.some((p) => pathname.startsWith(p)) ||
+        routeAdminControleeParLaRoute;
       // ATLAS TALENT n'est volontairement pas dans SHARED_PREFIXES ni ici :
       // un Ingénieur n'a jamais accès à /api/talent (ni côté Client, ni
       // matching/shortlist réservé Admin).
@@ -203,5 +215,8 @@ export const config = {
     "/api/evaluations/:path*",
     "/api/talent/:path*",
     "/api/factures/:path*",
+    "/api/projets/:path*",
+    "/api/atlas-os/:path*",
+    "/api/admin/:path*",
   ],
 };

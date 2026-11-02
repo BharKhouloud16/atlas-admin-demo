@@ -5,6 +5,7 @@ import { bleuFonce, grisTexte, bordure, fondClair } from "@/lib/theme";
 import LogoAtlas from "@/components/LogoAtlas";
 import BoutonDeconnexion from "@/components/BoutonDeconnexion";
 import NavAdmin from "@/components/NavAdmin";
+import { compterDemandesEnAttente } from "@/lib/demandes-clients/service";
 
 const LIENS_NAV = [
   { href: "/admin", label: "Tableau de bord", roles: ["ADMIN", "INGENIEUR"] },
@@ -16,7 +17,10 @@ const LIENS_NAV = [
   { href: "/admin/feuilles-de-temps", label: "Feuilles de temps", roles: ["ADMIN"] },
   { href: "/admin/factures", label: "Facturation", roles: ["ADMIN"] },
   { href: "/admin/attentions", label: "Attention", roles: ["ADMIN"] },
+  { href: "/admin/demandes-clients", label: "Demandes clients", roles: ["ADMIN"] },
   { href: "/admin/talent", label: "Atlas Talent", roles: ["ADMIN"] },
+  { href: "/admin/projets", label: "Projets", roles: ["ADMIN"] },
+  { href: "/admin/atlas-os", label: "Activations ATLAS OS", roles: ["ADMIN"] },
   { href: "/admin/demandes", label: "Demandes de contact", roles: ["ADMIN"] },
   { href: "/admin/comptes-en-attente", label: "Comptes en attente", roles: ["ADMIN"] },
   { href: "/admin/journal", label: "Journal d'activité", roles: ["ADMIN"] },
@@ -46,7 +50,12 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     if (profil && profil.cvValide && !profil.questionnaireValide) redirect("/ingenieur/disponibilite");
   }
 
-  const liens = LIENS_NAV.filter((l) => (l.roles as readonly string[]).includes(session.role));
+  // REV (01/11/2026) : pastille du nombre de demandes clients à traiter
+  // (Admin uniquement ; une erreur de comptage n'empêche jamais l'affichage).
+  const demandesEnAttente = session.role === "ADMIN" ? await compterDemandesEnAttente().catch(() => 0) : 0;
+  const liens = LIENS_NAV.filter((l) => (l.roles as readonly string[]).includes(session.role)).map((l) =>
+    l.href === "/admin/demandes-clients" ? { ...l, compteur: demandesEnAttente } : l
+  );
 
   return (
     <div style={{ minHeight: "100vh", background: fondClair }}>

@@ -25,7 +25,11 @@ export type OptionClientSafe = {
   disponibilite: { statut: StatutDisponibiliteOption; detail: string | null };
 };
 
-export type OptionOrdonnee = OptionClientSafe & { rang: number };
+// `indexSource` (LOT 2, 28/10/2026) : position de l'option dans le tableau
+// FOURNI à comparerOptions — un simple entier, jamais persisté ni exposé ;
+// il permet à la génération de relier une option à son profil d'origine dans
+// une table réservée à l'Admin (SolutionOptionProfilInterne).
+export type OptionOrdonnee = OptionClientSafe & { rang: number; indexSource: number };
 
 export type RecommandationSolution = {
   // Pointe vers OptionOrdonnee.rang, jamais un identifiant de profil ou de

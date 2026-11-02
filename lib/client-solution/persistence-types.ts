@@ -10,6 +10,10 @@ import type { NiveauConfianceOption, StatutDisponibiliteOption } from "./types";
 // être modifié sans nécessité réelle (aucune ici : Json suffit).
 export type DonneesSolutionOption = {
   signatureSource: string;
+  // LOT 2 (28/10/2026) : identifiant opaque commun à toutes les lignes d'une
+  // même génération (vague) — jamais exposé, sert à ne relire que la
+  // dernière vague. Absent des lignes antérieures à cette évolution.
+  vagueId?: string;
   niveauCorrespondance?: "FORTE" | "PARTIELLE";
   competencesManquantes?: string[];
   competencesCorrespondantes: string[];

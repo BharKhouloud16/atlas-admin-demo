@@ -69,7 +69,7 @@ export function comparerOptions(options: OptionClientSafe[]): ResultatComparaiso
       return a.index - b.index;
     });
 
-  const optionsOrdonnees: OptionOrdonnee[] = triees.map(({ option }, position) => ({ ...option, rang: position + 1 }));
+  const optionsOrdonnees: OptionOrdonnee[] = triees.map(({ option, index }, position) => ({ ...option, rang: position + 1, indexSource: index }));
 
   const meilleure = optionsOrdonnees[0];
   // Une correspondance partielle n'est jamais présentée comme « recommandée ».

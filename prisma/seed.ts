@@ -18,6 +18,14 @@ async function main() {
       secteur: "E-commerce",
       contactReferent: "M. Dupont, RSSI",
       email: "client-demo@example.com",
+      // LOT 3 (28/10/2026) : profil entreprise complet, entièrement FICTIF
+      // (données de démonstration), pour que les parcours de démo et de CI
+      // ne soient pas bloqués par la complétude progressive.
+      pays: "France",
+      fonctionContact: "Responsable de la sécurité des systèmes d'information",
+      formeJuridique: "SAS",
+      identifiantEntreprise: "000 000 000 (fictif)",
+      adresseSiege: "1 rue de la Démonstration, 75000 Paris (fictive)",
     },
   });
   await prisma.user.create({
