@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { reinitialiserMotDePasseSchema, premierMessageZod } from "@/lib/validation";
 import { validerMotDePasse } from "@/lib/password-policy";
 import { adresseIp, verifierLimiteIp } from "@/lib/rate-limit";
+import { lireCorpsJson } from "@/lib/api-errors";
 
 // B14 — Étape 2 du mot de passe oublié : pose le nouveau mot de passe à
 // partir du token reçu par email (voir /api/auth/mot-de-passe-oublie).
@@ -30,7 +31,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const corpsBrut = await req.json();
+  const corpsBrut = await lireCorpsJson(req);
+  if (corpsBrut === null) {
+    return NextResponse.json({ error: "Requête invalide." }, { status: 400 });
+  }
   const analyse = reinitialiserMotDePasseSchema.safeParse(corpsBrut);
   if (!analyse.success) {
     return NextResponse.json({ error: premierMessageZod(analyse.error) }, { status: 400 });
@@ -63,8 +67,11 @@ export async function POST(req: NextRequest) {
   }
 
   const passwordHash = await bcrypt.hash(nouveauMotDePasse, 12);
-  await prisma.user.update({
-    where: { id: user.id },
+  // Usage unique garanti en base : la mise à jour n'aboutit que si CE jeton,
+  // non expiré, est toujours celui du compte. Deux requêtes simultanées avec
+  // le même jeton ne peuvent pas toutes deux changer le mot de passe.
+  const { count } = await prisma.user.updateMany({
+    where: { id: user.id, resetPasswordToken: token, resetPasswordExpire: { gte: new Date() } },
     data: {
       passwordHash,
       resetPasswordToken: null,
@@ -75,8 +82,17 @@ export async function POST(req: NextRequest) {
       // après qu'il ait repris le contrôle de son compte.
       echecsConnexion: 0,
       verrouilleJusqua: null,
+      // Révoque toutes les sessions ouvertes (voir lib/auth.ts) : un compte
+      // repris par mot de passe oublié ne garde aucune session antérieure.
+      sessionVersion: { increment: 1 },
     },
   });
+  if (count !== 1) {
+    return NextResponse.json(
+      { error: "Ce lien de réinitialisation est invalide ou a déjà été utilisé." },
+      { status: 400 }
+    );
+  }
 
   return NextResponse.json({ ok: true, message: "Mot de passe réinitialisé. Vous pouvez vous connecter." });
 }

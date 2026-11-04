@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
-import { craEstEditableParIngenieur, totauxDepuisDetail, libelleMois } from "@/lib/feuilles-de-temps";
+import { craEstEditableParIngenieur, totauxDepuisDetail, libelleMois, erreurSaisieCra, missionEstClose, type JourCra } from "@/lib/feuilles-de-temps";
+import { lireCorpsJson } from "@/lib/api-errors";
 import { journaliser } from "@/lib/audit";
 import { envoyerEmailCraRejete } from "@/lib/email";
 import { adresseIp } from "@/lib/rate-limit";
@@ -112,11 +114,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Accès non autorisé" }, { status: 403 });
   }
 
-  const body = await req.json();
-  const { missionId, mois, joursTravailles, heuresSupplementaires, commentaire, soumettre, detailJours } = body;
+  const body = await lireCorpsJson(req);
+  if (body === null || typeof body !== "object") {
+    return NextResponse.json({ error: "Requête invalide." }, { status: 400 });
+  }
+  const { missionId, mois, joursTravailles, heuresSupplementaires, commentaire, soumettre, detailJours, versionLue } = body as Record<string, unknown>;
 
-  if (!missionId || !/^\d{4}-\d{2}$/.test(mois ?? "")) {
+  if (typeof missionId !== "string" || !missionId || typeof mois !== "string" || !/^\d{4}-\d{2}$/.test(mois)) {
     return NextResponse.json({ error: "Mission et mois (AAAA-MM) requis." }, { status: 400 });
+  }
+  const erreurSaisie = erreurSaisieCra(mois, { detailJours, joursTravailles, heuresSupplementaires });
+  if (erreurSaisie) {
+    return NextResponse.json({ error: erreurSaisie }, { status: 400 });
   }
 
   // Le détail jour par jour (calendrier façon Boond, voir
@@ -129,7 +138,7 @@ export async function POST(req: NextRequest) {
   let jours: number;
   let heuresSup: number;
   if (Array.isArray(detailJours)) {
-    const totaux = totauxDepuisDetail(detailJours);
+    const totaux = totauxDepuisDetail(detailJours as JourCra[]);
     jours = totaux.joursTravailles;
     heuresSup = totaux.heuresSupplementaires;
   } else {
@@ -144,6 +153,12 @@ export async function POST(req: NextRequest) {
   if (!mission || mission.profilId !== session.profilId) {
     return NextResponse.json({ error: "Mission introuvable." }, { status: 404 });
   }
+  if (missionEstClose(mission.statut)) {
+    return NextResponse.json(
+      { error: "Cette mission est close : la feuille de temps ne peut plus être saisie. Contactez l'administrateur pour une correction." },
+      { status: 409 }
+    );
+  }
 
   const existante = await prisma.feuilleDeTemps.findUnique({
     where: { missionId_mois: { missionId, mois } },
@@ -154,6 +169,19 @@ export async function POST(req: NextRequest) {
       { status: 409 }
     );
   }
+  // Formulaire périmé : quand l'écran transmet la version qu'il a chargée
+  // (updatedAt, ou null pour une feuille encore inexistante), un
+  // enregistrement fondé sur une version dépassée (autre onglet, autre
+  // appareil) est refusé au lieu d'écraser silencieusement la plus récente.
+  if (versionLue !== undefined) {
+    const versionCourante = existante ? existante.updatedAt.toISOString() : null;
+    if ((versionLue ?? null) !== versionCourante) {
+      return NextResponse.json(
+        { error: "Cette feuille de temps a été modifiée entre-temps. Rechargez-la avant d'enregistrer." },
+        { status: 409 }
+      );
+    }
+  }
 
   const data = {
     missionId,
@@ -161,7 +189,7 @@ export async function POST(req: NextRequest) {
     joursTravailles: jours,
     heuresSupplementaires: heuresSup,
     detailJours: Array.isArray(detailJours) ? detailJours : undefined,
-    commentaire: commentaire?.trim() || null,
+    commentaire: typeof commentaire === "string" ? commentaire.trim() || null : null,
     statut: soumettre ? "Soumise" : "Brouillon",
     motifRejet: null as string | null,
     soumiseLe: soumettre ? new Date() : existante?.soumiseLe ?? null,
@@ -169,11 +197,41 @@ export async function POST(req: NextRequest) {
     valideeClientLe: null as Date | null,
   };
 
-  const feuille = existante
-    ? await prisma.feuilleDeTemps.update({ where: { id: existante.id }, data })
-    : await prisma.feuilleDeTemps.create({ data });
+  const conflit = NextResponse.json(
+    { error: "Cette feuille de temps a été modifiée entre-temps. Rechargez-la avant d'enregistrer." },
+    { status: 409 }
+  );
+  if (existante) {
+    // Écriture conditionnée à la version et au statut lus : une validation ou
+    // un autre enregistrement survenu entre-temps n'est jamais écrasé.
+    const { count } = await prisma.feuilleDeTemps.updateMany({
+      where: { id: existante.id, updatedAt: existante.updatedAt, statut: existante.statut },
+      data,
+    });
+    if (count === 0) return conflit;
+    const feuille = await prisma.feuilleDeTemps.findUniqueOrThrow({ where: { id: existante.id } });
+    return NextResponse.json(feuille, { status: 200 });
+  }
+  try {
+    const feuille = await prisma.feuilleDeTemps.create({ data });
+    return NextResponse.json(feuille, { status: 201 });
+  } catch (erreur) {
+    // Création simultanée du même mois (@@unique([missionId, mois])).
+    if (erreur instanceof Prisma.PrismaClientKnownRequestError && erreur.code === "P2002") return conflit;
+    throw erreur;
+  }
+}
 
-  return NextResponse.json(feuille, { status: existante ? 200 : 201 });
+// Transition de statut conditionnée au statut attendu : deux décisions
+// simultanées (valider et rejeter, ou deux validations) ne peuvent pas
+// aboutir toutes les deux. null si le statut a changé entre-temps.
+async function transition(id: string, statutAttendu: string, data: Prisma.FeuilleDeTempsUpdateManyMutationInput) {
+  const { count } = await prisma.feuilleDeTemps.updateMany({ where: { id, statut: statutAttendu }, data });
+  return count === 1 ? prisma.feuilleDeTemps.findUniqueOrThrow({ where: { id } }) : null;
+}
+
+function transitionConcurrente() {
+  return NextResponse.json({ error: "Cette feuille de temps a changé de statut entre-temps. Rechargez la page." }, { status: 409 });
 }
 
 // Validation Admin puis Client (ou rejet Admin) — voir lib/feuilles-de-temps.ts.
@@ -181,9 +239,9 @@ export async function PATCH(req: NextRequest) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
 
-  const body = await req.json();
-  const { id, action, motifRejet } = body;
-  if (!id || !action) {
+  const body = await lireCorpsJson(req);
+  const { id, action, motifRejet } = (body ?? {}) as Record<string, unknown>;
+  if (typeof id !== "string" || !id || typeof action !== "string" || !action) {
     return NextResponse.json({ error: "Paramètres invalides." }, { status: 400 });
   }
 
@@ -195,18 +253,14 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: "Cette feuille n'est pas en attente de validation Admin." }, { status: 409 });
     }
     if (action === "validerAdmin") {
-      const maj = await prisma.feuilleDeTemps.update({
-        where: { id },
-        data: { statut: "ValideeAdmin", valideeAdminLe: new Date() },
-      });
+      const maj = await transition(id, "Soumise", { statut: "ValideeAdmin", valideeAdminLe: new Date() });
+      if (!maj) return transitionConcurrente();
       return NextResponse.json(maj);
     }
     if (action === "rejeter") {
-      const motif = (motifRejet ?? "").trim() || "Non précisé.";
-      const maj = await prisma.feuilleDeTemps.update({
-        where: { id },
-        data: { statut: "Rejetee", motifRejet: motif },
-      });
+      const motif = (typeof motifRejet === "string" ? motifRejet.trim() : "") || "Non précisé.";
+      const maj = await transition(id, "Soumise", { statut: "Rejetee", motifRejet: motif });
+      if (!maj) return transitionConcurrente();
 
       await journaliser({
         acteurEmail: session.email,
@@ -261,10 +315,8 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: "Cette feuille n'est pas en attente de votre validation." }, { status: 409 });
     }
     if (action === "validerClient") {
-      const maj = await prisma.feuilleDeTemps.update({
-        where: { id },
-        data: { statut: "ValideeClient", valideeClientLe: new Date() },
-      });
+      const maj = await transition(id, "ValideeAdmin", { statut: "ValideeClient", valideeClientLe: new Date() });
+      if (!maj) return transitionConcurrente();
       return NextResponse.json(maj);
     }
     return NextResponse.json({ error: "Action invalide." }, { status: 400 });

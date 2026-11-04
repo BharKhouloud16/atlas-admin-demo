@@ -98,6 +98,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     heuresSupplementaires: facture.feuilleDeTemps.heuresSupplementaires,
     tjmVente: facture.mission.tjmVente,
     deviseTjm: facture.devise,
+    montantsFacture: { ht: Number(facture.montantHT), tva: Number(facture.montantTVA), ttc: Number(facture.montantTTC) },
   });
 
   try {

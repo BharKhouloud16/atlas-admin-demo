@@ -5,7 +5,7 @@ import { transitionAutorisee, statutDepuisSolde, statutAffiche, LABEL_STATUT_FAC
 import { calculerSolde, soldeEstNul } from "@/lib/billing/solde";
 import { calculerMontantsFacture } from "@/lib/billing/montants";
 import { reglesApplicables, resoudreRegleFiscale, construireComplianceSnapshot } from "@/lib/billing/regle-fiscale";
-import { genererNumeroFacture } from "@/lib/billing/numero";
+import { numeroProvisoire, estNumeroProvisoire, numeroReglementaire, anneeEmission } from "@/lib/billing/numero";
 import { adapterFactureClient } from "@/lib/billing/adapter";
 
 // COMPANY ATLAS — V2.2-B (17/09/2026) : tests des fonctions pures de
@@ -244,9 +244,23 @@ test.describe("V2.2-B — regle-fiscale.ts : résolution versionnée/datée, jam
   });
 });
 
-test.describe("V2.2-B — numero.ts : numérotation de Facture", () => {
-  test("format FA-{mois sans tiret}-{6 premiers caractères de missionId en majuscules}", () => {
-    expect(genererNumeroFacture("2026-01", "abcdef1234567890")).toBe("FA-202601-ABCDEF");
+test.describe("numero.ts : numérotation réglementaire des factures", () => {
+  test("numéro définitif FA-{année}-{séquence sur 5 chiffres}", () => {
+    expect(numeroReglementaire(2026, 1)).toBe("FA-2026-00001");
+    expect(numeroReglementaire(2026, 12345)).toBe("FA-2026-12345");
+  });
+
+  test("brouillon : numéro provisoire unique par feuille de temps, reconnu comme provisoire", () => {
+    expect(numeroProvisoire("feuille-1")).toBe("BROUILLON-feuille-1");
+    expect(estNumeroProvisoire(numeroProvisoire("feuille-1"))).toBe(true);
+    // Les factures numérotées avant la numérotation réglementaire gardent leur numéro.
+    expect(estNumeroProvisoire("FA-202601-ABCDEF")).toBe(false);
+    expect(estNumeroProvisoire("FA-2026-00001")).toBe(false);
+  });
+
+  test("année d'émission selon l'heure de Paris, pas l'heure UTC", () => {
+    expect(anneeEmission(new Date("2026-12-31T22:30:00Z"))).toBe(2026); // 23h30 à Paris
+    expect(anneeEmission(new Date("2026-12-31T23:30:00Z"))).toBe(2027); // 00h30 à Paris
   });
 });
 

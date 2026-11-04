@@ -6,8 +6,20 @@ import { loginSchema, premierMessageZod } from "@/lib/validation";
 import { adresseIp, verifierLimiteIp, enregistrerEchecConnexion, reinitialiserEchecsConnexion } from "@/lib/rate-limit";
 import { verifierCode } from "@/lib/totp";
 import { enregistrerEvenementSecurite, nouveauCorrelationId } from "@/lib/security/events";
+import { lireCorpsJson, reponseErreurServeur } from "@/lib/api-errors";
 
+// V1 : toute erreur non prévue (base injoignable, panne Prisma…) produit une
+// réponse JSON contrôlée (503 si la base est indisponible, 500 sinon) au lieu
+// d'une exception non gérée — voir lib/api-errors.ts.
 export async function POST(req: NextRequest) {
+  try {
+    return await traiterConnexion(req);
+  } catch (erreur) {
+    return reponseErreurServeur(erreur, "/api/auth/login");
+  }
+}
+
+async function traiterConnexion(req: NextRequest) {
   const ip = adresseIp(req);
   // ATLAS OS — TRUST & SECURITY INTELLIGENCE FOUNDATION (Batch 16,
   // 08/09/2026) : un seul correlationId pour toute cette tentative de
@@ -33,7 +45,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const corps = await req.json();
+  const corps = (await lireCorpsJson(req)) as { code?: unknown } | null;
+  if (corps === null) {
+    return NextResponse.json({ error: "Requête invalide." }, { status: 400 });
+  }
   const analyse = loginSchema.safeParse(corps);
   if (!analyse.success) {
     return NextResponse.json({ error: premierMessageZod(analyse.error) }, { status: 400 });
@@ -138,7 +153,8 @@ export async function POST(req: NextRequest) {
   // (voir app/connexion/page.tsx), ce qui évite tout état de session
   // partiellement authentifiée côté serveur.
   if (user.role === "ADMIN" && user.totpActif && user.totpSecret) {
-    const code = typeof corps?.code === "string" ? corps.code : "";
+    const codeBrut = corps.code;
+    const code = typeof codeBrut === "string" ? codeBrut : "";
     if (!code) {
       await enregistrerEvenementSecurite({
         correlationId,
@@ -159,9 +175,14 @@ export async function POST(req: NextRequest) {
       const hashes: string[] = JSON.parse(user.totpCodesSecours);
       for (let i = 0; i < hashes.length; i++) {
         if (await bcrypt.compare(code.trim(), hashes[i])) {
-          codeValide = true;
           hashes.splice(i, 1); // usage unique : retiré une fois consommé
-          await prisma.user.update({ where: { id: user.id }, data: { totpCodesSecours: JSON.stringify(hashes) } });
+          // Consommation conditionnée à la liste lue : deux connexions
+          // simultanées avec le même code ne peuvent pas aboutir toutes deux.
+          const { count } = await prisma.user.updateMany({
+            where: { id: user.id, totpCodesSecours: user.totpCodesSecours },
+            data: { totpCodesSecours: JSON.stringify(hashes) },
+          });
+          codeValide = count === 1;
           break;
         }
       }

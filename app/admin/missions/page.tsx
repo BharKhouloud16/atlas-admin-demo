@@ -126,6 +126,28 @@ export default function MissionsPage() {
     await rechargerMissions();
   }
 
+  // Clôture d'une mission (PATCH /api/missions/[id]/statut) : bloque les
+  // nouvelles saisies de CRA par l'ingénieur et ouvre l'évaluation Client.
+  const [cloture, setCloture] = useState<string | null>(null);
+  const [erreurCloture, setErreurCloture] = useState<string | null>(null);
+  async function cloturer(m: Mission, statut: "Terminée" | "Annulée") {
+    if (!window.confirm(`Passer la mission ${m.repere ?? ""} (${m.client.nom}) en « ${statut} » ? L'ingénieur ne pourra plus saisir de feuille de temps.`)) return;
+    setCloture(m.id);
+    setErreurCloture(null);
+    const res = await fetch(`/api/missions/${m.id}/statut`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ statut }),
+    });
+    setCloture(null);
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      setErreurCloture(d.error ?? "La clôture a échoué. Réessayez.");
+      return;
+    }
+    rechargerMissions();
+  }
+
   async function generer(missionId: string, templateKey: string) {
     setGenerating(missionId + templateKey);
     const res = await fetch("/api/generate-contract", {
@@ -224,6 +246,7 @@ export default function MissionsPage() {
       )}
 
       <div style={{ overflowX: "auto" }}>
+        {erreurCloture && <p role="alert" style={{ fontSize: 12, color: "#b91c1c", margin: "0 0 8px" }}>{erreurCloture}</p>}
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr style={{ textAlign: "left", borderBottom: `1px solid ${bordure}` }}>
@@ -252,6 +275,17 @@ export default function MissionsPage() {
                 <td style={{ padding: "6px 8px" }}>{m.modeTravail ?? "—"}</td>
                 <td style={{ padding: "6px 8px" }}>
                   {m.statut}
+                  {isAdmin && m.statut === "En cours" && (
+                    <>
+                      {" "}
+                      <button onClick={() => cloturer(m, "Terminée")} disabled={cloture === m.id} style={{ fontSize: 11 }}>
+                        Terminer
+                      </button>{" "}
+                      <button onClick={() => cloturer(m, "Annulée")} disabled={cloture === m.id} style={{ fontSize: 11 }}>
+                        Annuler
+                      </button>
+                    </>
+                  )}
                   {m.sourceDemande && (
                     <>
                       {" "}

@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { transitionAutorisee } from "./etat-facture";
 import { resoudreRegleFiscale, construireComplianceSnapshot } from "./regle-fiscale";
+import { anneeEmission, estNumeroProvisoire, numeroReglementaire } from "./numero";
 import type { Prisma, StatutFacture } from "@prisma/client";
 
 // COMPANY ATLAS — V2.2-B : Billing Foundation — transitions Admin de
@@ -72,14 +73,45 @@ export async function validerFacture(factureId: string): Promise<ResultatTransit
   const dateEcheance = new Date(maintenant);
   dateEcheance.setDate(dateEcheance.getDate() + DELAI_PAIEMENT_JOURS);
 
-  return ecrireTransition(factureId, facture.statut, {
-    statut: "VALIDEE",
+  const data = {
+    statut: "VALIDEE" as const,
     dateEmission: maintenant,
     dateEcheance,
     regleFiscaleId: regleResolue?.id ?? null,
     complianceSnapshot: snapshot as unknown as Prisma.InputJsonValue,
-  });
+  };
+  if (!estNumeroProvisoire(facture.numeroFacture)) {
+    // Facture numérotée avant la numérotation réglementaire : numéro conservé.
+    return ecrireTransition(factureId, facture.statut, data);
+  }
+
+  // Numéro réglementaire attribué dans la même transaction que la
+  // validation (voir lib/billing/numero.ts) : si l'écriture conditionnelle
+  // échoue (validation concurrente gagnante), la transaction est annulée et
+  // le compteur n'avance pas.
+  try {
+    const maj = await prisma.$transaction(async (tx) => {
+      const annee = anneeEmission(maintenant);
+      const compteur = await tx.compteurFacture.upsert({
+        where: { annee },
+        create: { annee, dernier: 1 },
+        update: { dernier: { increment: 1 } },
+      });
+      const { count } = await tx.facture.updateMany({
+        where: { id: factureId, statut: facture.statut, numeroFacture: facture.numeroFacture },
+        data: { ...data, numeroFacture: numeroReglementaire(annee, compteur.dernier) },
+      });
+      if (count === 0) throw new TransitionPerdue();
+      return tx.facture.findUniqueOrThrow({ where: { id: factureId } });
+    });
+    return { ok: true, facture: maj };
+  } catch (erreur) {
+    if (erreur instanceof TransitionPerdue) return { ok: false, code: "TRANSITION_INVALIDE" };
+    throw erreur;
+  }
 }
+
+class TransitionPerdue extends Error {}
 
 // VALIDEE -> ENVOYEE : seul ce moment rend la Facture visible côté Client
 // (voir dateEnvoi, lib/billing/adapter.ts et app/api/factures/route.ts).

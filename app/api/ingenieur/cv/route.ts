@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { uploaderFichier } from "@/lib/storage";
 import { extraireInfosCV, modeleChampsVides, type ResultatExtractionCV } from "@/lib/cv-extraction";
+import { fusionnerInfosCv, estPdf, TAILLE_MAX_CV_OCTETS } from "@/lib/cv-fusion";
 
 // Upload du CV par l'ingénieur connecté. Le contenu du fichier est envoyé à
 // l'IA (Claude) pour pré-remplir les champs InfoCV avec les informations
@@ -30,7 +31,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Format non supporté. Utilisez un PDF." }, { status: 400 });
   }
 
+  // V1 : taille bornée et signature PDF vérifiée côté serveur (le type MIME
+  // déclaré par le navigateur peut être vide ou faux).
+  if (fichier.size === 0) {
+    return NextResponse.json({ error: "Le fichier est vide." }, { status: 400 });
+  }
+  if (fichier.size > TAILLE_MAX_CV_OCTETS) {
+    return NextResponse.json({ error: "Fichier trop volumineux (10 Mo maximum)." }, { status: 413 });
+  }
   const octets = await fichier.arrayBuffer();
+  if (!estPdf(new Uint8Array(octets))) {
+    return NextResponse.json({ error: "Format non supporté. Utilisez un PDF." }, { status: 400 });
+  }
 
   // Extraction + vérification du secteur AVANT l'upload : un CV hors-sujet
   // (pas informatique/QA) est rejeté sans être stocké ni rattaché au profil.
@@ -67,7 +79,12 @@ export async function POST(req: NextRequest) {
     const uploade = await uploaderFichier(fichier.name, new Blob([octets], { type: fichier.type }), "cv");
     url = uploade.url;
   } catch (e: any) {
-    return NextResponse.json({ error: e.message ?? "Échec de l'upload" }, { status: 500 });
+    // Le détail (configuration du stockage) reste dans les journaux serveur.
+    console.error("Upload du CV impossible :", e?.name ?? "Error", e?.message ?? "");
+    return NextResponse.json(
+      { error: "Le CV n'a pas pu être enregistré. Merci de réessayer plus tard.", code: "STOCKAGE_INDISPONIBLE" },
+      { status: 503 }
+    );
   }
 
   // Historique des versions (voir prisma/schema.prisma, VersionCv) : avant
@@ -76,8 +93,16 @@ export async function POST(req: NextRequest) {
   // n'est jamais supprimé, seule la référence en base change.
   const profilAvant = await prisma.profil.findUnique({
     where: { id: session.profilId },
-    select: { cvUrl: true, cvNomFichier: true, cvImporteLe: true },
+    select: { cvUrl: true, cvNomFichier: true, cvImporteLe: true, cvValide: true },
   });
+
+  // V1 : les informations déjà validées par l'ingénieur sont conservées ;
+  // seules les informations non validées sont remplacées (lib/cv-fusion.ts).
+  const existantes = await prisma.infoCV.findMany({
+    where: { profilId: session.profilId },
+    select: { categorie: true, libelle: true, valide: true },
+  });
+  const { aCreer, conservees } = fusionnerInfosCv(existantes, champs);
 
   await prisma.$transaction([
     ...(profilAvant?.cvUrl
@@ -92,18 +117,20 @@ export async function POST(req: NextRequest) {
           }),
         ]
       : []),
-    prisma.infoCV.deleteMany({ where: { profilId: session.profilId } }),
+    prisma.infoCV.deleteMany({ where: { profilId: session.profilId, valide: false } }),
     prisma.profil.update({
       where: { id: session.profilId },
       data: {
         cvUrl: url,
         cvNomFichier: fichier.name,
         cvImporteLe: new Date(),
-        cvValide: false,
-        infosCv: { create: champs },
+        // Reste validé uniquement si aucune nouvelle information n'est à vérifier.
+        cvValide: aCreer.length === 0 ? profilAvant?.cvValide ?? false : false,
+        infosCv: { create: aCreer },
       },
     }),
   ]);
 
-  return NextResponse.json({ ok: true, url });
+  // L'URL Blob privée n'est jamais renvoyée au navigateur (voir lib/storage.ts).
+  return NextResponse.json({ ok: true, informationsConservees: conservees, informationsAVerifier: aCreer.length });
 }

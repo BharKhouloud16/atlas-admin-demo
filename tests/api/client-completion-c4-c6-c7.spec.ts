@@ -221,6 +221,12 @@ test.describe("CLIENT COMPLETION — C7 : facture générée, persistance best-e
 
     await connecter(request, "admin-demo@example.com");
     const avant = await prisma.document.count({ where: { missionId: mission.id, type: "FACTURE" } });
+    // Lot CRA V1 : la facture d'un CRA est d'abord validée (numéro
+    // réglementaire) ; la route du CRA renvoie alors vers son PDF.
+    const brouillon = await request.get(`/api/feuilles-de-temps/facture?feuilleId=${feuille.id}`);
+    expect(brouillon.status()).toBe(409);
+    const { factureId } = await brouillon.json();
+    expect((await request.patch(`/api/factures/${factureId}/transition`, { data: { action: "valider" } })).status()).toBe(200);
     const facture = await request.get(`/api/feuilles-de-temps/facture?feuilleId=${feuille.id}`);
     expect(facture.status(), await facture.text()).toBe(200);
     expect(facture.headers()["content-type"]).toContain("application/pdf");

@@ -91,6 +91,13 @@ model User {
   echecsConnexion  Int       @default(0)
   verrouilleJusqua DateTime?
 
+  // Version des sessions (voir lib/auth.ts) : chaque JWT porte la version du
+  // compte au moment de son émission ; getSession() refuse tout jeton dont la
+  // version diffère. Incrémentée à chaque changement ou réinitialisation du
+  // mot de passe : toutes les autres sessions ouvertes sont révoquées.
+  // 0 par défaut : les comptes et jetons existants restent valides.
+  sessionVersion Int @default(0)
+
   // Authentification à deux facteurs (TOTP) — pour l'instant réservée au
   // rôle ADMIN (le compte le plus sensible, accès aux coûts/marges
   // internes). totpSecret reste vide tant que la configuration n'est pas
@@ -1827,6 +1834,18 @@ model RegleFiscale {
 // rester visible côté Client (il doit savoir qu'elle a été annulée),
 // tandis qu'une Facture BROUILLON/VALIDEE (jamais envoyée) ou ANNULEE
 // avant tout envoi ne doit jamais lui apparaître.
+// Compteur de numérotation réglementaire des factures (lot CRA V1,
+// 25/10/2026) : une ligne par année d'émission, incrémentée dans la même
+// transaction que la validation de la facture (lib/billing/transitions.ts).
+// Une validation qui échoue n'avance jamais le compteur : la séquence
+// FA-{année}-{numéro} reste chronologique et continue. Les factures
+// antérieures gardent leur numéro d'origine.
+model CompteurFacture {
+  annee     Int      @id
+  dernier   Int
+  updatedAt DateTime @updatedAt
+}
+
 model Facture {
   id                 String         @id @default(cuid())
   client             Client         @relation(fields: [clientId], references: [id])

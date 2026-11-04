@@ -14,6 +14,10 @@ export type StatutDisponibiliteOption = "CONNUE" | "UNKNOWN";
 // indirectement un Engineer (voir revue architecturale V2.1, section 6).
 export type OptionClientSafe = {
   typeSolution: "TALENT";
+  // Niveau de correspondance (lib/talent/admissibilite.ts). Optionnel :
+  // absent des options construites avant cette évolution.
+  niveauCorrespondance?: "FORTE" | "PARTIELLE";
+  competencesManquantes?: string[];
   competencesCorrespondantes: string[];
   niveauConfiance: NiveauConfianceOption;
   rationale: string[];
@@ -43,5 +47,5 @@ export type ResultatComparaison = {
   // ou données trop insuffisantes même avec 1 option) — jamais une
   // recommandation forcée. Voir raisonAbsenceRecommandation pour le motif.
   recommandation: RecommandationSolution | null;
-  raisonAbsenceRecommandation: "AUCUNE_OPTION" | "DONNEES_INSUFFISANTES" | null;
+  raisonAbsenceRecommandation: "AUCUNE_OPTION" | "DONNEES_INSUFFISANTES" | "AUCUNE_CORRESPONDANCE_FORTE" | null;
 };

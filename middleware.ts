@@ -97,8 +97,24 @@ async function verifierToken(token: string) {
   throw new Error("Token invalide pour tous les secrets connus");
 }
 
+// Lien de partage signé d'un CV (créé par l'Admin, voir
+// app/api/ingenieur/cv/lien-partage) : destiné à un tiers SANS compte. Sans
+// session, la requête est confiée à la route, qui vérifie elle-même le jeton
+// signé et non expiré (lib/url-signee.ts) et répond 403 sinon. Auparavant le
+// middleware la refusait (403) avant la route : un lien de partage ne
+// fonctionnait jamais. La vidéo n'est pas concernée (hors périmètre V1).
+const CHEMINS_PARTAGE_SIGNE = ["/api/ingenieur/cv/fichier"];
+
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
+
+  if (
+    CHEMINS_PARTAGE_SIGNE.includes(pathname) &&
+    !req.cookies.get("atlas_session") &&
+    req.nextUrl.searchParams.has("partage")
+  ) {
+    return NextResponse.next();
+  }
 
   const isProtected =
     !PUBLIC_PATHS.includes(pathname) &&
